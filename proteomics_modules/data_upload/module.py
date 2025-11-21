@@ -254,8 +254,6 @@ class DataUploadModule:
             trimmed_names=name_mapping
         )
     
-    # REPLACE the _step4_sample_annotation method in module.py with this:
-
     def _step4_sample_annotation(self):
         """Step 4: Sample annotation and species detection"""
         
@@ -321,7 +319,6 @@ class DataUploadModule:
             species_ui.render_species_preview(df, species_series, protein_col=selected_column)
         else:
             st.warning("⚠️ Please define at least one species keyword to proceed.")
-
     
     def _step5_workflow_suggestion(self):
         """Step 5: Workflow suggestion and summary"""
@@ -349,7 +346,11 @@ class DataUploadModule:
         workflow_ui = WorkflowSuggestionUI()
         selected_workflow = workflow_ui.render_workflow_suggestion(data_chars)
         
-        st.session_state.selected_workflow = selected_workflow
+        # FIXED: Store without widget key conflict
+        if 'workflow_choice' not in st.session_state:
+            st.session_state.workflow_choice = selected_workflow
+        else:
+            st.session_state.workflow_choice = selected_workflow
         
         # Data summary
         st.divider()
@@ -376,7 +377,7 @@ class DataUploadModule:
         
         # Next steps
         st.divider()
-        summary_ui.render_next_steps(selected_workflow)
+        summary_ui.render_next_steps(st.session_state.workflow_choice)
         
         # Mark upload complete
         st.session_state.upload_complete = True
@@ -453,22 +454,4 @@ class DataUploadModule:
         quantity_df.columns = [name_mapping.get(col, col) for col in quantity_df.columns]
         
         # Add species assignments
-        metadata_df['Species'] = st.session_state.species_assignments
-        
-        # Export package
-        export_data = {
-            'metadata': metadata_df,
-            'quantification': quantity_df,
-            'sample_annotations': st.session_state.sample_annotations,
-            'workflow': st.session_state.selected_workflow,
-            'timestamp': datetime.now().isoformat(),
-            'session_id': self.session_manager.get_or_create_session_id()
-        }
-        
-        return export_data
-
-
-def run_upload_module():
-    """Convenience function to run the upload module"""
-    module = DataUploadModule()
-    module.run()
+        metadata_df['Species'] = st
