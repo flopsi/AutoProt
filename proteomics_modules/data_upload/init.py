@@ -1,24 +1,19 @@
 """
 Data Upload Module
-Handles file upload, validation, and preprocessing
+Handles file upload, validation, column detection, and species annotation.
 """
 
 from .module import DataUploadModule, run_upload_module
-from .config import get_config, update_config
-from .session_manager import get_session_manager
-from .validators import get_validator
-from .parsers import get_data_parser, get_metadata_parser
+from .config import get_config, DataUploadConfig
 from .column_detector import get_column_detector, get_species_manager
 
 __all__ = [
     'DataUploadModule',
     'run_upload_module',
     'get_config',
-    'update_config',
-    'get_session_manager',
-    'get_validator',
-    'get_data_parser',
-    'get_metadata_parser',
+    'DataUploadConfig',
     'get_column_detector',
     'get_species_manager'
 ]
+
+__version__ = '1.0.0'
