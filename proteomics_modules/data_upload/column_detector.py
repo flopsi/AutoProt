@@ -1,7 +1,7 @@
 """
 Column detection and sample name processing.
 Auto-detects metadata and quantification columns, trims sample names.
-Simplified species detection by keyword matching.
+Simplified species detection by keyword matching with column auto-detection.
 """
 
 import re
@@ -159,6 +159,45 @@ class ColumnDetector:
         
         return groups
     
+    def find_species_column(self, df: pd.DataFrame, keyword_mapping: Dict[str, str]) -> Optional[str]:
+        """
+        Auto-detect which column contains species identifiers
+        
+        Args:
+            df: Dataframe to search
+            keyword_mapping: Dict of keywords to search for (e.g. {"HUMAN": "Human"})
+            
+        Returns:
+            Column name with most keyword matches, or None
+        """
+        if not keyword_mapping:
+            return None
+        
+        # Score each column by how many rows contain any keyword
+        column_scores = {}
+        
+        for col in df.columns:
+            if df[col].dtype == 'object' or df[col].dtype == 'string':
+                # Count how many rows contain any keyword
+                matches = 0
+                for idx, value in df[col].items():
+                    if pd.notna(value):
+                        value_upper = str(value).upper()
+                        for keyword in keyword_mapping.keys():
+                            if keyword.upper() in value_upper:
+                                matches += 1
+                                break  # Count each row only once
+                
+                if matches > 0:
+                    column_scores[col] = matches
+        
+        if not column_scores:
+            return None
+        
+        # Return column with highest score
+        best_column = max(column_scores.items(), key=lambda x: x[1])[0]
+        return best_column
+    
     def assign_species_by_keyword(self, protein_id: str, keyword_mapping: Dict[str, str]) -> str:
         """
         Assign species by simple keyword matching (case-insensitive)
@@ -197,6 +236,7 @@ class SpeciesManager:
     
     def __init__(self):
         self.keyword_mapping = {}  # keyword -> species name
+        self.species_column = None  # Auto-detected or user-specified column
     
     def set_keyword_mapping(self, mapping: Dict[str, str]):
         """
@@ -211,21 +251,54 @@ class SpeciesManager:
         """Get the current keyword mapping"""
         return self.keyword_mapping.copy()
     
+    def set_species_column(self, column_name: str):
+        """Set the column name containing species identifiers"""
+        self.species_column = column_name
+    
+    def get_species_column(self) -> Optional[str]:
+        """Get the species column name"""
+        return self.species_column
+    
     def assign_species_with_keyword_mapping(self, df: pd.DataFrame,
-                                          protein_col: str = 'Protein.Names') -> pd.Series:
+                                          protein_col: Optional[str] = None) -> pd.Series:
         """
         Assign species to all proteins using keyword matching
         
         Args:
             df: Proteomics dataframe
-            protein_col: Column containing protein names/IDs
+            protein_col: Optional column name. If None, uses auto-detected column
             
         Returns:
             Series with species assignments
         """
         detector = ColumnDetector()
         
-        return df[protein_col].apply(
+        # Use specified column or auto-detected column
+        target_col = protein_col or self.species_column
+        
+        if not target_col or target_col not in df.columns:
+            # Try to auto-detect
+            target_col = detector.find_species_column(df, self.keyword_mapping)
+            if target_col:
+                self.species_column = target_col
+        
+        if not target_col:
+            # Fallback to default column if available
+            if 'Protein.Names' in df.columns:
+                target_col = 'Protein.Names'
+            elif 'Protein.Ids' in df.columns:
+                target_col = 'Protein.Ids'
+            else:
+                # Use first text column
+                for col in df.columns:
+                    if df[col].dtype == 'object':
+                        target_col = col
+                        break
+        
+        if not target_col:
+            return pd.Series(['Unknown'] * len(df), index=df.index)
+        
+        return df[target_col].apply(
             lambda x: detector.assign_species_by_keyword(x, self.keyword_mapping)
         )
 
