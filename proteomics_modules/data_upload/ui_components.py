@@ -748,13 +748,12 @@ class DataSummaryUI:
             """)
 
 
-# Export all UI classes
 __all__ = [
     'FileUploadUI',
     'DataPreviewUI',
     'ColumnMappingUI',
     'SampleAnnotationUI',
+    'SpeciesAnnotationUI',  # NEW
     'WorkflowSuggestionUI',
     'DataSummaryUI'
 ]
-
