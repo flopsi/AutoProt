@@ -1,98 +1,41 @@
-# ==================================================================================
-# FINAL MODULE FILES - COMPLETE CODE
-# Copy each section to create separate .py files
-# ==================================================================================
-
-# ----------------------------------------------------------------------------------
-# FILE 9: app.py
-# ----------------------------------------------------------------------------------
 """
-Demo Streamlit Application
-Proteomics Data Upload Module
+AutoProt - Automated Proteomics Analysis Platform
+Main application entry point
 """
 
 import streamlit as st
-import sys
-from pathlib import Path
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent))
-
-from proteomics_modules.data_upload.module import run_upload_module
-from proteomics_modules.lfqbench_analysis.lfqbench_module import run_lfqbench_module
-
-# Page configuration
+# Page config MUST be first Streamlit command
 st.set_page_config(
-    page_title="Proteomics Data Upload",
+    page_title="AutoProt Analysis",
     page_icon="🧬",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
-st.markdown("""
-<style>
-    .stProgress > div > div > div > div {
-        background-color: #1f77b4;
-    }
-    .reportview-container {
-        background: #f0f2f6;
-    }
-</style>
-""", unsafe_allow_html=True)
+# Import modules
+from proteomics_modules.data_upload.module import run_upload_module
+from proteomics_modules.lfqbench_analysis.lfqbench_module import run_lfqbench_module
 
-# Sidebar
-with st.sidebar:
-    st.title("🧬 Proteomics Analysis")
-    st.markdown("---")
-    
-    st.markdown("""
-    ### Module 1: Data Upload
-    
-    **Features:**
-    - Multi-format file support
-    - Auto-detect columns
-    - Species identification
-    - Sample annotation
-    - Workflow recommendation
-    
-    **Supported Formats:**
-    - DIA-NN output
-    - Spectronaut
-    - MaxQuant
-    - Custom CSV/TSV
-    """)
-    
-    st.markdown("---")
-    
-    st.info("""
-    **Next Modules (Coming Soon):**
-    - Quality Control
-    - Preprocessing
-    - Statistical Analysis
-    - Visualization
-    """)
+# Sidebar navigation
 st.sidebar.title("📊 AutoProt Analysis")
+st.sidebar.markdown("---")
+
 page = st.sidebar.radio(
     "Select Module",
-    ["🔼 Data Upload", "🧪 LFQbench Analysis"]
+    ["🔼 Data Upload", "🧪 LFQbench Analysis"],
+    key="main_navigation"
 )
 
+st.sidebar.markdown("---")
+st.sidebar.markdown("### About")
+st.sidebar.info(
+    "AutoProt provides comprehensive proteomics data analysis "
+    "with benchmark evaluation capabilities."
+)
+
+# Main content - ONLY ONE module runs at a time
 if page == "🔼 Data Upload":
     run_upload_module()
 elif page == "🧪 LFQbench Analysis":
     run_lfqbench_module()
-    
-# Main content
-run_upload_module()
-
-# Footer
-st.markdown("---")
-st.markdown("""
-<div style='text-align: center; color: #666;'>
-    <p>Proteomics Analysis Platform v0.1.0</p>
-    <p>Built with Streamlit • Modular Architecture</p>
-</div>
-""", unsafe_allow_html=True)
-
-
