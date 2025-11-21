@@ -445,8 +445,8 @@ class SpeciesAnnotationUI:
                 mapping[keyword] = species_name
         
         return mapping
-        
-     @staticmethod
+    
+    @staticmethod
     def render_species_column_selector(df: pd.DataFrame,
                                       auto_detected_column: Optional[str] = None) -> str:
         """
@@ -490,7 +490,7 @@ class SpeciesAnnotationUI:
                 st.text(str(val)[:100])  # Show first 100 chars
         
         return selected_column
-
+    
     @staticmethod
     def render_species_preview(df: pd.DataFrame, 
                               species_series: pd.Series,
