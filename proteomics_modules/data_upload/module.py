@@ -1,54 +1,20 @@
 """
-Main data upload module orchestrator.
-Coordinates the complete upload workflow from file selection to data export.
+Main data upload module orchestrator - MINIMAL VERSION
 """
 
 import streamlit as st
 import pandas as pd
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
-
-from .config import get_config
-from .session_manager import get_session_manager
-from .validators import get_validator
-from .parsers import get_data_parser, get_metadata_parser
-from .column_detector import get_column_detector, get_species_manager
-from .ui_components import (
-    FileUploadUI,
-    DataPreviewUI,
-    ColumnMappingUI,
-    SampleAnnotationUI,
-    SpeciesAnnotationUI,
-    WorkflowSuggestionUI,
-    DataSummaryUI
-)
+import uuid
+import shutil
 
 
 class DataUploadModule:
-    """
-    Main orchestrator for data upload workflow
-    
-    Workflow Steps:
-    1. File upload and validation
-    2. Data preview and column detection
-    3. Optional metadata upload
-    4. Sample name trimming and annotation
-    5. Species detection
-    6. Workflow suggestion
-    7. Data export for next module
-    """
+    """Main orchestrator for data upload workflow"""
     
     def __init__(self):
-        self.config = get_config()
-        self.session_manager = get_session_manager()
-        self.validator = get_validator()
-        self.data_parser = get_data_parser()
-        self.metadata_parser = get_metadata_parser()
-        self.column_detector = get_column_detector()
-        self.species_manager = get_species_manager()
-        
-        # Initialize session state
         self._initialize_session_state()
     
     def _initialize_session_state(self):
@@ -91,16 +57,9 @@ class DataUploadModule:
     
     def _render_progress(self):
         """Render progress bar"""
-        steps = [
-            "Upload",
-            "Preview",
-            "Column Mapping",
-            "Annotation",
-            "Workflow"
-        ]
+        steps = ["Upload", "Preview", "Column Mapping", "Annotation", "Workflow"]
         
         progress = st.session_state.upload_step / len(steps)
-        
         st.progress(progress)
         
         col_steps = st.columns(len(steps))
@@ -120,60 +79,32 @@ class DataUploadModule:
         
         st.header("Step 1: Upload Data File")
         
-        ui = FileUploadUI()
-        
-        # File upload
-        uploaded_file = ui.render_file_uploader()
-        
-        # Metadata upload (optional)
-        metadata_file = ui.render_metadata_uploader()
+        uploaded_file = st.file_uploader(
+            "Choose a CSV/TSV file",
+            type=['csv', 'tsv', 'txt'],
+            help="Upload DIA-NN, Spectronaut, or MaxQuant output"
+        )
         
         if uploaded_file is not None:
-            # Validate file
-            validation_results = []
+            st.success("✅ File uploaded successfully!")
             
-            # Extension validation
-            ext_result = self.validator.validate_file_extension(uploaded_file.name)
-            validation_results.append(ext_result)
-            
-            # Size validation
-            size_result = self.validator.validate_file_size(uploaded_file.size)
-            validation_results.append(size_result)
-            
-            # Display validation
-            ui.display_validation_results(validation_results)
-            
-            # Check if valid
-            if all(r.is_valid for r in validation_results if r.severity == 'error'):
-                # Save file
-                file_path = self.session_manager.save_uploaded_file(uploaded_file)
-                st.session_state.data_file_path = str(file_path)
+            # Load data
+            with st.spinner("Loading data..."):
+                # Detect separator
+                first_line = uploaded_file.getvalue().decode('utf-8').split('\n')[0]
+                sep = '\t' if '\t' in first_line else ','
                 
-                # Structure validation
-                struct_result = self.validator.validate_csv_structure(file_path)
+                # Reset file pointer
+                uploaded_file.seek(0)
                 
-                if struct_result.is_valid:
-                    st.success("✅ File uploaded successfully!")
-                    
-                    # Load data
-                    with st.spinner("Loading data..."):
-                        df = self.data_parser.load_dataframe(file_path)
-                        st.session_state.raw_data = df
-                        st.session_state.data_validated = True
-                    
-                    # Save metadata file if provided
-                    if metadata_file is not None:
-                        meta_path = self.session_manager.save_uploaded_file(
-                            metadata_file,
-                            filename="metadata.csv"
-                        )
-                        st.session_state.metadata_file_path = str(meta_path)
-                        st.success("✅ Metadata file uploaded!")
-                else:
-                    st.error(f"❌ {struct_result.message}")
+                df = pd.read_csv(uploaded_file, sep=sep, low_memory=False)
+                st.session_state.raw_data = df
+                st.session_state.data_validated = True
+            
+            st.info(f"Loaded {len(df):,} rows and {len(df.columns)} columns")
     
     def _step2_data_preview(self):
-        """Step 2: Data preview and initial quality checks"""
+        """Step 2: Data preview"""
         
         st.header("Step 2: Data Preview")
         
@@ -183,25 +114,19 @@ class DataUploadModule:
         
         df = st.session_state.raw_data
         
-        # Preview UI
-        preview_ui = DataPreviewUI()
-        preview_ui.render_dataframe_preview(df)
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Rows", f"{len(df):,}")
+        with col2:
+            st.metric("Columns", f"{len(df.columns):,}")
+        with col3:
+            missing_pct = (df.isna().sum().sum() / df.size) * 100
+            st.metric("Missing Values", f"{missing_pct:.1f}%")
         
-        # Column statistics
-        with st.expander("📊 Column Statistics", expanded=False):
-            preview_ui.render_column_statistics(df)
-        
-        # Validate proteomics data
-        validation_results = self.validator.validate_proteomics_data(df)
-        
-        st.subheader("Data Quality Checks")
-        FileUploadUI().display_validation_results(validation_results)
-        
-        # Store validation results
-        st.session_state.validation_results = validation_results
+        st.dataframe(df.head(10), use_container_width=True, height=400)
     
     def _step3_column_mapping(self):
-        """Step 3: Column classification and name trimming"""
+        """Step 3: Column classification"""
         
         st.header("Step 3: Column Mapping")
         
@@ -212,50 +137,35 @@ class DataUploadModule:
         df = st.session_state.raw_data
         
         # Auto-detect columns
-        if 'column_classification' not in st.session_state:
-            classification = self.column_detector.classify_columns(df.columns.tolist())
-            st.session_state.column_classification = classification
-        else:
-            classification = st.session_state.column_classification
+        metadata_cols = [col for col in df.columns if any(x in col for x in 
+                        ['Protein', 'Gene', 'Description', 'Q.Value', 'PEP'])]
         
-        # Render classification UI
-        mapping_ui = ColumnMappingUI()
+        quantity_cols = [col for col in df.columns if col not in metadata_cols 
+                        and df[col].dtype in ['float64', 'int64']]
         
-        selected_cols = mapping_ui.render_column_classifier(
-            df.columns.tolist(),
-            classification.metadata_columns,
-            classification.quantity_columns
+        st.markdown("**Metadata Columns**")
+        selected_metadata = st.multiselect(
+            "Select metadata columns",
+            options=df.columns.tolist(),
+            default=metadata_cols
         )
         
-        # Update classification
-        st.session_state.selected_metadata_cols = selected_cols['metadata']
-        st.session_state.selected_quantity_cols = selected_cols['quantity']
-        
-        # Column name trimming
-        st.divider()
-        
-        quantity_mapping = classification.quantity_column_mapping
-        
-        trimmed_names = [quantity_mapping.get(col, col) 
-                        for col in selected_cols['quantity']]
-        
-        name_mapping = mapping_ui.render_quantity_column_preview(
-            selected_cols['quantity'],
-            trimmed_names
+        st.markdown("**Quantification Columns**")
+        selected_quantity = st.multiselect(
+            "Select quantity columns",
+            options=df.columns.tolist(),
+            default=quantity_cols
         )
         
+        st.session_state.selected_metadata_cols = selected_metadata
+        st.session_state.selected_quantity_cols = selected_quantity
+        
+        # Simplified name mapping
+        name_mapping = {col: col for col in selected_quantity}
         st.session_state.column_name_mapping = name_mapping
-        
-        # Preview missing values (with trimmed names)
-        preview_ui = DataPreviewUI()
-        preview_ui.render_missing_value_heatmap(
-            df, 
-            selected_cols['quantity'],
-            trimmed_names=name_mapping
-        )
     
     def _step4_sample_annotation(self):
-        """Step 4: Sample annotation and species detection"""
+        """Step 4: Species annotation"""
         
         st.header("Step 4: Sample Annotation")
         
@@ -264,74 +174,133 @@ class DataUploadModule:
             return
         
         df = st.session_state.raw_data
-        quantity_cols = st.session_state.get('selected_quantity_cols', [])
-        name_mapping = st.session_state.get('column_name_mapping', {})
         
-        # Get trimmed names
-        trimmed_names = [name_mapping.get(col, col) for col in quantity_cols]
+        st.subheader("🧬 Species Annotation")
         
-        # Suggest replicate grouping
-        suggested_groups = self.column_detector.suggest_replicate_groups(trimmed_names)
-        st.session_state.suggested_groups = suggested_groups
+        # Species keyword input
+        num_species = st.number_input("Number of species", min_value=1, max_value=10, value=3)
         
-        # Sample annotation UI
-        annotation_ui = SampleAnnotationUI()
-        
-        # Replicate grouping
-        annotations = annotation_ui.render_replicate_grouping(
-            trimmed_names,
-            suggested_groups
-        )
-        st.session_state.sample_annotations = annotations
-        
-        # Species annotation (simplified with auto-detection)
-        st.divider()
-        
-        species_ui = SpeciesAnnotationUI()
-        
-        # Get user keywords
-        keyword_mapping = species_ui.render_species_keyword_input()
-        
-        if keyword_mapping:
-            # Store mapping
-            self.species_manager.set_keyword_mapping(keyword_mapping)
-            st.session_state.species_keyword_mapping = keyword_mapping
+        mapping = {}
+        for i in range(num_species):
+            col1, col2 = st.columns(2)
+            with col1:
+                keyword = st.text_input(f"Keyword {i+1}", key=f"kw_{i}", placeholder="e.g., HUMAN")
+            with col2:
+                species = st.text_input(f"Species {i+1}", key=f"sp_{i}", placeholder="e.g., Human")
             
-            # Auto-detect species column
-            auto_detected_col = self.column_detector.find_species_column(df, keyword_mapping)
+            if keyword and species:
+                mapping[keyword] = species
+        
+        if mapping:
+            # Find column with species info
+            text_cols = [col for col in df.columns if df[col].dtype == 'object']
             
-            # Let user select/confirm column
-            selected_column = species_ui.render_species_column_selector(df, auto_detected_col)
-            
-            # Store selected column
-            self.species_manager.set_species_column(selected_column)
-            st.session_state.species_column = selected_column
-            
-            # Apply species assignment
-            with st.spinner("Assigning species..."):
-                species_series = self.species_manager.assign_species_with_keyword_mapping(
-                    df, 
-                    protein_col=selected_column
-                )
+            if text_cols:
+                selected_col = st.selectbox("Column with species identifiers", options=text_cols)
+                
+                # Assign species
+                def assign_species(val):
+                    if pd.isna(val):
+                        return "Unknown"
+                    val_str = str(val).upper()
+                    for kw, sp in mapping.items():
+                        if kw.upper() in val_str:
+                            return sp
+                    return "Unknown"
+                
+                species_series = df[selected_col].apply(assign_species)
                 st.session_state.species_assignments = species_series
-            
-            # Show preview
-            species_ui.render_species_preview(df, species_series, protein_col=selected_column)
+                
+                # Show distribution
+                st.bar_chart(species_series.value_counts())
+            else:
+                st.warning("No text columns found for species assignment")
         else:
-            st.warning("⚠️ Please define at least one species keyword to proceed.")
+            st.warning("Please enter at least one species keyword")
     
     def _step5_workflow_suggestion(self):
-        """Step 5: Workflow suggestion and summary"""
+        """Step 5: Workflow selection"""
         
         st.header("Step 5: Workflow Selection")
         
         if 'raw_data' not in st.session_state:
-            st.error("No data loaded. Please go back to Step 1.")
+            st.error("No data loaded.")
             return
         
         df = st.session_state.raw_data
         species_series = st.session_state.get('species_assignments', pd.Series())
         quantity_cols = st.session_state.get('selected_quantity_cols', [])
         
-        # Calculate data characteristics
-        data
+        # Show summary
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Proteins", len(df))
+        with col2:
+            st.metric("Samples", len(quantity_cols))
+        with col3:
+            n_species = species_series.nunique() if len(species_series) > 0 else 1
+            st.metric("Species", n_species)
+        with col4:
+            missing = (df[quantity_cols].isna().sum().sum() / df[quantity_cols].size) * 100 if quantity_cols else 0
+            st.metric("Missing", f"{missing:.1f}%")
+        
+        # Workflow selection
+        workflow = st.selectbox(
+            "Select workflow",
+            ["LFQbench", "Standard DIA"],
+            key="workflow_selector"
+        )
+        
+        st.session_state.workflow_choice = workflow
+        st.session_state.upload_complete = True
+        
+        st.success("✅ Data upload complete! Ready for analysis.")
+    
+    def _render_navigation(self):
+        """Render navigation buttons"""
+        
+        st.divider()
+        
+        col1, col2, col3 = st.columns([1, 1, 1])
+        
+        with col1:
+            if st.session_state.upload_step > 1:
+                if st.button("⬅️ Previous", use_container_width=True):
+                    st.session_state.upload_step -= 1
+                    st.rerun()
+        
+        with col2:
+            if st.button("🔄 Reset", use_container_width=True):
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.rerun()
+        
+        with col3:
+            can_proceed = self._can_proceed_to_next_step()
+            
+            if st.session_state.upload_step < 5:
+                if st.button("Next ➡️", use_container_width=True, disabled=not can_proceed):
+                    st.session_state.upload_step += 1
+                    st.rerun()
+    
+    def _can_proceed_to_next_step(self) -> bool:
+        """Check if can proceed"""
+        step = st.session_state.upload_step
+        
+        if step == 1:
+            return st.session_state.get('data_validated', False)
+        elif step == 2:
+            return 'raw_data' in st.session_state
+        elif step == 3:
+            return 'selected_quantity_cols' in st.session_state
+        elif step == 4:
+            return 'species_assignments' in st.session_state
+        else:
+            return True
+
+
+def run_upload_module():
+    """Run the upload module"""
+    module = DataUploadModule()
+    module.run()
