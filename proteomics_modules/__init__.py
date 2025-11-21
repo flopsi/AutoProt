@@ -1,19 +1,7 @@
 """
-Proteomics Modules Package
-Modular proteomics data analysis toolkit
+Data Upload Module
 """
 
-__version__ = "0.1.0"
-__author__ = "Florian Marty"
+from .module import run_upload_module
 
-# Lazy import to avoid circular dependency
-def get_upload_module():
-    from .data_upload import DataUploadModule, run_upload_module
-    return DataUploadModule, run_upload_module
-
-# For backward compatibility
-try:
-    from .data_upload import DataUploadModule, run_upload_module
-    __all__ = ['DataUploadModule', 'run_upload_module']
-except ImportError:
-    __all__ = []
+__all__ = ['run_upload_module']
