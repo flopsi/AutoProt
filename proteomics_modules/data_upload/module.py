@@ -254,6 +254,8 @@ class DataUploadModule:
             trimmed_names=name_mapping
         )
     
+    # REPLACE the _step4_sample_annotation method in module.py with this:
+
     def _step4_sample_annotation(self):
         """Step 4: Sample annotation and species detection"""
         
@@ -284,7 +286,7 @@ class DataUploadModule:
         )
         st.session_state.sample_annotations = annotations
         
-        # Species annotation (simplified)
+        # Species annotation (simplified with auto-detection)
         st.divider()
         
         species_ui = SpeciesAnnotationUI()
@@ -297,15 +299,29 @@ class DataUploadModule:
             self.species_manager.set_keyword_mapping(keyword_mapping)
             st.session_state.species_keyword_mapping = keyword_mapping
             
+            # Auto-detect species column
+            auto_detected_col = self.column_detector.find_species_column(df, keyword_mapping)
+            
+            # Let user select/confirm column
+            selected_column = species_ui.render_species_column_selector(df, auto_detected_col)
+            
+            # Store selected column
+            self.species_manager.set_species_column(selected_column)
+            st.session_state.species_column = selected_column
+            
             # Apply species assignment
             with st.spinner("Assigning species..."):
-                species_series = self.species_manager.assign_species_with_keyword_mapping(df)
+                species_series = self.species_manager.assign_species_with_keyword_mapping(
+                    df, 
+                    protein_col=selected_column
+                )
                 st.session_state.species_assignments = species_series
             
             # Show preview
-            species_ui.render_species_preview(df, species_series)
+            species_ui.render_species_preview(df, species_series, protein_col=selected_column)
         else:
             st.warning("⚠️ Please define at least one species keyword to proceed.")
+
     
     def _step5_workflow_suggestion(self):
         """Step 5: Workflow suggestion and summary"""
