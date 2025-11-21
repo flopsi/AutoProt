@@ -9,14 +9,15 @@ from pathlib import Path
 from typing import Optional, Dict, Tuple
 import streamlit as st
 
-from .config import get_config
-from .validators import get_validator
-
 
 class ProteomicsDataParser:
     """Parse proteomics data files"""
     
     def __init__(self):
+        # Lazy imports to avoid circular dependency
+        from .config import get_config
+        from .validators import get_validator
+        
         self.config = get_config()
         self.validator = get_validator()
     
@@ -149,6 +150,10 @@ class MetadataParser:
     """Parse metadata files"""
     
     def __init__(self):
+        # Lazy imports to avoid circular dependency
+        from .config import get_config
+        from .validators import get_validator
+        
         self.config = get_config()
         self.validator = get_validator()
     
@@ -284,11 +289,11 @@ class MetadataParser:
         return pd.DataFrame(design_data)
 
 
-def get_data_parser() -> ProteomicsDataParser:
+def get_data_parser() -> 'ProteomicsDataParser':
     """Get data parser instance"""
     return ProteomicsDataParser()
 
 
-def get_metadata_parser() -> MetadataParser:
+def get_metadata_parser() -> 'MetadataParser':
     """Get metadata parser instance"""
     return MetadataParser()
