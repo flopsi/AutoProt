@@ -164,8 +164,6 @@ class DataPreviewUI:
         stats_df = pd.DataFrame(stats_data)
         st.dataframe(stats_df, use_container_width=True, height=400)
     
-    @staticmethod
-render_missing_value_heatmap method with this:
 
     @staticmethod
     def render_missing_value_heatmap(df: pd.DataFrame, 
@@ -207,6 +205,7 @@ render_missing_value_heatmap method with this:
         fig.update_layout(height=400, showlegend=False)
         
         st.plotly_chart(fig, use_container_width=True)
+
 
 
 class ColumnMappingUI:
