@@ -82,6 +82,7 @@ class DataUploadModule:
         uploaded_file = st.file_uploader(
             "Choose a CSV/TSV file",
             type=['csv', 'tsv', 'txt'],
+            key="main_data_file_uploader",
             help="Upload DIA-NN, Spectronaut, or MaxQuant output"
         )
         
@@ -147,14 +148,16 @@ class DataUploadModule:
         selected_metadata = st.multiselect(
             "Select metadata columns",
             options=df.columns.tolist(),
-            default=metadata_cols
+            default=metadata_cols,
+            key="metadata_columns_selector"
         )
         
         st.markdown("**Quantification Columns**")
         selected_quantity = st.multiselect(
             "Select quantity columns",
             options=df.columns.tolist(),
-            default=quantity_cols
+            default=quantity_cols,
+            key="quantity_columns_selector"
         )
         
         st.session_state.selected_metadata_cols = selected_metadata
@@ -178,15 +181,29 @@ class DataUploadModule:
         st.subheader("🧬 Species Annotation")
         
         # Species keyword input
-        num_species = st.number_input("Number of species", min_value=1, max_value=10, value=3)
+        num_species = st.number_input(
+            "Number of species", 
+            min_value=1, 
+            max_value=10, 
+            value=3,
+            key="num_species_input"
+        )
         
         mapping = {}
         for i in range(num_species):
             col1, col2 = st.columns(2)
             with col1:
-                keyword = st.text_input(f"Keyword {i+1}", key=f"kw_{i}", placeholder="e.g., HUMAN")
+                keyword = st.text_input(
+                    f"Keyword {i+1}", 
+                    key=f"species_kw_{i}", 
+                    placeholder="e.g., HUMAN"
+                )
             with col2:
-                species = st.text_input(f"Species {i+1}", key=f"sp_{i}", placeholder="e.g., Human")
+                species = st.text_input(
+                    f"Species {i+1}", 
+                    key=f"species_sp_{i}", 
+                    placeholder="e.g., Human"
+                )
             
             if keyword and species:
                 mapping[keyword] = species
@@ -196,7 +213,11 @@ class DataUploadModule:
             text_cols = [col for col in df.columns if df[col].dtype == 'object']
             
             if text_cols:
-                selected_col = st.selectbox("Column with species identifiers", options=text_cols)
+                selected_col = st.selectbox(
+                    "Column with species identifiers", 
+                    options=text_cols,
+                    key="species_column_selector"
+                )
                 
                 # Assign species
                 def assign_species(val):
@@ -249,7 +270,7 @@ class DataUploadModule:
         workflow = st.selectbox(
             "Select workflow",
             ["LFQbench", "Standard DIA"],
-            key="workflow_selector"
+            key="workflow_choice_selector"
         )
         
         st.session_state.workflow_choice = workflow
@@ -266,12 +287,12 @@ class DataUploadModule:
         
         with col1:
             if st.session_state.upload_step > 1:
-                if st.button("⬅️ Previous", use_container_width=True):
+                if st.button("⬅️ Previous", use_container_width=True, key="nav_prev_btn"):
                     st.session_state.upload_step -= 1
                     st.rerun()
         
         with col2:
-            if st.button("🔄 Reset", use_container_width=True):
+            if st.button("🔄 Reset", use_container_width=True, key="nav_reset_btn"):
                 for key in list(st.session_state.keys()):
                     del st.session_state[key]
                 st.rerun()
@@ -280,7 +301,7 @@ class DataUploadModule:
             can_proceed = self._can_proceed_to_next_step()
             
             if st.session_state.upload_step < 5:
-                if st.button("Next ➡️", use_container_width=True, disabled=not can_proceed):
+                if st.button("Next ➡️", use_container_width=True, disabled=not can_proceed, key="nav_next_btn"):
                     st.session_state.upload_step += 1
                     st.rerun()
     
