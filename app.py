@@ -12,7 +12,14 @@ Proteomics Data Upload Module
 """
 
 import streamlit as st
-from proteomics_modules.data_upload import run_upload_module
+import sys
+from pathlib import Path
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent))
+
+from proteomics_modules.data_upload.module import run_upload_module
+
 
 # Page configuration
 st.set_page_config(
