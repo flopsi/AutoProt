@@ -20,8 +20,7 @@ class ProteomicsDataParser:
         self.config = get_config()
         self.validator = get_validator()
     
-    @st.cache_data(ttl=3600, show_spinner=False)
-    def load_dataframe(_self, file_path: Path, delimiter: Optional[str] = None) -> pd.DataFrame:
+    def load_dataframe(self, file_path: Path, delimiter: Optional[str] = None) -> pd.DataFrame:
         """
         Load CSV/TSV file into dataframe with caching
         
@@ -33,18 +32,20 @@ class ProteomicsDataParser:
             Loaded dataframe
         """
         if delimiter is None:
-            delimiter = _self.validator.detect_delimiter(file_path)
+            delimiter = self.validator.detect_delimiter(file_path)
         
-        # Read file with appropriate settings
-        df = pd.read_csv(
-            file_path,
-            sep=delimiter,
-            low_memory=False,
-            na_values=['', 'NA', 'NaN', 'N/A', 'null', 'NULL'],
-            keep_default_na=True
-        )
+        # Use cached loading
+        @st.cache_data(ttl=3600, show_spinner=False)
+        def _load_cached(fpath: str, delim: str) -> pd.DataFrame:
+            return pd.read_csv(
+                fpath,
+                sep=delim,
+                low_memory=False,
+                na_values=['', 'NA', 'NaN', 'N/A', 'null', 'NULL'],
+                keep_default_na=True
+            )
         
-        return df
+        return _load_cached(str(file_path), delimiter)
     
     def load_in_chunks(self, file_path: Path, chunk_size: int = 10000, 
                       delimiter: Optional[str] = None):
