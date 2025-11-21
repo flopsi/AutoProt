@@ -369,6 +369,126 @@ class SampleAnnotationUI:
                 st.success("Annotations applied!")
         
         return annotations
+
+    class SpeciesAnnotationUI:
+    """UI components for simplified species annotation"""
+    
+    @staticmethod
+    def render_species_keyword_input() -> Dict[str, str]:
+        """
+        Simple UI for user to input species keywords
+        
+        Returns:
+            Dict mapping keyword (e.g. "HUMAN") to species name (e.g. "Human")
+        """
+        st.subheader("🧬 Species Annotation")
+        
+        st.markdown("""
+        Enter keywords that identify each species in your protein IDs.
+        
+        **Example:** If your protein IDs contain `_HUMAN`, `_YEAST`, etc., 
+        just enter `HUMAN`, `YEAST` as keywords.
+        
+        The system will find any protein ID containing these words (case-insensitive).
+        """)
+        
+        # Default common species
+        default_species = {
+            "HUMAN": "Human",
+            "YEAST": "Yeast", 
+            "ECOLI": "E. coli"
+        }
+        
+        # Allow user to add species
+        num_species = st.number_input(
+            "Number of species in your data",
+            min_value=1,
+            max_value=10,
+            value=3,
+            step=1
+        )
+        
+        mapping = {}
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**Keyword (in protein ID)**")
+        with col2:
+            st.markdown("**Species Name**")
+        
+        for i in range(num_species):
+            col1, col2 = st.columns(2)
+            
+            # Get defaults if available
+            default_keys = list(default_species.keys())
+            default_key = default_keys[i] if i < len(default_keys) else ""
+            default_name = default_species.get(default_key, "")
+            
+            with col1:
+                keyword = st.text_input(
+                    f"Keyword {i+1}",
+                    value=default_key,
+                    key=f"species_keyword_{i}",
+                    label_visibility="collapsed",
+                    placeholder="e.g., HUMAN"
+                )
+            
+            with col2:
+                species_name = st.text_input(
+                    f"Name {i+1}",
+                    value=default_name,
+                    key=f"species_name_{i}",
+                    label_visibility="collapsed",
+                    placeholder="e.g., Human"
+                )
+            
+            if keyword and species_name:
+                mapping[keyword] = species_name
+        
+        return mapping
+    
+    @staticmethod
+    def render_species_preview(df: pd.DataFrame, 
+                              species_series: pd.Series,
+                              protein_col: str = 'Protein.Names'):
+        """
+        Show preview of species assignments
+        
+        Args:
+            df: Dataframe with proteins
+            species_series: Series with species assignments
+            protein_col: Column name with protein IDs
+        """
+        st.markdown("**Species Assignment Preview:**")
+        
+        # Show distribution
+        species_counts = species_series.value_counts()
+        
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            st.markdown("**Distribution:**")
+            for species, count in species_counts.items():
+                pct = (count / len(species_series)) * 100
+                st.metric(species, f"{count} ({pct:.1f}%)")
+        
+        with col2:
+            # Pie chart
+            fig = px.pie(
+                values=species_counts.values,
+                names=species_counts.index,
+                title='Species Distribution'
+            )
+            fig.update_layout(height=300)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Show sample assignments
+        with st.expander("📋 Sample Protein Assignments", expanded=False):
+            sample_df = df[[protein_col]].copy()
+            sample_df['Species'] = species_series
+            st.dataframe(sample_df.head(20), use_container_width=True)
+
     class SpeciesMappingUI:
         @staticmethod
         def render_species_mapping(example_ids, current_mapping=None):
