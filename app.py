@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from proteomics_modules.data_upload.module import run_upload_module
-
+from proteomics_modules.lfqbench_analysis.lfqbench_module import run_lfqbench_module
 
 # Page configuration
 st.set_page_config(
@@ -72,7 +72,17 @@ with st.sidebar:
     - Statistical Analysis
     - Visualization
     """)
+st.sidebar.title("📊 AutoProt Analysis")
+page = st.sidebar.radio(
+    "Select Module",
+    ["🔼 Data Upload", "🧪 LFQbench Analysis"]
+)
 
+if page == "🔼 Data Upload":
+    run_upload_module()
+elif page == "🧪 LFQbench Analysis":
+    run_lfqbench_module()
+    
 # Main content
 run_upload_module()
 
