@@ -19,10 +19,10 @@ from .ui_components import (
     DataPreviewUI,
     ColumnMappingUI,
     SampleAnnotationUI,
+    SpeciesAnnotationUI,  # NEW
     WorkflowSuggestionUI,
     DataSummaryUI
 )
-
 
 class DataUploadModule:
     """
@@ -247,8 +247,14 @@ class DataUploadModule:
         
         # Preview missing values
         preview_ui = DataPreviewUI()
-        preview_ui.render_missing_value_heatmap(df, selected_cols['quantity'])
+        preview_ui.render_missing_value_heatmap(
+    df, 
+    selected_cols['quantity'],
+    trimmed_names=name_mapping  # Use trimmed names
+)
+
     
+   
     def _step4_sample_annotation(self):
         """Step 4: Sample annotation and species detection"""
         
@@ -279,25 +285,28 @@ class DataUploadModule:
         )
         st.session_state.sample_annotations = annotations
         
-        # Species detection
+        # Species annotation (simplified)
         st.divider()
         
-        with st.spinner("Detecting species..."):
-            species_series = self.column_detector.detect_species(df)
-            st.session_state.species_assignments = species_series
+        species_ui = SpeciesAnnotationUI()
         
-        species_series, custom_patterns = annotation_ui.render_species_assignment(
-            df,
-            species_series
-        )
+        # Get user keywords
+        keyword_mapping = species_ui.render_species_keyword_input()
         
-        if custom_patterns:
-            # Add custom patterns and re-detect
-            for species, pattern in custom_patterns.items():
-                self.species_manager.add_custom_species(species, pattern)
+        if keyword_mapping:
+            # Store mapping
+            self.species_manager.set_keyword_mapping(keyword_mapping)
+            st.session_state.species_keyword_mapping = keyword_mapping
             
-            species_series = self.species_manager.detect_with_custom_patterns(df)
-            st.session_state.species_assignments = species_series
+            # Apply species assignment
+            with st.spinner("Assigning species..."):
+                species_series = self.species_manager.assign_species_with_keyword_mapping(df)
+                st.session_state.species_assignments = species_series
+            
+            # Show preview
+            species_ui.render_species_preview(df, species_series)
+        else:
+            st.warning("⚠️ Please define at least one species keyword to proceed.")
     
     def _step5_workflow_suggestion(self):
         """Step 5: Workflow suggestion and summary"""
