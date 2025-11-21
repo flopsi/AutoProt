@@ -351,7 +351,38 @@ class SampleAnnotationUI:
                 st.success("Annotations applied!")
         
         return annotations
-    
+    class SpeciesMappingUI:
+        @staticmethod
+        def render_species_mapping(example_ids, current_mapping=None):
+            """
+            UI for user to map species suffixes to species names.
+            Args:
+                example_ids: List of unique examples (e.g. ['GAL3B_HUMAN', 'P12345_YEAST'])
+                current_mapping: Dict of {suffix: species_name}
+            Returns:
+                Dict of {suffix: species_name}
+            """
+            st.subheader("🧬 Species Identifier Mapping")
+            st.markdown(
+                "Review example protein identifiers and assign a species to each detected suffix (e.g., `_HUMAN`)."
+            )
+            mapping = current_mapping or {}
+            unique_suffixes = set()
+            for protein_id in example_ids:
+                # Find suffix, e.g. _HUMAN
+                m = re.search(r'(_[A-Za-z0-9]+)$', protein_id)
+                if m:
+                    unique_suffixes.add(m.group(1))
+            updated_mapping = {}
+            for suf in sorted(unique_suffixes):
+                val = mapping.get(suf, "")
+                updated_mapping[suf] = st.text_input(
+                    f"Species name for suffix {suf}",
+                    value=val or "",
+                    key=f"species_suffix_{suf}"
+                )
+            return updated_mapping
+
     @staticmethod
     def render_species_assignment(df: pd.DataFrame,
                                  species_series: pd.Series) -> Tuple[pd.Series, Dict[str, str]]:
