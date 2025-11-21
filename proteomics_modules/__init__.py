@@ -1,7 +1,8 @@
 """
-Data Upload Module
+Proteomics Modules Package
 """
 
-from .module import run_upload_module
+# This file should be empty or minimal
+# Each submodule handles its own imports
 
-__all__ = ['run_upload_module']
+__all__ = []
