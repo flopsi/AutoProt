@@ -445,7 +445,52 @@ class SpeciesAnnotationUI:
                 mapping[keyword] = species_name
         
         return mapping
-    
+        
+     @staticmethod
+    def render_species_column_selector(df: pd.DataFrame,
+                                      auto_detected_column: Optional[str] = None) -> str:
+        """
+        Let user select which column contains species identifiers
+        
+        Args:
+            df: Dataframe
+            auto_detected_column: Column that was auto-detected
+            
+        Returns:
+            Selected column name
+        """
+        st.markdown("**Species Identifier Column:**")
+        
+        # Get text columns only
+        text_columns = [col for col in df.columns if df[col].dtype in ['object', 'string']]
+        
+        if auto_detected_column:
+            st.info(f"✨ Auto-detected column: **{auto_detected_column}**")
+            default_index = text_columns.index(auto_detected_column) if auto_detected_column in text_columns else 0
+        else:
+            # Try common column names
+            common_names = ['Protein.Names', 'Protein.Ids', 'Protein.Group', 'First.Protein.Description']
+            default_index = 0
+            for common in common_names:
+                if common in text_columns:
+                    default_index = text_columns.index(common)
+                    break
+        
+        selected_column = st.selectbox(
+            "Select column containing species identifiers",
+            options=text_columns,
+            index=default_index,
+            help="Column where species keywords (HUMAN, YEAST, etc.) are found"
+        )
+        
+        # Show sample values
+        with st.expander("👁️ Preview column values", expanded=False):
+            sample_values = df[selected_column].dropna().head(10).tolist()
+            for val in sample_values:
+                st.text(str(val)[:100])  # Show first 100 chars
+        
+        return selected_column
+
     @staticmethod
     def render_species_preview(df: pd.DataFrame, 
                               species_series: pd.Series,
