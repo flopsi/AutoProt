@@ -1,7 +1,7 @@
 """
 Column detection and sample name processing.
 Auto-detects metadata and quantification columns, trims sample names.
-Includes user-driven species assignment by suffix.
+Simplified species detection by keyword matching.
 """
 
 import re
@@ -19,15 +19,6 @@ class ColumnClassification:
     quantity_columns: List[str]
     other_columns: List[str]
     quantity_column_mapping: Dict[str, str]  # original -> trimmed
-
-
-@dataclass
-class SpeciesDetectionResult:
-    """Result of species detection for a protein"""
-    species: str
-    confidence: str  # 'high', 'medium', 'low'
-    matched_pattern: str
-    column_source: str  # which column was used
 
 
 class ColumnDetector:
@@ -168,112 +159,33 @@ class ColumnDetector:
         
         return groups
     
-    def extract_species_suffixes(self, protein_ids: List[str]) -> set:
+    def assign_species_by_keyword(self, protein_id: str, keyword_mapping: Dict[str, str]) -> str:
         """
-        Extract unique species suffixes from protein IDs
-        
-        Example:
-            Input: ["GAL3B_HUMAN", "GAL3A_HUMAN;P12345_YEAST", "ORF1_ECOLI"]
-            Output: {"_HUMAN", "_YEAST", "_ECOLI"}
-        
-        Args:
-            protein_ids: List of protein ID strings (may contain multiple IDs separated by semicolon)
-            
-        Returns:
-            Set of unique suffixes (e.g. "_HUMAN", "_YEAST")
-        """
-        suffixes = set()
-        for protein_id in protein_ids:
-            if pd.isna(protein_id):
-                continue
-            
-            # Split by common delimiters (;, |, comma)
-            ids = re.split(r'[;|,]', str(protein_id))
-            
-            for single_id in ids:
-                # Extract suffix (underscore followed by letters/numbers at the end)
-                match = re.search(r'(_[A-Za-z0-9]+)$', single_id.strip())
-                if match:
-                    suffixes.add(match.group(1))
-        
-        return suffixes
-    
-    def assign_species_by_suffix(self, protein_id: str, suffix_mapping: Dict[str, str]) -> str:
-        """
-        Assign species to a protein based on user-provided suffix mapping
+        Assign species by simple keyword matching (case-insensitive)
         
         Example:
             protein_id = "GAL3B_HUMAN;GAL3A_HUMAN"
-            suffix_mapping = {"_HUMAN": "Human", "_YEAST": "Yeast"}
+            keyword_mapping = {"HUMAN": "Human", "YEAST": "Yeast"}
             Returns: "Human"
         
         Args:
-            protein_id: Protein ID string (may contain multiple IDs separated by semicolon)
-            suffix_mapping: Dict mapping suffixes (e.g. "_HUMAN") to species names (e.g. "Human")
+            protein_id: Protein ID/name string
+            keyword_mapping: Dict mapping keywords (e.g. "HUMAN") to species names (e.g. "Human")
             
         Returns:
             Species name or "Unknown" if no match
         """
-        if pd.isna(protein_id) or not suffix_mapping:
+        if pd.isna(protein_id) or not keyword_mapping:
             return "Unknown"
         
-        # Split by common delimiters
-        ids = re.split(r'[;|,]', str(protein_id))
+        protein_str = str(protein_id).upper()
         
-        for single_id in ids:
-            single_id = single_id.strip()
-            
-            # Try to find matching suffix
-            for suffix, species_name in suffix_mapping.items():
-                if single_id.endswith(suffix):
-                    return species_name
+        # Check each keyword
+        for keyword, species_name in keyword_mapping.items():
+            if keyword.upper() in protein_str:
+                return species_name
         
         return "Unknown"
-    
-    def detect_species(self, df: pd.DataFrame, 
-                      protein_name_col: str = 'Protein.Names') -> pd.Series:
-        """
-        Auto-detect species for each protein (legacy method - use assign_species_by_suffix instead)
-        
-        Args:
-            df: Proteomics dataframe
-            protein_name_col: Column containing protein names
-            
-        Returns:
-            Series with species assignments
-        """
-        species_list = []
-        
-        # Priority order for checking columns
-        check_columns = ['Protein.Names', 'Protein.Ids', 'First.Protein.Description', 'Protein.Group']
-        check_columns = [col for col in check_columns if col in df.columns]
-        
-        if not check_columns:
-            # No suitable column found
-            return pd.Series(['Unknown'] * len(df), index=df.index)
-        
-        for idx, row in df.iterrows():
-            detected_species = 'Unknown'
-            
-            # Check each column in priority order
-            for col in check_columns:
-                if pd.isna(row[col]):
-                    continue
-                
-                text = str(row[col])
-                
-                # Try to match species patterns
-                for species_name, pattern in self.config.SPECIES_PATTERNS.items():
-                    if re.search(pattern, text, re.IGNORECASE):
-                        detected_species = species_name
-                        break
-                
-                if detected_species != 'Unknown':
-                    break
-            
-            species_list.append(detected_species)
-        
-        return pd.Series(species_list, index=df.index)
     
     def get_species_distribution(self, species_series: pd.Series) -> Dict[str, int]:
         """Get count of proteins per species"""
@@ -281,73 +193,40 @@ class ColumnDetector:
 
 
 class SpeciesManager:
-    """Manages custom species patterns and suffix mappings"""
+    """Manages species keyword mappings"""
     
     def __init__(self):
-        self.config = get_config()
-        self.custom_patterns = {}
-        self.suffix_mapping = {}  # New: suffix-to-species mapping
+        self.keyword_mapping = {}  # keyword -> species name
     
-    def add_custom_species(self, species_name: str, pattern: str):
-        """Add or update custom species pattern (legacy)"""
-        self.custom_patterns[species_name] = pattern
-    
-    def remove_custom_species(self, species_name: str):
-        """Remove custom species pattern (legacy)"""
-        if species_name in self.custom_patterns:
-            del self.custom_patterns[species_name]
-    
-    def set_suffix_mapping(self, mapping: Dict[str, str]):
+    def set_keyword_mapping(self, mapping: Dict[str, str]):
         """
-        Set the user-provided suffix-to-species mapping
+        Set the user-provided keyword-to-species mapping
         
         Args:
-            mapping: Dict like {"_HUMAN": "Human", "_YEAST": "Yeast", "_ECOLI": "E. coli"}
+            mapping: Dict like {"HUMAN": "Human", "YEAST": "Yeast", "ECOLI": "E. coli"}
         """
-        self.suffix_mapping = mapping.copy()
+        self.keyword_mapping = mapping.copy()
     
-    def get_suffix_mapping(self) -> Dict[str, str]:
-        """Get the current suffix mapping"""
-        return self.suffix_mapping.copy()
+    def get_keyword_mapping(self) -> Dict[str, str]:
+        """Get the current keyword mapping"""
+        return self.keyword_mapping.copy()
     
-    def get_all_patterns(self) -> Dict[str, str]:
-        """Get all species patterns (default + custom)"""
-        all_patterns = self.config.SPECIES_PATTERNS.copy()
-        all_patterns.update(self.custom_patterns)
-        return all_patterns
-    
-    def detect_with_custom_patterns(self, df: pd.DataFrame) -> pd.Series:
-        """Detect species using both default and custom patterns (legacy)"""
-        detector = ColumnDetector()
-        
-        # Temporarily update config with custom patterns
-        original_patterns = detector.config.SPECIES_PATTERNS.copy()
-        detector.config.SPECIES_PATTERNS.update(self.custom_patterns)
-        
-        # Detect
-        result = detector.detect_species(df)
-        
-        # Restore original
-        detector.config.SPECIES_PATTERNS = original_patterns
-        
-        return result
-    
-    def assign_species_with_suffix_mapping(self, df: pd.DataFrame,
-                                         protein_name_col: str = 'Protein.Names') -> pd.Series:
+    def assign_species_with_keyword_mapping(self, df: pd.DataFrame,
+                                          protein_col: str = 'Protein.Names') -> pd.Series:
         """
-        Assign species to all proteins using the current suffix mapping
+        Assign species to all proteins using keyword matching
         
         Args:
             df: Proteomics dataframe
-            protein_name_col: Column containing protein names/IDs
+            protein_col: Column containing protein names/IDs
             
         Returns:
-            Series with species assignments based on suffix mapping
+            Series with species assignments
         """
         detector = ColumnDetector()
         
-        return df[protein_name_col].apply(
-            lambda x: detector.assign_species_by_suffix(x, self.suffix_mapping)
+        return df[protein_col].apply(
+            lambda x: detector.assign_species_by_keyword(x, self.keyword_mapping)
         )
 
 
