@@ -19,10 +19,11 @@ from .ui_components import (
     DataPreviewUI,
     ColumnMappingUI,
     SampleAnnotationUI,
-    SpeciesAnnotationUI,  # NEW
+    SpeciesAnnotationUI,
     WorkflowSuggestionUI,
     DataSummaryUI
 )
+
 
 class DataUploadModule:
     """
@@ -245,16 +246,14 @@ class DataUploadModule:
         
         st.session_state.column_name_mapping = name_mapping
         
-        # Preview missing values
+        # Preview missing values (with trimmed names)
         preview_ui = DataPreviewUI()
         preview_ui.render_missing_value_heatmap(
-    df, 
-    selected_cols['quantity'],
-    trimmed_names=name_mapping  # Use trimmed names
-)
-
+            df, 
+            selected_cols['quantity'],
+            trimmed_names=name_mapping
+        )
     
-   
     def _step4_sample_annotation(self):
         """Step 4: Sample annotation and species detection"""
         
