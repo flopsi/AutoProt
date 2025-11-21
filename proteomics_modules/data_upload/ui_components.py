@@ -165,8 +165,20 @@ class DataPreviewUI:
         st.dataframe(stats_df, use_container_width=True, height=400)
     
     @staticmethod
-    def render_missing_value_heatmap(df: pd.DataFrame, sample_cols: List[str]):
-        """Render heatmap of missing values"""
+render_missing_value_heatmap method with this:
+
+    @staticmethod
+    def render_missing_value_heatmap(df: pd.DataFrame, 
+                                    sample_cols: List[str],
+                                    trimmed_names: Optional[Dict[str, str]] = None):
+        """
+        Render heatmap of missing values
+        
+        Args:
+            df: Full dataframe
+            sample_cols: List of quantity column names (original names)
+            trimmed_names: Optional dict mapping original -> trimmed names
+        """
         
         st.subheader("Missing Value Pattern")
         
@@ -178,9 +190,15 @@ class DataPreviewUI:
         missing_df = df[sample_cols].isna().astype(int)
         missing_pct = (missing_df.sum() / len(df)) * 100
         
-        # Create bar chart
+        # Use trimmed names for display if provided
+        if trimmed_names:
+            display_names = [trimmed_names.get(col, col) for col in sample_cols]
+        else:
+            display_names = sample_cols
+        
+        # Create bar chart with trimmed names
         fig = px.bar(
-            x=sample_cols,
+            x=display_names,
             y=missing_pct.values,
             labels={'x': 'Sample', 'y': 'Missing (%)'},
             title='Missing Values by Sample'
