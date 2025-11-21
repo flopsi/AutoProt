@@ -164,7 +164,6 @@ class DataPreviewUI:
         stats_df = pd.DataFrame(stats_data)
         st.dataframe(stats_df, use_container_width=True, height=400)
     
-
     @staticmethod
     def render_missing_value_heatmap(df: pd.DataFrame, 
                                     sample_cols: List[str],
@@ -205,7 +204,6 @@ class DataPreviewUI:
         fig.update_layout(height=400, showlegend=False)
         
         st.plotly_chart(fig, use_container_width=True)
-
 
 
 class ColumnMappingUI:
@@ -369,7 +367,8 @@ class SampleAnnotationUI:
         
         return annotations
 
-    class SpeciesAnnotationUI:
+
+class SpeciesAnnotationUI:
     """UI components for simplified species annotation"""
     
     @staticmethod
@@ -487,96 +486,6 @@ class SampleAnnotationUI:
             sample_df = df[[protein_col]].copy()
             sample_df['Species'] = species_series
             st.dataframe(sample_df.head(20), use_container_width=True)
-
-    class SpeciesMappingUI:
-        @staticmethod
-        def render_species_mapping(example_ids, current_mapping=None):
-            """
-            UI for user to map species suffixes to species names.
-            Args:
-                example_ids: List of unique examples (e.g. ['GAL3B_HUMAN', 'P12345_YEAST'])
-                current_mapping: Dict of {suffix: species_name}
-            Returns:
-                Dict of {suffix: species_name}
-            """
-            st.subheader("🧬 Species Identifier Mapping")
-            st.markdown(
-                "Review example protein identifiers and assign a species to each detected suffix (e.g., `_HUMAN`)."
-            )
-            mapping = current_mapping or {}
-            unique_suffixes = set()
-            for protein_id in example_ids:
-                # Find suffix, e.g. _HUMAN
-                m = re.search(r'(_[A-Za-z0-9]+)$', protein_id)
-                if m:
-                    unique_suffixes.add(m.group(1))
-            updated_mapping = {}
-            for suf in sorted(unique_suffixes):
-                val = mapping.get(suf, "")
-                updated_mapping[suf] = st.text_input(
-                    f"Species name for suffix {suf}",
-                    value=val or "",
-                    key=f"species_suffix_{suf}"
-                )
-            return updated_mapping
-
-    @staticmethod
-    def render_species_assignment(df: pd.DataFrame,
-                                 species_series: pd.Series) -> Tuple[pd.Series, Dict[str, str]]:
-        """
-        Interface for species assignment
-        
-        Returns:
-            Tuple of (species_series, custom_patterns)
-        """
-        st.subheader("🧬 Species Detection")
-        
-        # Show distribution
-        species_counts = species_series.value_counts()
-        
-        col1, col2 = st.columns([1, 2])
-        
-        with col1:
-            st.markdown("**Detected Species:**")
-            for species, count in species_counts.items():
-                pct = (count / len(species_series)) * 100
-                st.metric(species, f"{count} ({pct:.1f}%)")
-        
-        with col2:
-            # Pie chart
-            fig = px.pie(
-                values=species_counts.values,
-                names=species_counts.index,
-                title='Species Distribution'
-            )
-            fig.update_layout(height=300)
-            st.plotly_chart(fig, use_container_width=True)
-        
-        # Custom species patterns
-        with st.expander("➕ Add Custom Species Pattern", expanded=False):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                custom_species = st.text_input(
-                    "Species Name",
-                    key="custom_species_name",
-                    placeholder="e.g., Mouse"
-                )
-            
-            with col2:
-                custom_pattern = st.text_input(
-                    "Regex Pattern",
-                    key="custom_species_pattern",
-                    placeholder="e.g., MOUSE|Mus musculus"
-                )
-            
-            if st.button("Add Pattern"):
-                if custom_species and custom_pattern:
-                    st.success(f"Added pattern for {custom_species}")
-                    return species_series, {custom_species: custom_pattern}
-        
-        return species_series, {}
-
 
 
 class WorkflowSuggestionUI:
@@ -747,12 +656,13 @@ class DataSummaryUI:
             """)
 
 
+# Export all UI classes
 __all__ = [
     'FileUploadUI',
     'DataPreviewUI',
     'ColumnMappingUI',
     'SampleAnnotationUI',
-    'SpeciesAnnotationUI',  # NEW
+    'SpeciesAnnotationUI',
     'WorkflowSuggestionUI',
     'DataSummaryUI'
 ]
