@@ -1,6 +1,6 @@
 """
 LFQbench Analysis Module
-Benchmark proteomics analysis with comprehensive performance metrics.
+Complete benchmark proteomics analysis with performance metrics
 """
 
 from .lfqbench_analysis import (
