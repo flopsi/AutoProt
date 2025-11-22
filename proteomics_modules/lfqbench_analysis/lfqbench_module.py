@@ -30,6 +30,9 @@ class LFQbenchModule:
         
         if 'lfqbench_step' not in st.session_state:
             st.session_state.lfqbench_step = 1
+        
+        if 'lfqbench_color_scheme' not in st.session_state:
+            st.session_state.lfqbench_color_scheme = 'Default'
     
     def run(self):
         """Execute LFQbench analysis workflow"""
@@ -86,6 +89,53 @@ class LFQbenchModule:
         
         st.header("Step 1: Analysis Configuration")
         
+        # Color scheme selector - NEW
+        st.subheader("🎨 Color Scheme")
+        
+        color_schemes = {
+            'Default': {
+                'Human': '#199d76',
+                'Yeast': '#d85f02',
+                'E. coli': '#7570b2',
+                'C.elegans': 'darkred'
+            },
+            'Viridis': {
+                'Human': '#440154',
+                'Yeast': '#31688e',
+                'E. coli': '#35b779',
+                'C.elegans': '#fde724'
+            },
+            'Pastel': {
+                'Human': '#ffadad',
+                'Yeast': '#ffd6a5',
+                'E. coli': '#caffbf',
+                'C.elegans': '#a0c4ff'
+            },
+            'Bold': {
+                'Human': '#e63946',
+                'Yeast': '#f77f00',
+                'E. coli': '#06d6a0',
+                'C.elegans': '#118ab2'
+            },
+            'Earth': {
+                'Human': '#8b4513',
+                'Yeast': '#d2691e',
+                'E. coli': '#556b2f',
+                'C.elegans': '#2f4f4f'
+            }
+        }
+        
+        selected_scheme = st.selectbox(
+            "Choose color palette for visualizations",
+            options=list(color_schemes.keys()),
+            index=0,
+            key="color_scheme_select"
+        )
+        
+        st.session_state.lfqbench_color_scheme = selected_scheme
+        
+        st.divider()
+        
         st.subheader("Expected Fold-Changes")
         
         st.markdown("""
@@ -93,49 +143,47 @@ class LFQbenchModule:
         These are used to calculate accuracy and classify true/false positives.
         """)
         
-        col1, col2 = st.columns(2)
+        # Get detected species from upload module - FIXED
+        species_assignments = st.session_state.get('species_assignments', pd.Series())
+        detected_species = species_assignments.unique().tolist() if len(species_assignments) > 0 else []
         
-        with col1:
-            st.markdown("**Species A (e.g., Human)**")
-            fc_human = st.number_input(
-                "Human Log2 FC",
-                value=0.0,
-                step=0.5,
-                format="%.1f",
-                key="fc_human_input",
-                help="Expected fold-change for human proteins (typically 0 = no change)"
-            )
-            
-            st.markdown("**Species B (e.g., Yeast)**")
-            fc_yeast = st.number_input(
-                "Yeast Log2 FC",
-                value=1.0,
-                step=0.5,
-                format="%.1f",
-                key="fc_yeast_input",
-                help="Expected fold-change for yeast proteins (e.g., 1 = 2x increase)"
-            )
+        # Remove 'Unknown' if present
+        detected_species = [s for s in detected_species if s != 'Unknown']
         
-        with col2:
-            st.markdown("**Species C (e.g., E. coli)**")
-            fc_ecoli = st.number_input(
-                "E. coli Log2 FC",
-                value=-2.0,
-                step=0.5,
-                format="%.1f",
-                key="fc_ecoli_input",
-                help="Expected fold-change for E. coli proteins (e.g., -2 = 4x decrease)"
-            )
-            
-            st.markdown("**Species D (e.g., C. elegans)**")
-            fc_celegans = st.number_input(
-                "C. elegans Log2 FC",
-                value=-1.0,
-                step=0.5,
-                format="%.1f",
-                key="fc_celegans_input",
-                help="Expected fold-change for C. elegans proteins"
-            )
+        if len(detected_species) == 0:
+            st.error("❌ No species detected. Please complete Data Upload module and assign species.")
+            return
+        
+        st.info(f"**Detected species**: {', '.join(detected_species)}")
+        
+        # Create dynamic species fold-change inputs - FIXED
+        species_fold_changes = {}
+        
+        # Create columns based on number of species
+        n_species = len(detected_species)
+        cols = st.columns(min(2, n_species))  # Max 2 columns
+        
+        # Map species to default fold-changes
+        default_fc_map = {
+            'Human': 0.0,
+            'Yeast': 1.0,
+            'E. coli': -2.0,
+            'C.elegans': -1.0
+        }
+        
+        for i, species in enumerate(detected_species):
+            col_idx = i % 2
+            with cols[col_idx]:
+                st.markdown(f"**{species}**")
+                fc = st.number_input(
+                    f"{species} Log2 FC",
+                    value=default_fc_map.get(species, 0.0),
+                    step=0.5,
+                    format="%.1f",
+                    key=f"fc_{species}_input",
+                    help=f"Expected fold-change for {species} proteins"
+                )
+                species_fold_changes[species] = fc
         
         st.divider()
         
@@ -231,31 +279,36 @@ class LFQbenchModule:
             st.warning("⚠️ Please select at least one sample for both Control and Experimental groups.")
             return
         
-        # Store configuration (FIXED: use different names than widget keys)
+        # Store configuration with dynamic species - FIXED
         config = BenchmarkConfig(
-            expected_fc_human=fc_human,
-            expected_fc_yeast=fc_yeast,
-            expected_fc_ecoli=fc_ecoli,
-            expected_fc_celegans=fc_celegans,
             limit_mv=limit_mv,
             limit_cv=limit_cv,
             limit_fc=limit_fc,
             alpha_limma=alpha_limma
         )
         
+        # Override default fold-changes with detected species
+        for species, fc in species_fold_changes.items():
+            if species == 'Human':
+                config.expected_fc_human = fc
+            elif species == 'Yeast':
+                config.expected_fc_yeast = fc
+            elif species == 'E. coli':
+                config.expected_fc_ecoli = fc
+            elif species == 'C.elegans':
+                config.expected_fc_celegans = fc
+        
         st.session_state.lfqbench_config = config
         st.session_state.lfq_control_samples = control_samples
         st.session_state.lfq_experimental_samples = experimental_samples
+        st.session_state.detected_species = detected_species
         
         # Show summary
         with st.expander("📋 Configuration Summary", expanded=False):
             st.json({
-                "Expected Fold-Changes": {
-                    "Human": fc_human,
-                    "Yeast": fc_yeast,
-                    "E. coli": fc_ecoli,
-                    "C. elegans": fc_celegans
-                },
+                "Color Scheme": selected_scheme,
+                "Detected Species": detected_species,
+                "Expected Fold-Changes": species_fold_changes,
                 "Filters": {
                     "Missing Value": f"{limit_mv*100:.0f}%",
                     "CV": f"{limit_cv}%",
@@ -303,7 +356,18 @@ class LFQbenchModule:
         
         # Initialize analyzer
         self.analyzer = get_lfqbench_analyzer(st.session_state.lfqbench_config)
-        self.visualizer = get_lfqbench_visualizer()
+        
+        # Get color scheme
+        color_schemes = {
+            'Default': {'Human': '#199d76', 'Yeast': '#d85f02', 'E. coli': '#7570b2', 'C.elegans': 'darkred'},
+            'Viridis': {'Human': '#440154', 'Yeast': '#31688e', 'E. coli': '#35b779', 'C.elegans': '#fde724'},
+            'Pastel': {'Human': '#ffadad', 'Yeast': '#ffd6a5', 'E. coli': '#caffbf', 'C.elegans': '#a0c4ff'},
+            'Bold': {'Human': '#e63946', 'Yeast': '#f77f00', 'E. coli': '#06d6a0', 'C.elegans': '#118ab2'},
+            'Earth': {'Human': '#8b4513', 'Yeast': '#d2691e', 'E. coli': '#556b2f', 'C.elegans': '#2f4f4f'}
+        }
+        
+        selected_colors = color_schemes[st.session_state.lfqbench_color_scheme]
+        self.visualizer = get_lfqbench_visualizer(selected_colors)
         
         # Run analysis button
         if st.button("▶️ Run Analysis", type="primary", use_container_width=True, key="run_analysis_btn"):
@@ -399,7 +463,15 @@ class LFQbenchModule:
             self.analyzer = get_lfqbench_analyzer(st.session_state.lfqbench_config)
         
         if self.visualizer is None:
-            self.visualizer = get_lfqbench_visualizer()
+            color_schemes = {
+                'Default': {'Human': '#199d76', 'Yeast': '#d85f02', 'E. coli': '#7570b2', 'C.elegans': 'darkred'},
+                'Viridis': {'Human': '#440154', 'Yeast': '#31688e', 'E. coli': '#35b779', 'C.elegans': '#fde724'},
+                'Pastel': {'Human': '#ffadad', 'Yeast': '#ffd6a5', 'E. coli': '#caffbf', 'C.elegans': '#a0c4ff'},
+                'Bold': {'Human': '#e63946', 'Yeast': '#f77f00', 'E. coli': '#06d6a0', 'C.elegans': '#118ab2'},
+                'Earth': {'Human': '#8b4513', 'Yeast': '#d2691e', 'E. coli': '#556b2f', 'C.elegans': '#2f4f4f'}
+            }
+            selected_colors = color_schemes[st.session_state.lfqbench_color_scheme]
+            self.visualizer = get_lfqbench_visualizer(selected_colors)
         
         # Create tabs for different visualizations
         tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -441,7 +513,7 @@ class LFQbenchModule:
         with tab3:
             st.subheader("Fold-Change Distributions")
             
-            # Density plot
+            # Density plot - FIXED
             fig_density = self.visualizer.plot_density(results_df)
             st.plotly_chart(fig_density, use_container_width=True)
             
