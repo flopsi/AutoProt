@@ -1,667 +1,377 @@
 """
-LFQbench Analysis Streamlit Module
-Interactive UI for benchmark proteomics analysis with comprehensive visualizations.
+LFQbench Analysis Module - Core Analysis Engine
+Implements benchmark proteomics analysis with fold-change calculations,
+performance metrics, and statistical testing following LFQbench methodology.
 """
 
-import streamlit as st
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional
+from typing import Dict, List, Tuple, Optional
+from dataclasses import dataclass
+from scipy import stats
+from sklearn.decomposition import PCA
 
 
-from .lfqbench_visualizations import get_lfqbench_visualizer
+@dataclass
+class BenchmarkConfig:
+    """Configuration for LFQbench analysis"""
+    # Expected fold-changes
+    expected_fc_human: float = 0.0
+    expected_fc_yeast: float = 1.0
+    expected_fc_ecoli: float = -2.0
+    expected_fc_celegans: float = -1.0
+    
+    # Filter thresholds
+    limit_mv: float = 2/3  # Max missing values
+    limit_cv: float = 20.0  # Max CV percentage
+    limit_fc: float = 0.5   # Min fold-change for DE
+    
+    # Statistical threshold
+    alpha_limma: float = 0.01
+    
+    # Species colors
+    color_human: str = "#199d76"
+    color_yeast: str = "#d85f02"
+    color_ecoli: str = "#7570b2"
+    color_celegans: str = "darkred"
 
 
-class LFQbenchModule:
-    """Streamlit interface for LFQbench analysis"""
+class LFQbenchAnalyzer:
+    """Main LFQbench analysis engine"""
     
-    def __init__(self):
-        self.analyzer = None
-        self.visualizer = None
-        self._initialize_session_state()
-    
-    def _initialize_session_state(self):
-        """Initialize session state variables"""
-        if 'lfqbench_config' not in st.session_state:
-            st.session_state.lfqbench_config = None
-        
-        if 'lfqbench_results' not in st.session_state:
-            st.session_state.lfqbench_results = None
-        
-        if 'lfqbench_step' not in st.session_state:
-            st.session_state.lfqbench_step = 1
-        
-        if 'lfqbench_color_scheme' not in st.session_state:
-            st.session_state.lfqbench_color_scheme = 'Default'
-        
-        if 'lfqbench_auto_run' not in st.session_state:
-            st.session_state.lfqbench_auto_run = False
-    
-    def run(self):
-        """Execute LFQbench analysis workflow"""
-        
-        st.title("🧪 LFQbench Analysis")
-        
-        st.markdown("""
-        Benchmark proteomics analysis using multi-species samples with known fold-changes.
-        Calculate performance metrics including **accuracy**, **precision**, **trueness**, and **sensitivity/specificity**.
-        """)
-        
-        # Check if data from upload module is available
-        if 'raw_data' not in st.session_state:
-            st.error("❌ No data loaded. Please complete the Data Upload module first.")
-            return
-        
-        # Progress indicator
-        self._render_progress()
-        
-        # Execute current step
-        if st.session_state.lfqbench_step == 1:
-            self._step1_configuration()
-        
-        elif st.session_state.lfqbench_step == 2:
-            self._step2_run_analysis()
-        
-        elif st.session_state.lfqbench_step == 3:
-            self._step3_visualizations()
-        
-        # Navigation
-        self._render_navigation()
-    
-    def _render_progress(self):
-        """Render progress bar"""
-        steps = ["Configuration", "Analysis", "Visualizations"]
-        
-        progress = st.session_state.lfqbench_step / len(steps)
-        st.progress(progress)
-        
-        cols = st.columns(len(steps))
-        for i, (col, step) in enumerate(zip(cols, steps)):
-            with col:
-                if i + 1 < st.session_state.lfqbench_step:
-                    st.markdown(f"✅ **{step}**")
-                elif i + 1 == st.session_state.lfqbench_step:
-                    st.markdown(f"▶️ **{step}**")
-                else:
-                    st.markdown(f"⚪ {step}")
-        
-        st.divider()
-    
-    def _step1_configuration(self):
-        """Step 1: Configure analysis parameters"""
-        
-        st.header("Step 1: Analysis Configuration")
-        
-        # Color scheme selector
-        st.subheader("🎨 Color Scheme")
-        
-        color_schemes = {
-            'Default': {
-                'Human': '#199d76',
-                'Yeast': '#d85f02',
-                'E. coli': '#7570b2',
-                'C.elegans': 'darkred'
-            },
-            'Viridis': {
-                'Human': '#440154',
-                'Yeast': '#31688e',
-                'E. coli': '#35b779',
-                'C.elegans': '#fde724'
-            },
-            'Pastel': {
-                'Human': '#ffadad',
-                'Yeast': '#ffd6a5',
-                'E. coli': '#caffbf',
-                'C.elegans': '#a0c4ff'
-            },
-            'Bold': {
-                'Human': '#e63946',
-                'Yeast': '#f77f00',
-                'E. coli': '#06d6a0',
-                'C.elegans': '#118ab2'
-            },
-            'Earth': {
-                'Human': '#8b4513',
-                'Yeast': '#d2691e',
-                'E. coli': '#556b2f',
-                'C.elegans': '#2f4f4f'
-            }
+    def __init__(self, config: Optional[BenchmarkConfig] = None):
+        self.config = config or BenchmarkConfig()
+        self.expected_fc_map = {
+            'Human': self.config.expected_fc_human,
+            'Yeast': self.config.expected_fc_yeast,
+            'E. coli': self.config.expected_fc_ecoli,
+            'C.elegans': self.config.expected_fc_celegans
         }
-        
-        selected_scheme = st.selectbox(
-            "Choose color palette for visualizations",
-            options=list(color_schemes.keys()),
-            index=0,
-            key="color_scheme_select"
-        )
-        
-        st.session_state.lfqbench_color_scheme = selected_scheme
-        
-        st.divider()
-        
-        st.subheader("Expected Fold-Changes")
-        
-        st.markdown("""
-        Define the expected log2 fold-changes for each species in your benchmark samples.
-        These are used to calculate accuracy and classify true/false positives.
-        """)
-        
-        # Get detected species from upload module
-        species_assignments = st.session_state.get('species_assignments', pd.Series())
-        detected_species = species_assignments.unique().tolist() if len(species_assignments) > 0 else []
-        
-        # Remove 'Unknown' if present
-        detected_species = [s for s in detected_species if s != 'Unknown']
-        
-        if len(detected_species) == 0:
-            st.error("❌ No species detected. Please complete Data Upload module and assign species.")
-            return
-        
-        st.info(f"**Detected species**: {', '.join(detected_species)}")
-        
-        # Create dynamic species fold-change inputs
-        species_fold_changes = {}
-        
-        # Create columns based on number of species
-        n_species = len(detected_species)
-        cols = st.columns(min(2, n_species))  # Max 2 columns
-        
-        # Map species to default fold-changes
-        default_fc_map = {
-            'Human': 0.0,
-            'Yeast': 1.0,
-            'E. coli': -2.0,
-            'C.elegans': -1.0
-        }
-        
-        for i, species in enumerate(detected_species):
-            col_idx = i % 2
-            with cols[col_idx]:
-                st.markdown(f"**{species}**")
-                fc = st.number_input(
-                    f"{species} Log2 FC",
-                    value=default_fc_map.get(species, 0.0),
-                    step=0.5,
-                    format="%.1f",
-                    key=f"fc_{species}_input",
-                    help=f"Expected fold-change for {species} proteins"
-                )
-                species_fold_changes[species] = fc
-        
-        st.divider()
-        
-        st.subheader("Filter Thresholds")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            limit_mv = st.slider(
-                "Missing Value Threshold",
-                min_value=0.0,
-                max_value=1.0,
-                value=0.67,
-                step=0.1,
-                key="limit_mv_slider",
-                help="Maximum fraction of missing values allowed per protein (2/3 = 67%)"
-            )
-        
-        with col2:
-            limit_cv = st.slider(
-                "CV Threshold (%)",
-                min_value=5.0,
-                max_value=50.0,
-                value=20.0,
-                step=5.0,
-                key="limit_cv_slider",
-                help="Maximum coefficient of variation (%) for filtering"
-            )
-        
-        with col3:
-            limit_fc = st.slider(
-                "Fold-Change Threshold",
-                min_value=0.1,
-                max_value=2.0,
-                value=0.5,
-                step=0.1,
-                key="limit_fc_slider",
-                help="Minimum |log2 FC| to classify as differentially abundant"
-            )
-        
-        st.divider()
-        
-        st.subheader("Statistical Parameters")
-        
-        alpha_limma = st.selectbox(
-            "Adjusted P-value Threshold (α)",
-            options=[0.001, 0.01, 0.05, 0.1],
-            index=1,
-            key="alpha_limma_select",
-            help="Significance threshold for differential abundance (typical: 0.01)"
-        )
-        
-        st.divider()
-        
-        st.subheader("Sample Group Assignment")
-        
-        st.markdown("""
-        Assign your samples to **Control** and **Experimental** groups.
-        Use the trimmed sample names from the upload module.
-        """)
-        
-        # Get available sample columns
-        quantity_cols = st.session_state.get('selected_quantity_cols', [])
-        name_mapping = st.session_state.get('column_name_mapping', {})
-        trimmed_names = [name_mapping.get(col, col) for col in quantity_cols]
-        
-        if not trimmed_names:
-            st.error("No quantification columns available. Please complete Data Upload first.")
-            return
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("**Control Samples**")
-            control_samples = st.multiselect(
-                "Select control samples",
-                options=trimmed_names,
-                default=trimmed_names[:len(trimmed_names)//2] if len(trimmed_names) >= 2 else [],
-                key="control_samples_select"
-            )
-        
-        with col2:
-            st.markdown("**Experimental Samples**")
-            experimental_samples = st.multiselect(
-                "Select experimental samples",
-                options=[s for s in trimmed_names if s not in control_samples],
-                default=[s for s in trimmed_names if s not in control_samples][:len(trimmed_names)//2],
-                key="experimental_samples_select"
-            )
-        
-        # Validate selection
-        if len(control_samples) == 0 or len(experimental_samples) == 0:
-            st.warning("⚠️ Please select at least one sample for both Control and Experimental groups.")
-            return
-        
-        # Store configuration with dynamic species
-        config = BenchmarkConfig(
-            limit_mv=limit_mv,
-            limit_cv=limit_cv,
-            limit_fc=limit_fc,
-            alpha_limma=alpha_limma
-        )
-        
-        # Override default fold-changes with detected species
-        for species, fc in species_fold_changes.items():
-            if species == 'Human':
-                config.expected_fc_human = fc
-            elif species == 'Yeast':
-                config.expected_fc_yeast = fc
-            elif species == 'E. coli':
-                config.expected_fc_ecoli = fc
-            elif species == 'C.elegans':
-                config.expected_fc_celegans = fc
-        
-        st.session_state.lfqbench_config = config
-        st.session_state.lfq_control_samples = control_samples
-        st.session_state.lfq_experimental_samples = experimental_samples
-        st.session_state.detected_species = detected_species
-        
-        # Show summary
-        with st.expander("📋 Configuration Summary", expanded=False):
-            st.json({
-                "Color Scheme": selected_scheme,
-                "Detected Species": detected_species,
-                "Expected Fold-Changes": species_fold_changes,
-                "Filters": {
-                    "Missing Value": f"{limit_mv*100:.0f}%",
-                    "CV": f"{limit_cv}%",
-                    "Fold-Change": limit_fc
-                },
-                "Statistical": {
-                    "Alpha": alpha_limma
-                },
-                "Samples": {
-                    "Control": control_samples,
-                    "Experimental": experimental_samples
-                }
-            })
     
-    def _step2_run_analysis(self):
-        """Step 2: Run LFQbench analysis - AUTO-RUN"""
+    def calculate_cv(self, values: np.ndarray) -> float:
+        """Calculate coefficient of variation"""
+        if len(values) < 2 or np.all(np.isnan(values)):
+            return np.nan
         
-        st.header("Step 2: Run Analysis")
+        clean_values = values[~np.isnan(values)]
+        if len(clean_values) < 2:
+            return np.nan
         
-        if st.session_state.lfqbench_config is None:
-            st.error("Configuration not set. Please go back to Step 1.")
-            return
+        mean = np.mean(clean_values)
+        if mean == 0:
+            return np.nan
         
-        # Get data
-        df = st.session_state.raw_data.copy()
-        species_assignments = st.session_state.get('species_assignments', pd.Series())
+        std = np.std(clean_values, ddof=1)
+        return (std / mean) * 100
+    
+    def calculate_log2_fc(self, exp_values: np.ndarray, ctr_values: np.ndarray) -> float:
+        """Calculate log2 fold-change"""
+        exp_mean = np.nanmean(exp_values)
+        ctr_mean = np.nanmean(ctr_values)
         
-        if len(species_assignments) == 0:
-            st.error("Species assignments not found. Please complete Data Upload module.")
-            return
+        if exp_mean <= 0 or ctr_mean <= 0 or np.isnan(exp_mean) or np.isnan(ctr_mean):
+            return np.nan
         
-        # Add species to dataframe
-        df['Species'] = species_assignments
+        return np.log2(exp_mean / ctr_mean)
+    
+    def filter_by_completeness(self, df: pd.DataFrame, 
+                              exp_cols: List[str], 
+                              ctr_cols: List[str]) -> pd.DataFrame:
+        """Filter proteins by data completeness"""
+        min_valid = int(np.ceil(min(len(exp_cols), len(ctr_cols)) * (1 - self.config.limit_mv)))
         
-        # Get sample columns
-        control_samples = st.session_state.lfq_control_samples
-        experimental_samples = st.session_state.lfq_experimental_samples
+        # Count valid values per protein
+        df['exp_valid'] = df[exp_cols].notna().sum(axis=1)
+        df['ctr_valid'] = df[ctr_cols].notna().sum(axis=1)
         
-        # Map trimmed names back to original column names
-        name_mapping = st.session_state.get('column_name_mapping', {})
-        reverse_mapping = {v: k for k, v in name_mapping.items()}
+        # Keep proteins with sufficient data in both conditions
+        filtered = df[(df['exp_valid'] >= min_valid) & (df['ctr_valid'] >= min_valid)].copy()
         
-        control_cols = [reverse_mapping.get(s, s) for s in control_samples]
-        experimental_cols = [reverse_mapping.get(s, s) for s in experimental_samples]
+        filtered.drop(columns=['exp_valid', 'ctr_valid'], inplace=True)
         
-        # Initialize analyzer
-        self.analyzer = get_lfqbench_analyzer(st.session_state.lfqbench_config)
+        return filtered
+    
+    def calculate_cvs(self, df: pd.DataFrame,
+                     exp_cols: List[str],
+                     ctr_cols: List[str]) -> pd.DataFrame:
+        """Calculate CVs for experimental and control conditions"""
         
-        # Get color scheme
-        color_schemes = {
-            'Default': {'Human': '#199d76', 'Yeast': '#d85f02', 'E. coli': '#7570b2', 'C.elegans': 'darkred'},
-            'Viridis': {'Human': '#440154', 'Yeast': '#31688e', 'E. coli': '#35b779', 'C.elegans': '#fde724'},
-            'Pastel': {'Human': '#ffadad', 'Yeast': '#ffd6a5', 'E. coli': '#caffbf', 'C.elegans': '#a0c4ff'},
-            'Bold': {'Human': '#e63946', 'Yeast': '#f77f00', 'E. coli': '#06d6a0', 'C.elegans': '#118ab2'},
-            'Earth': {'Human': '#8b4513', 'Yeast': '#d2691e', 'E. coli': '#556b2f', 'C.elegans': '#2f4f4f'}
-        }
+        df['exp_cv'] = df[exp_cols].apply(lambda row: self.calculate_cv(row.values), axis=1)
+        df['ctr_cv'] = df[ctr_cols].apply(lambda row: self.calculate_cv(row.values), axis=1)
         
-        selected_colors = color_schemes[st.session_state.lfqbench_color_scheme]
-        self.visualizer = get_lfqbench_visualizer(selected_colors)
+        return df
+    
+    def filter_by_cv(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Filter proteins by CV threshold"""
+        return df[(df['exp_cv'] <= self.config.limit_cv) & 
+                 (df['ctr_cv'] <= self.config.limit_cv)].copy()
+    
+    def calculate_fold_changes(self, df: pd.DataFrame,
+                               exp_cols: List[str],
+                               ctr_cols: List[str]) -> pd.DataFrame:
+        """Calculate fold-changes for all proteins"""
         
-        # AUTO-RUN: Check if analysis should run automatically
-        should_auto_run = (
-            st.session_state.lfqbench_results is None and 
-            st.session_state.get('lfqbench_auto_run', False)
+        # Calculate means
+        df['exp_mean'] = df[exp_cols].mean(axis=1)
+        df['ctr_mean'] = df[ctr_cols].mean(axis=1)
+        
+        # Calculate log2 fold-change
+        df['log2_fc'] = df.apply(
+            lambda row: self.calculate_log2_fc(
+                row[exp_cols].values,
+                row[ctr_cols].values
+            ),
+            axis=1
         )
         
-        if should_auto_run or st.session_state.lfqbench_results is None:
-            # Run analysis automatically
-            with st.spinner("Running LFQbench analysis..."):
+        # Add expected fold-change based on species
+        df['expected_log2_fc'] = df['Species'].map(self.expected_fc_map)
+        
+        # Calculate deviation from expected
+        df['fc_deviation'] = np.abs(df['log2_fc'] - df['expected_log2_fc'])
+        
+        return df
+    
+    def perform_limma_test(self, df: pd.DataFrame,
+                          exp_cols: List[str],
+                          ctr_cols: List[str]) -> pd.DataFrame:
+        """
+        Perform differential expression analysis using limma-like approach
+        """
+        
+        p_values = []
+        t_stats = []
+        
+        for idx, row in df.iterrows():
+            # Convert to numeric and drop NaN
+            exp_vals = pd.to_numeric(row[exp_cols], errors='coerce').dropna().values.astype(float)
+            ctr_vals = pd.to_numeric(row[ctr_cols], errors='coerce').dropna().values.astype(float)
+            
+            if len(exp_vals) < 2 or len(ctr_vals) < 2:
+                p_values.append(np.nan)
+                t_stats.append(np.nan)
+                continue
+            
+            # Two-sample t-test
+            try:
+                t_stat, p_val = stats.ttest_ind(exp_vals, ctr_vals, equal_var=False)
+                p_values.append(p_val)
+                t_stats.append(t_stat)
+            except:
+                p_values.append(np.nan)
+                t_stats.append(np.nan)
+        
+        df['p_value'] = p_values
+        df['t_statistic'] = t_stats
+        
+        # Benjamini-Hochberg FDR correction
+        df['p_adj'] = self._benjamini_hochberg(df['p_value'].values)
+        
+        # Classify differential abundance
+        df['is_significant'] = (df['p_adj'] < self.config.alpha_limma) & \
+                               (np.abs(df['log2_fc']) > self.config.limit_fc)
+        
+        return df
+    
+    def _benjamini_hochberg(self, p_values: np.ndarray) -> np.ndarray:
+        """Benjamini-Hochberg FDR correction"""
+        p_values = np.array(p_values)
+        n = len(p_values)
+        
+        # Handle NaNs
+        mask = ~np.isnan(p_values)
+        adjusted = np.full(n, np.nan)
+        
+        if np.sum(mask) == 0:
+            return adjusted
+        
+        # Sort p-values
+        sorted_idx = np.argsort(p_values[mask])
+        sorted_p = p_values[mask][sorted_idx]
+        
+        # Calculate adjusted p-values
+        adjusted_p = np.minimum.accumulate(
+            sorted_p * n / np.arange(1, len(sorted_p) + 1)[::-1]
+        )[::-1]
+        
+        # Restore original order
+        adjusted[mask] = adjusted_p[np.argsort(sorted_idx)]
+        
+        return adjusted
+    
+    def classify_de_results(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Classify results as TP, TN, FP, FN based on expected fold-changes"""
+        
+        def classify_row(row):
+            expected_de = np.abs(row['expected_log2_fc']) > self.config.limit_fc
+            observed_de = row['is_significant']
+            
+            if expected_de and observed_de:
+                return 'true positive'
+            elif expected_de and not observed_de:
+                return 'false negative'
+            elif not expected_de and observed_de:
+                return 'false positive'
+            else:
+                return 'true negative'
+        
+        df['de_result'] = df.apply(classify_row, axis=1)
+        
+        return df
+    
+    def calculate_performance_metrics(self, df: pd.DataFrame) -> Dict[str, float]:
+        """Calculate comprehensive performance metrics"""
+        
+        # Confusion matrix counts
+        tp = len(df[df['de_result'] == 'true positive'])
+        tn = len(df[df['de_result'] == 'true negative'])
+        fp = len(df[df['de_result'] == 'false positive'])
+        fn = len(df[df['de_result'] == 'false negative'])
+        
+        # Sensitivity and specificity
+        sensitivity = (tp / (tp + fn) * 100) if (tp + fn) > 0 else 0.0
+        specificity = (tn / (tn + fp) * 100) if (tn + fp) > 0 else 0.0
+        
+        # Empirical FDR (deFDR)
+        de_fdr = (fp / (tp + fp) * 100) if (tp + fp) > 0 else 0.0
+        
+        # Accuracy (mean absolute deviation from expected)
+        accuracy = float(df['fc_deviation'].mean()) if 'fc_deviation' in df.columns else np.nan
+        
+        # Trueness (cumulative systematic bias)
+        trueness_values = []
+        for species in self.expected_fc_map.keys():
+            species_data = df[df['Species'] == species]
+            if len(species_data) > 0:
+                median_fc = float(species_data['log2_fc'].median())
+                expected_fc = self.expected_fc_map[species]
+                trueness_values.append(abs(median_fc - expected_fc))
+        
+        trueness = float(np.sum(trueness_values)) if trueness_values else np.nan
+        
+        # Precision (CV)
+        cv_mean = float(np.mean([df['exp_cv'].mean(), df['ctr_cv'].mean()]))
+        cv_median = float(np.median([df['exp_cv'].median(), df['ctr_cv'].median()]))
+        
+        return {
+            'tp': float(tp),
+            'tn': float(tn),
+            'fp': float(fp),
+            'fn': float(fn),
+            'sensitivity': float(sensitivity),
+            'specificity': float(specificity),
+            'de_fdr': float(de_fdr),
+            'accuracy': float(accuracy),
+            'trueness': float(trueness),
+            'cv_mean': float(cv_mean),
+            'cv_median': float(cv_median),
+            'n_proteins': float(len(df))
+        }
+    
+    def calculate_asymmetry_factor(self, log2_fc_values: np.ndarray) -> float:
+        """Calculate asymmetry factor"""
+        # Remove NaN values
+        log2_fc_values = log2_fc_values[~np.isnan(log2_fc_values)]
+        
+        if len(log2_fc_values) < 10:
+            return np.nan
+        
+        q1 = float(np.percentile(log2_fc_values, 25))
+        q2 = float(np.percentile(log2_fc_values, 50))  # median
+        q3 = float(np.percentile(log2_fc_values, 75))
+        
+        q2_q1 = abs(q2 - q1)
+        q3_q2 = abs(q3 - q2)
+        
+        if q3_q2 == 0:
+            return np.nan
+        
+        asymmetry = q2_q1 / q3_q2
+        
+        return float(asymmetry)
+    
+    def calculate_asymmetry_metrics(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Calculate asymmetry factors for each species"""
+        
+        asymmetry_data = []
+        
+        for species in self.expected_fc_map.keys():
+            species_data = df[df['Species'] == species]
+            
+            if len(species_data) >= 10:
+                fc_values = species_data['log2_fc'].dropna().values
+                asymmetry = self.calculate_asymmetry_factor(fc_values)
                 
-                # Progress container
-                progress_text = st.empty()
-                progress_bar = st.progress(0)
-                
-                try:
-                    # Run analysis
-                    progress_text.text("Step 1/8: Filtering by data completeness...")
-                    progress_bar.progress(12)
-                    
-                    results_df, metrics, asymmetry_df = self.analyzer.run_complete_analysis(
-                        df, experimental_cols, control_cols
-                    )
-                    
-                    progress_bar.progress(100)
-                    progress_text.text("✅ Analysis complete!")
-                    
-                    # Store results
-                    st.session_state.lfqbench_results = {
-                        'results_df': results_df,
-                        'metrics': metrics,
-                        'asymmetry_df': asymmetry_df,
-                        'control_cols': control_cols,
-                        'experimental_cols': experimental_cols
-                    }
-                    
-                    # Reset auto-run flag
-                    st.session_state.lfqbench_auto_run = False
-                    
-                    st.success("✅ Analysis completed successfully!")
-                    
-                    # Show quick summary
-                    st.divider()
-                    
-                    col1, col2, col3, col4 = st.columns(4)
-                    
-                    with col1:
-                        st.metric("Proteins Analyzed", metrics['n_proteins'])
-                    
-                    with col2:
-                        st.metric("Sensitivity (%)", f"{metrics['sensitivity']:.1f}")
-                    
-                    with col3:
-                        st.metric("Specificity (%)", f"{metrics['specificity']:.1f}")
-                    
-                    with col4:
-                        st.metric("Empirical FDR (%)", f"{metrics['de_fdr']:.1f}")
-                    
-                except Exception as e:
-                    st.error(f"❌ Analysis failed: {str(e)}")
-                    import traceback
-                    st.code(traceback.format_exc())
+                asymmetry_data.append({
+                    'Species': species,
+                    'Asymmetry Factor': float(asymmetry) if not np.isnan(asymmetry) else np.nan,
+                    'N Proteins': int(len(species_data))
+                })
         
-        # Show existing results if available
-        elif st.session_state.lfqbench_results is not None:
-            st.info("✅ Analysis results available. Proceed to Step 3 for visualizations.")
-            
-            metrics = st.session_state.lfqbench_results['metrics']
-            
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.metric("Proteins Analyzed", int(metrics['n_proteins']))
-            
-            with col2:
-                st.metric("Sensitivity (%)", f"{metrics['sensitivity']:.1f}")
-            
-            with col3:
-                st.metric("Specificity (%)", f"{metrics['specificity']:.1f}")
-            
-            with col4:
-                st.metric("Empirical FDR (%)", f"{metrics['de_fdr']:.1f}")
+        return pd.DataFrame(asymmetry_data)
     
-    def _step3_visualizations(self):
-        """Step 3: Display comprehensive visualizations"""
+    def run_complete_analysis(self, df: pd.DataFrame,
+                             exp_cols: List[str],
+                             ctr_cols: List[str]) -> Tuple[pd.DataFrame, Dict, pd.DataFrame]:
+        """
+        Run complete LFQbench analysis pipeline
+        """
         
-        st.header("Step 3: Results & Visualizations")
+        # Ensure quantity columns are numeric
+        print("Step 0: Converting columns to numeric...")
+        for col in exp_cols + ctr_cols:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
         
-        if st.session_state.lfqbench_results is None:
-            st.error("No analysis results available. Please run analysis in Step 2.")
-            return
+        print("Step 1: Filtering by data completeness...")
+        df_filtered = self.filter_by_completeness(df, exp_cols, ctr_cols)
+        print(f"  {len(df_filtered)}/{len(df)} proteins passed completeness filter")
         
-        # Get results
-        results = st.session_state.lfqbench_results
-        results_df = results['results_df']
-        metrics = results['metrics']
-        asymmetry_df = results['asymmetry_df']
+        print("Step 2: Calculating CVs...")
+        df_filtered = self.calculate_cvs(df_filtered, exp_cols, ctr_cols)
         
-        # Initialize analyzer and visualizer if not done
-        if self.analyzer is None:
-            self.analyzer = get_lfqbench_analyzer(st.session_state.lfqbench_config)
+        print("Step 3: Filtering by CV threshold...")
+        df_cv_filtered = self.filter_by_cv(df_filtered)
+        print(f"  {len(df_cv_filtered)}/{len(df_filtered)} proteins passed CV filter")
         
-        if self.visualizer is None:
-            color_schemes = {
-                'Default': {'Human': '#199d76', 'Yeast': '#d85f02', 'E. coli': '#7570b2', 'C.elegans': 'darkred'},
-                'Viridis': {'Human': '#440154', 'Yeast': '#31688e', 'E. coli': '#35b779', 'C.elegans': '#fde724'},
-                'Pastel': {'Human': '#ffadad', 'Yeast': '#ffd6a5', 'E. coli': '#caffbf', 'C.elegans': '#a0c4ff'},
-                'Bold': {'Human': '#e63946', 'Yeast': '#f77f00', 'E. coli': '#06d6a0', 'C.elegans': '#118ab2'},
-                'Earth': {'Human': '#8b4513', 'Yeast': '#d2691e', 'E. coli': '#556b2f', 'C.elegans': '#2f4f4f'}
-            }
-            selected_colors = color_schemes[st.session_state.lfqbench_color_scheme]
-            self.visualizer = get_lfqbench_visualizer(selected_colors)
+        print("Step 4: Calculating fold-changes...")
+        df_fc = self.calculate_fold_changes(df_cv_filtered, exp_cols, ctr_cols)
         
-        # Create tabs for different visualizations
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-            "📊 Summary", "🎯 Performance", "📈 Distributions", 
-            "🌋 Volcano", "🔍 Detailed", "💾 Export"
-        ])
+        print("Step 5: Performing differential expression analysis...")
+        df_de = self.perform_limma_test(df_fc, exp_cols, ctr_cols)
         
-        with tab1:
-            st.subheader("Analysis Summary")
-            
-            # Metrics table
-            fig_metrics = self.visualizer.create_summary_metrics_table(metrics)
-            st.plotly_chart(fig_metrics, use_container_width=True)
-            
-            # Confusion matrix
-            st.subheader("Confusion Matrix")
-            fig_confusion = self.visualizer.plot_confusion_matrix(metrics)
-            st.plotly_chart(fig_confusion, use_container_width=True)
+        print("Step 6: Classifying DE results...")
+        df_classified = self.classify_de_results(df_de)
         
-        with tab2:
-            st.subheader("Performance Metrics")
-            
-            # Accuracy box plot
-            st.markdown("**Fold-Change Accuracy**")
-            fig_accuracy = self.visualizer.plot_fc_boxplot(results_df)
-            st.plotly_chart(fig_accuracy, use_container_width=True)
-            
-            # Precision violin plot
-            st.markdown("**Quantitative Precision (CV)**")
-            fig_cv = self.visualizer.plot_cv_violin(results_df)
-            st.plotly_chart(fig_cv, use_container_width=True)
-            
-            # Asymmetry table
-            st.markdown("**Asymmetry Factors**")
-            st.markdown("Values near 1.0 indicate good performance. Values <0.5 or >2.0 indicate ratio compression/extension issues.")
-            fig_asymmetry = self.visualizer.plot_asymmetry_table(asymmetry_df)
-            st.plotly_chart(fig_asymmetry, use_container_width=True)
+        print("Step 7: Calculating performance metrics...")
+        metrics = self.calculate_performance_metrics(df_classified)
         
-        with tab3:
-            st.subheader("Fold-Change Distributions")
-            
-            # Density plot
-            fig_density = self.visualizer.plot_density(results_df)
-            st.plotly_chart(fig_density, use_container_width=True)
-            
-            # MA plot
-            st.markdown("**MA Plot**")
-            fig_ma = self.visualizer.plot_ma(results_df)
-            st.plotly_chart(fig_ma, use_container_width=True)
+        print("Step 8: Calculating asymmetry factors...")
+        asymmetry_df = self.calculate_asymmetry_metrics(df_classified)
         
-        with tab4:
-            st.subheader("Volcano Plot - Differential Abundance")
-            
-            fig_volcano = self.visualizer.plot_volcano(
-                results_df,
-                fc_threshold=st.session_state.lfqbench_config.limit_fc,
-                alpha=st.session_state.lfqbench_config.alpha_limma
-            )
-            st.plotly_chart(fig_volcano, use_container_width=True)
+        print("✅ Analysis complete!")
         
-        with tab5:
-            st.subheader("Detailed Analysis")
-            
-            # Faceted scatter
-            st.markdown("**Species-Specific Fold-Changes**")
-            fig_facet = self.visualizer.plot_facet_scatter(results_df)
-            st.plotly_chart(fig_facet, use_container_width=True)
-            
-            # PCA if available
-            if len(results['experimental_cols']) >= 2:
-                st.markdown("**Sample PCA**")
-                try:
-                    all_cols = results['control_cols'] + results['experimental_cols']
-                    pca_result, var_explained = self.analyzer.perform_pca(results_df, all_cols)
-                    
-                    name_mapping = st.session_state.get('column_name_mapping', {})
-                    sample_names = [name_mapping.get(col, col) for col in all_cols]
-                    
-                    fig_pca = self.visualizer.plot_pca(pca_result, var_explained, sample_names)
-                    st.plotly_chart(fig_pca, use_container_width=True)
-                except Exception as e:
-                    st.warning(f"Could not generate PCA plot: {str(e)}")
-        
-        with tab6:
-            st.subheader("Export Results")
-            
-            st.markdown("Download analysis results and all visualizations.")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                # Export results dataframe
-                csv_results = results_df.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download Results (CSV)",
-                    data=csv_results,
-                    file_name="lfqbench_results.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                    key="download_results_btn"
-                )
-            
-            with col2:
-                # Export metrics
-                metrics_df = pd.DataFrame([metrics])
-                csv_metrics = metrics_df.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download Metrics (CSV)",
-                    data=csv_metrics,
-                    file_name="lfqbench_metrics.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                    key="download_metrics_btn"
-                )
-            
-            with col3:
-                # Export all figures as ZIP - NEW
-                try:
-                    zip_data = self.visualizer.export_all_figures()
-                    st.download_button(
-                        label="📦 Download All Figures (ZIP)",
-                        data=zip_data,
-                        file_name="lfqbench_figures.zip",
-                        mime="application/zip",
-                        use_container_width=True,
-                        key="download_figures_btn"
-                    )
-                except Exception as e:
-                    st.error(f"Could not export figures: {str(e)}")
+        return df_classified, metrics, asymmetry_df
     
-    def _render_navigation(self):
-        """Render navigation buttons"""
+    def perform_pca(self, df: pd.DataFrame, sample_cols: List[str]) -> Tuple[np.ndarray, np.ndarray]:
+        """Perform PCA on sample data"""
+        # Get data matrix (proteins x samples)
+        data_matrix = df[sample_cols].T.dropna(axis=1)
         
-        st.divider()
+        # Ensure numeric
+        data_matrix = data_matrix.apply(pd.to_numeric, errors='coerce').fillna(0)
         
-        col1, col2, col3 = st.columns([1, 1, 1])
+        # Standardize
+        from sklearn.preprocessing import StandardScaler
+        scaler = StandardScaler()
+        data_scaled = scaler.fit_transform(data_matrix)
         
-        with col1:
-            if st.session_state.lfqbench_step > 1:
-                if st.button("⬅️ Previous", use_container_width=True, key="lfq_prev_btn"):
-                    st.session_state.lfqbench_step -= 1
-                    st.rerun()
+        # PCA
+        pca = PCA(n_components=min(2, data_scaled.shape[1]))
+        pca_result = pca.fit_transform(data_scaled)
         
-        with col2:
-            if st.button("🔄 Reset", use_container_width=True, key="lfq_reset_btn"):
-                st.session_state.lfqbench_step = 1
-                st.session_state.lfqbench_config = None
-                st.session_state.lfqbench_results = None
-                st.session_state.lfqbench_auto_run = False
-                st.rerun()
-        
-        with col3:
-            can_proceed = self._can_proceed_to_next_step()
-            
-            if st.session_state.lfqbench_step < 3:
-                if st.button("Next ➡️", use_container_width=True, disabled=not can_proceed, key="lfq_next_btn"):
-                    # Set auto-run flag when moving from step 1 to step 2
-                    if st.session_state.lfqbench_step == 1:
-                        st.session_state.lfqbench_auto_run = True
-                    
-                    st.session_state.lfqbench_step += 1
-                    st.rerun()
-    
-    def _can_proceed_to_next_step(self) -> bool:
-        """Check if can proceed to next step"""
-        
-        step = st.session_state.lfqbench_step
-        
-        if step == 1:
-            return (st.session_state.lfqbench_config is not None and
-                   len(st.session_state.get('lfq_control_samples', [])) > 0 and
-                   len(st.session_state.get('lfq_experimental_samples', [])) > 0)
-        elif step == 2:
-            return st.session_state.lfqbench_results is not None
-        else:
-            return True
+        return pca_result, pca.explained_variance_ratio_
 
 
-def run_lfqbench_module():
-    """Convenience function to run LFQbench module"""
-    module = LFQbenchModule()
-    module.run()
+def get_lfqbench_analyzer(config: Optional[BenchmarkConfig] = None) -> LFQbenchAnalyzer:
+    """Get LFQbench analyzer instance"""
+    return LFQbenchAnalyzer(config)
