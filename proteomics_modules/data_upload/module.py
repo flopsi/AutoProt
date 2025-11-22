@@ -356,7 +356,7 @@ class DataUploadModule:
 
     
     def _step5_workflow_selection(self):
-       """Step 5: Workflow selection with direct navigation to analysis"""
+        """Step 5: Workflow selection with direct navigation to analysis"""
         
         st.header("Step 5: Workflow Selection")
         
