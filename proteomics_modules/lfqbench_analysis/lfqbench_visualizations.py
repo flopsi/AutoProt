@@ -474,37 +474,37 @@ class LFQbenchVisualizer:
             for key, value in metrics.items():
                 print(f"  {key}: {value}")
         
-        # Create display data with explicit formatting
-        metric_names = [
-            'Sensitivity (%)',
-            'Specificity (%)',
-            'Empirical FDR (%)',
-            'Accuracy',
-            'Trueness',
-            'CV Mean (%)',
-            'CV Median (%)',
-            'True Positives',
-            'False Positives',
-            'True Negatives',
-            'False Negatives',
-            'Total Proteins'
-        ]
-        
-        metric_keys = [
-            'sensitivity',
-            'specificity',
-            'de_fdr',
-            'accuracy',
-            'trueness',
-            'cv_mean',
-            'cv_median',
-            'tp',
-            'fp',
-            'tn',
-            'fn',
-            'n_proteins'
-        ]
-        
+            # Create display data with explicit formatting
+            metric_names = [
+                'Sensitivity (%)',
+                'Specificity (%)',
+                'Empirical FDR (%)',
+                'Accuracy',
+                'Trueness',
+                'CV Mean (%)',
+                'CV Median (%)',
+                'True Positives',
+                'False Positives',
+                'True Negatives',
+                'False Negatives',
+                'Total Proteins'
+            ]
+            
+            metric_keys = [
+                'sensitivity',
+                'specificity',
+                'de_fdr',
+                'accuracy',
+                'trueness',
+                'cv_mean',
+                'cv_median',
+                'tp',
+                'fp',
+                'tn',
+                'fn',
+                'n_proteins'
+            ]
+            
         # Format values safely
         values = []
         for key in metric_keys:
