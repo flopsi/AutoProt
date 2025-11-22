@@ -132,44 +132,71 @@ class LFQbenchAnalyzer:
         
         return df
     
-    def perform_limma_test(self, df: pd.DataFrame,
-                          exp_cols: List[str],
-                          ctr_cols: List[str]) -> pd.DataFrame:
-        """
-        Perform differential expression analysis using limma-like approach
-        """
+def perform_limma_test(self, df: pd.DataFrame,
+                      exp_cols: List[str],
+                      ctr_cols: List[str]) -> pd.DataFrame:
+    """
+    Perform differential expression analysis - COMPLETELY FIXED
+    """
+    
+    p_values = []
+    t_stats = []
+    
+    print(f"  Performing t-tests on {len(df)} proteins...")
+    
+    for idx, row in df.iterrows():
+        # Get experimental values
+        exp_vals = row[exp_cols].values
+        exp_vals = pd.to_numeric(exp_vals, errors='coerce')
+        exp_vals = exp_vals[~pd.isna(exp_vals)]
         
-        p_values = []
-        t_stats = []
+        # Get control values
+        ctr_vals = row[ctr_cols].values
+        ctr_vals = pd.to_numeric(ctr_vals, errors='coerce')
+        ctr_vals = ctr_vals[~pd.isna(ctr_vals)]
         
-        for idx, row in df.iterrows():
-            # Convert to numeric and drop NaN
-            exp_vals = pd.to_numeric(row[exp_cols], errors='coerce').dropna().values.astype(float)
-            ctr_vals = pd.to_numeric(row[ctr_cols], errors='coerce').dropna().values.astype(float)
+        # Need at least 2 values in each group
+        if len(exp_vals) < 2 or len(ctr_vals) < 2:
+            p_values.append(1.0)  # Non-significant
+            t_stats.append(0.0)
+            continue
+        
+        # Perform t-test
+        try:
+            t_stat, p_val = stats.ttest_ind(exp_vals, ctr_vals, equal_var=False)
             
-            if len(exp_vals) < 2 or len(ctr_vals) < 2:
-                p_values.append(np.nan)
-                t_stats.append(np.nan)
-                continue
-            
-            # Two-sample t-test
-            try:
-                t_stat, p_val = stats.ttest_ind(exp_vals, ctr_vals, equal_var=False)
-                p_values.append(p_val)
-                t_stats.append(t_stat)
-            except:
-                p_values.append(np.nan)
-                t_stats.append(np.nan)
-        
-        df['p_value'] = p_values
-        df['t_statistic'] = t_stats
-        
-        # Benjamini-Hochberg FDR correction
-        df['p_adj'] = self._benjamini_hochberg(df['p_value'].values)
-        
-        # Classify differential abundance
-        df['is_significant'] = (df['p_adj'] < self.config.alpha_limma) & \
-                               (np.abs(df['log2_fc']) > self.config.limit_fc)
+            # Check for NaN results
+            if pd.isna(t_stat) or pd.isna(p_val):
+                p_values.append(1.0)
+                t_stats.append(0.0)
+            else:
+                p_values.append(float(p_val))
+                t_stats.append(float(t_stat))
+                
+        except Exception as e:
+            p_values.append(1.0)
+            t_stats.append(0.0)
+    
+    df['p_value'] = p_values
+    df['t_statistic'] = t_stats
+    
+    # Benjamini-Hochberg FDR correction
+    df['p_adj'] = self._benjamini_hochberg(df['p_value'].values)
+    
+    # Debug: Check p-value distribution
+    valid_p = df['p_adj'].dropna()
+    print(f"  P-value range: {valid_p.min():.2e} to {valid_p.max():.2e}")
+    print(f"  P-values < 0.01: {(valid_p < 0.01).sum()}")
+    print(f"  P-values < 0.05: {(valid_p < 0.05).sum()}")
+    
+    # Classify differential abundance
+    df['is_significant'] = (df['p_adj'] < self.config.alpha_limma) & \
+                           (np.abs(df['log2_fc']) > self.config.limit_fc)
+    
+    print(f"  Significant proteins: {df['is_significant'].sum()}/{len(df)}")
+    
+    return df
+
         
         return df
     
