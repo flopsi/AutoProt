@@ -1,9 +1,10 @@
 """
-Main data upload module orchestrator - MINIMAL VERSION
+Main data upload module orchestrator - COMPLETE VERSION WITH NAME TRIMMING
 """
 
 import streamlit as st
 import pandas as pd
+import re
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from datetime import datetime
@@ -27,6 +28,39 @@ class DataUploadModule:
         
         if 'upload_complete' not in st.session_state:
             st.session_state.upload_complete = False
+    
+    def _trim_column_name(self, col_name: str) -> str:
+        """
+        Trim common prefixes/suffixes from column names
+        
+        Examples:
+            '20240115_Sample1.raw.PG.Quantity' -> 'Sample1'
+            'MP01_DIA_Sample2.PG.MaxLFQ' -> 'Sample2'
+        """
+        trimmed = col_name
+        
+        # Remove date prefix (e.g., '20240115_')
+        trimmed = re.sub(r'^\d{8}_', '', trimmed)
+        
+        # Remove technical suffixes
+        suffixes = [
+            r'\.raw$',
+            r'\.PG\.Quantity$',
+            r'\.PG\.Normalized$',
+            r'\.PG\.MaxLFQ$',
+            r'\.Intensity$',
+            r'\.LFQ$'
+        ]
+        for suffix in suffixes:
+            trimmed = re.sub(suffix, '', trimmed)
+        
+        # Remove method prefixes (e.g., 'MP01_', 'DIA_', 'DDA_')
+        trimmed = re.sub(r'^(MP\d+_|DIA_|DDA_|SPD_|LFQ_|IO\d+_)', '', trimmed)
+        
+        # Remove concentration (e.g., '100pg_')
+        trimmed = re.sub(r'\d+pg_', '', trimmed)
+        
+        return trimmed.strip()
     
     def run(self):
         """Execute the complete data upload workflow"""
@@ -127,7 +161,7 @@ class DataUploadModule:
         st.dataframe(df.head(10), use_container_width=True, height=400)
     
     def _step3_column_mapping(self):
-        """Step 3: Column classification"""
+        """Step 3: Column classification and name trimming"""
         
         st.header("Step 3: Column Mapping")
         
@@ -163,9 +197,45 @@ class DataUploadModule:
         st.session_state.selected_metadata_cols = selected_metadata
         st.session_state.selected_quantity_cols = selected_quantity
         
-        # Simplified name mapping
-        name_mapping = {col: col for col in selected_quantity}
-        st.session_state.column_name_mapping = name_mapping
+        # Column name trimming with preview
+        st.divider()
+        st.subheader("✂️ Sample Name Trimming")
+        
+        st.markdown("""
+        Trimmed sample names are shown below. You can edit any name if needed.
+        """)
+        
+        # Create trimmed mapping
+        trimmed_mapping = {}
+        for col in selected_quantity:
+            trimmed_mapping[col] = self._trim_column_name(col)
+        
+        # Show preview table
+        preview_df = pd.DataFrame({
+            'Original Column Name': list(trimmed_mapping.keys()),
+            'Trimmed Name': list(trimmed_mapping.values())
+        })
+        
+        st.dataframe(preview_df, use_container_width=True, height=300)
+        
+        # Allow editing
+        enable_edit = st.checkbox("Enable editing of trimmed names", key="enable_trim_edit")
+        
+        if enable_edit:
+            st.markdown("**Edit individual names:**")
+            final_mapping = {}
+            
+            for i, (orig, trimmed) in enumerate(trimmed_mapping.items()):
+                edited = st.text_input(
+                    f"{orig}",
+                    value=trimmed,
+                    key=f"trim_edit_{i}"
+                )
+                final_mapping[orig] = edited
+            
+            st.session_state.column_name_mapping = final_mapping
+        else:
+            st.session_state.column_name_mapping = trimmed_mapping
     
     def _step4_sample_annotation(self):
         """Step 4: Species annotation"""
@@ -314,7 +384,7 @@ class DataUploadModule:
         elif step == 2:
             return 'raw_data' in st.session_state
         elif step == 3:
-            return 'selected_quantity_cols' in st.session_state
+            return 'selected_quantity_cols' in st.session_state and 'column_name_mapping' in st.session_state
         elif step == 4:
             return 'species_assignments' in st.session_state
         else:
