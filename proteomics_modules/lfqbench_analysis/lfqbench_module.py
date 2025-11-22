@@ -546,4 +546,122 @@ class LFQbenchModule:
         with tab5:
             st.subheader("Detailed Analysis")
             
-            # Fac
+            # Faceted scatter
+            st.markdown("**Species-Specific Fold-Changes**")
+            fig_facet = self.visualizer.plot_facet_scatter(results_df)
+            st.plotly_chart(fig_facet, use_container_width=True)
+            
+            # PCA if available
+            if len(results['experimental_cols']) >= 2:
+                st.markdown("**Sample PCA**")
+                try:
+                    all_cols = results['control_cols'] + results['experimental_cols']
+                    pca_result, var_explained = self.analyzer.perform_pca(results_df, all_cols)
+                    
+                    name_mapping = st.session_state.get('column_name_mapping', {})
+                    sample_names = [name_mapping.get(col, col) for col in all_cols]
+                    
+                    fig_pca = self.visualizer.plot_pca(pca_result, var_explained, sample_names)
+                    st.plotly_chart(fig_pca, use_container_width=True)
+                except Exception as e:
+                    st.warning(f"Could not generate PCA plot: {str(e)}")
+        
+        with tab6:
+            st.subheader("Export Results")
+            
+            st.markdown("Download analysis results and all visualizations.")
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                # Export results dataframe
+                csv_results = results_df.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download Results (CSV)",
+                    data=csv_results,
+                    file_name="lfqbench_results.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="download_results_btn"
+                )
+            
+            with col2:
+                # Export metrics
+                metrics_df = pd.DataFrame([metrics])
+                csv_metrics = metrics_df.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download Metrics (CSV)",
+                    data=csv_metrics,
+                    file_name="lfqbench_metrics.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key="download_metrics_btn"
+                )
+            
+            with col3:
+                # Export all figures as ZIP
+                try:
+                    zip_data = self.visualizer.export_all_figures()
+                    st.download_button(
+                        label="📦 Download All Figures (ZIP)",
+                        data=zip_data,
+                        file_name="lfqbench_figures.zip",
+                        mime="application/zip",
+                        use_container_width=True,
+                        key="download_figures_btn"
+                    )
+                except Exception as e:
+                    st.error(f"Could not export figures: {str(e)}")
+    
+    def _render_navigation(self):
+        """Render navigation buttons"""
+        
+        st.divider()
+        
+        col1, col2, col3 = st.columns([1, 1, 1])
+        
+        with col1:
+            if st.session_state.lfqbench_step > 1:
+                if st.button("⬅️ Previous", use_container_width=True, key="lfq_prev_btn"):
+                    st.session_state.lfqbench_step -= 1
+                    st.rerun()
+        
+        with col2:
+            if st.button("🔄 Reset", use_container_width=True, key="lfq_reset_btn"):
+                st.session_state.lfqbench_step = 1
+                st.session_state.lfqbench_config = None
+                st.session_state.lfqbench_results = None
+                st.session_state.lfqbench_auto_run = False
+                st.rerun()
+        
+        with col3:
+            can_proceed = self._can_proceed_to_next_step()
+            
+            if st.session_state.lfqbench_step < 3:
+                if st.button("Next ➡️", use_container_width=True, disabled=not can_proceed, key="lfq_next_btn"):
+                    # Set auto-run flag when moving from step 1 to step 2
+                    if st.session_state.lfqbench_step == 1:
+                        st.session_state.lfqbench_auto_run = True
+                    
+                    st.session_state.lfqbench_step += 1
+                    st.rerun()
+    
+    def _can_proceed_to_next_step(self) -> bool:
+        """Check if can proceed to next step"""
+        
+        step = st.session_state.lfqbench_step
+        
+        if step == 1:
+            return (st.session_state.lfqbench_config is not None and
+                   len(st.session_state.get('lfq_control_samples', [])) > 0 and
+                   len(st.session_state.get('lfq_experimental_samples', [])) > 0)
+        elif step == 2:
+            return st.session_state.lfqbench_results is not None
+        else:
+            return True
+
+
+def run_lfqbench_module():
+    """Convenience function to run LFQbench module"""
+    module = LFQbenchModule()
+    module.run()
