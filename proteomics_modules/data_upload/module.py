@@ -149,14 +149,12 @@ class DataUploadModule:
         
         df = st.session_state.raw_data
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(3)
         with col1:
             st.metric("Rows", f"{len(df):,}")
         with col2:
             st.metric("Columns", f"{len(df.columns):,}")
-        with col3:
-            missing_pct = (df.isna().sum().sum() / df.size) * 100
-            st.metric("Missing Values", f"{missing_pct:.1f}%")
+
         
         st.dataframe(df.head(10), use_container_width=True, height=400)
     
@@ -379,9 +377,7 @@ class DataUploadModule:
         with col3:
             n_species = species_series.nunique() if len(species_series) > 0 else 1
             st.metric("Species", n_species)
-        with col4:
-            missing = (df[quantity_cols].isna().sum().sum() / df[quantity_cols].size) * 100 if quantity_cols else 0
-            st.metric("Missing", f"{missing:.1f}%")
+
         
         # Workflow selection
         workflow = st.selectbox(
