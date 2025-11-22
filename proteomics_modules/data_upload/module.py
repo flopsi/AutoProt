@@ -170,10 +170,11 @@ class DataUploadModule:
         df = st.session_state.raw_data
         
         # Auto-detect columns
-        metadata_cols = [col for col in df.columns if df[col].dtype in ["string"]]
+        metadata_cols = [col for col in df.columns and df[col].dtype in ["string"]]
         
         quantity_cols = [col for col in df.columns if col not in metadata_cols 
                         and df[col].dtype in ['float64', 'int64']]
+        ##metadata_cols = [col for col in df.columns if df[col].dtype in ["string"]]
         
         st.markdown("**Metadata Columns**")
         selected_metadata = st.multiselect(
