@@ -144,8 +144,9 @@ class LFQbenchAnalyzer:
         t_stats = []
         
         for idx, row in df.iterrows():
-            exp_vals = row[exp_cols].dropna().values
-            ctr_vals = row[ctr_cols].dropna().values
+            # Convert to numeric and drop NaN - FIXED
+            exp_vals = pd.to_numeric(row[exp_cols], errors='coerce').dropna().values.astype(float)
+            ctr_vals = pd.to_numeric(row[ctr_cols], errors='coerce').dropna().values.astype(float)
             
             if len(exp_vals) < 2 or len(ctr_vals) < 2:
                 p_values.append(np.nan)
@@ -153,9 +154,13 @@ class LFQbenchAnalyzer:
                 continue
             
             # Two-sample t-test
-            t_stat, p_val = stats.ttest_ind(exp_vals, ctr_vals, equal_var=False)
-            p_values.append(p_val)
-            t_stats.append(t_stat)
+            try:
+                t_stat, p_val = stats.ttest_ind(exp_vals, ctr_vals, equal_var=False)
+                p_values.append(p_val)
+                t_stats.append(t_stat)
+            except:
+                p_values.append(np.nan)
+                t_stats.append(np.nan)
         
         df['p_value'] = p_values
         df['t_statistic'] = t_stats
@@ -305,67 +310,4 @@ class LFQbenchAnalyzer:
                     'n_proteins': len(species_data)
                 })
         
-        return pd.DataFrame(asymmetry_data)
-    
-    def run_complete_analysis(self, df: pd.DataFrame,
-                             exp_cols: List[str],
-                             ctr_cols: List[str]) -> Tuple[pd.DataFrame, Dict, pd.DataFrame]:
-        """
-        Run complete LFQbench analysis pipeline
-        
-        Returns:
-            - Filtered and analyzed dataframe
-            - Performance metrics dictionary
-            - Asymmetry metrics dataframe
-        """
-        
-        print("Step 1: Filtering by data completeness...")
-        df_filtered = self.filter_by_completeness(df, exp_cols, ctr_cols)
-        print(f"  {len(df_filtered)}/{len(df)} proteins passed completeness filter")
-        
-        print("Step 2: Calculating CVs...")
-        df_filtered = self.calculate_cvs(df_filtered, exp_cols, ctr_cols)
-        
-        print("Step 3: Filtering by CV threshold...")
-        df_cv_filtered = self.filter_by_cv(df_filtered)
-        print(f"  {len(df_cv_filtered)}/{len(df_filtered)} proteins passed CV filter")
-        
-        print("Step 4: Calculating fold-changes...")
-        df_fc = self.calculate_fold_changes(df_cv_filtered, exp_cols, ctr_cols)
-        
-        print("Step 5: Performing differential expression analysis...")
-        df_de = self.perform_limma_test(df_fc, exp_cols, ctr_cols)
-        
-        print("Step 6: Classifying DE results...")
-        df_classified = self.classify_de_results(df_de)
-        
-        print("Step 7: Calculating performance metrics...")
-        metrics = self.calculate_performance_metrics(df_classified)
-        
-        print("Step 8: Calculating asymmetry factors...")
-        asymmetry_df = self.calculate_asymmetry_metrics(df_classified)
-        
-        print("✅ Analysis complete!")
-        
-        return df_classified, metrics, asymmetry_df
-    
-    def perform_pca(self, df: pd.DataFrame, sample_cols: List[str]) -> Tuple[np.ndarray, np.ndarray]:
-        """Perform PCA on sample data"""
-        # Get data matrix (proteins x samples)
-        data_matrix = df[sample_cols].T.dropna(axis=1)
-        
-        # Standardize
-        from sklearn.preprocessing import StandardScaler
-        scaler = StandardScaler()
-        data_scaled = scaler.fit_transform(data_matrix)
-        
-        # PCA
-        pca = PCA(n_components=min(2, data_scaled.shape[1]))
-        pca_result = pca.fit_transform(data_scaled)
-        
-        return pca_result, pca.explained_variance_ratio_
-
-
-def get_lfqbench_analyzer(config: Optional[BenchmarkConfig] = None) -> LFQbenchAnalyzer:
-    """Get LFQbench analyzer instance"""
-    return LFQbenchAnalyzer(config)
+        return
