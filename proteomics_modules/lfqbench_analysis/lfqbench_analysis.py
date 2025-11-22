@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional
 
-from .lfqbench_analysis import get_lfqbench_analyzer, BenchmarkConfig
+
 from .lfqbench_visualizations import get_lfqbench_visualizer
 
 
