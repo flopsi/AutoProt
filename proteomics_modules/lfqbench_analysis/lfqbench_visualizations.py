@@ -465,63 +465,93 @@ class LFQbenchVisualizer:
         return fig
     
     def create_summary_metrics_table(self, metrics: Dict[str, float]) -> go.Figure:
-        """
-        Create summary metrics display table
-        """
-        metrics_display = {
-            'Metric': [
-                'Sensitivity (%)',
-                'Specificity (%)',
-                'Empirical FDR (%)',
-                'Accuracy',
-                'Trueness',
-                'CV Mean (%)',
-                'CV Median (%)',
-                'True Positives',
-                'False Positives',
-                'True Negatives',
-                'False Negatives',
-                'Total Proteins'
-            ],
-            'Value': [
-                f"{float(metrics['sensitivity']):.2f}",
-                f"{float(metrics['specificity']):.2f}",
-                f"{float(metrics['de_fdr']):.2f}",
-                f"{float(metrics['accuracy']):.3f}",
-                f"{float(metrics['trueness']):.3f}",
-                f"{float(metrics['cv_mean']):.2f}",
-                f"{float(metrics['cv_median']):.2f}",
-                str(int(metrics['tp'])),
-                str(int(metrics['fp'])),
-                str(int(metrics['tn'])),
-                str(int(metrics['fn'])),
-                str(int(metrics['n_proteins']))
-            ]
-        }
+    """
+    Create summary metrics display table - COMPLETELY FIXED
+    """
+    
+    # Debug: Print what we received
+    print(f"DEBUG - Creating metrics table with {len(metrics)} metrics")
+    for key, value in metrics.items():
+        print(f"  {key}: {value}")
+    
+    # Create display data with explicit formatting
+    metric_names = [
+        'Sensitivity (%)',
+        'Specificity (%)',
+        'Empirical FDR (%)',
+        'Accuracy',
+        'Trueness',
+        'CV Mean (%)',
+        'CV Median (%)',
+        'True Positives',
+        'False Positives',
+        'True Negatives',
+        'False Negatives',
+        'Total Proteins'
+    ]
+    
+    metric_keys = [
+        'sensitivity',
+        'specificity',
+        'de_fdr',
+        'accuracy',
+        'trueness',
+        'cv_mean',
+        'cv_median',
+        'tp',
+        'fp',
+        'tn',
+        'fn',
+        'n_proteins'
+    ]
+    
+    # Format values safely
+    values = []
+    for key in metric_keys:
+        val = metrics.get(key, 0)
         
-        df_metrics = pd.DataFrame(metrics_display)
-        
-        fig = go.Figure(data=[go.Table(
-            header=dict(
-                values=['<b>Metric</b>', '<b>Value</b>'],
-                fill_color='steelblue',
-                align='left',
-                font=dict(size=13, color='white')
-            ),
-            cells=dict(
-                values=[df_metrics['Metric'], df_metrics['Value']],
-                fill_color='white',
-                align='left',
-                font=dict(size=12)
-            )
-        )])
-        
-        fig.update_layout(
-            title="Performance Metrics Summary",
-            height=500
+        # Format based on metric type
+        if key in ['sensitivity', 'specificity', 'de_fdr', 'cv_mean', 'cv_median']:
+            values.append(f"{float(val):.2f}")
+        elif key in ['accuracy', 'trueness']:
+            values.append(f"{float(val):.3f}")
+        elif key in ['tp', 'fp', 'tn', 'fn', 'n_proteins']:
+            values.append(f"{int(val)}")
+        else:
+            values.append(str(val))
+    
+    fig = go.Figure(data=[go.Table(
+        columnwidth=[200, 100],
+        header=dict(
+            values=['<b>Metric</b>', '<b>Value</b>'],
+            fill_color='steelblue',
+            align=['left', 'right'],
+            font=dict(size=14, color='white'),
+            height=40
+        ),
+        cells=dict(
+            values=[metric_names, values],
+            fill_color='white',
+            align=['left', 'right'],
+            font=dict(size=13, color='black'),
+            height=35
         )
-        
-        self.figures['metrics'] = fig
+    )])
+    
+    fig.update_layout(
+        title={
+            'text': "Performance Metrics Summary",
+            'x': 0.5,
+            'xanchor': 'center',
+            'font': {'size': 18}
+        },
+        height=550,
+        margin=dict(l=20, r=20, t=60, b=20)
+    )
+    
+    self.figures['metrics'] = fig
+    return fig
+
         return fig
     
     def export_all_figures(self) -> bytes:
