@@ -261,15 +261,14 @@ class LFQbenchAnalyzer:
         }
     
     def calculate_asymmetry_factor(self, log2_fc_values: np.ndarray) -> float:
-        """Calculate asymmetry factor"""
-        # Remove NaN values
+        """Calculate asymmetry factor using quartile method"""
         log2_fc_values = log2_fc_values[~np.isnan(log2_fc_values)]
         
         if len(log2_fc_values) < 10:
             return np.nan
         
         q1 = float(np.percentile(log2_fc_values, 25))
-        q2 = float(np.percentile(log2_fc_values, 50))  # median
+        q2 = float(np.percentile(log2_fc_values, 50))
         q3 = float(np.percentile(log2_fc_values, 75))
         
         q2_q1 = abs(q2 - q1)
@@ -279,7 +278,6 @@ class LFQbenchAnalyzer:
             return np.nan
         
         asymmetry = q2_q1 / q3_q2
-        
         return float(asymmetry)
     
     def calculate_asymmetry_metrics(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -301,15 +299,12 @@ class LFQbenchAnalyzer:
                 })
         
         return pd.DataFrame(asymmetry_data)
-    
+
     def run_complete_analysis(self, df: pd.DataFrame,
                              exp_cols: List[str],
                              ctr_cols: List[str]) -> Tuple[pd.DataFrame, Dict, pd.DataFrame]:
-        """
-        Run complete LFQbench analysis pipeline
-        """
+        """Run complete LFQbench analysis pipeline"""
         
-        # Ensure quantity columns are numeric
         print("Step 0: Converting columns to numeric...")
         for col in exp_cols + ctr_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -343,6 +338,7 @@ class LFQbenchAnalyzer:
         print("✅ Analysis complete!")
         
         return df_classified, metrics, asymmetry_df
+
     
     def perform_pca(self, df: pd.DataFrame, sample_cols: List[str]) -> Tuple[np.ndarray, np.ndarray]:
         """Perform PCA on sample data"""
