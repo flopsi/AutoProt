@@ -238,7 +238,7 @@ class DataUploadModule:
             st.session_state.column_name_mapping = trimmed_mapping
     
     def _step4_sample_annotation(self):
-        """Step 4: Species annotation"""
+        """Step 4: Species annotation with EDITABLE DEFAULTS"""
         
         st.header("Step 4: Sample Annotation")
         
@@ -250,148 +250,55 @@ class DataUploadModule:
         
         st.subheader("🧬 Species Annotation")
         
-        # Species keyword input
+        st.markdown("""
+        Define keywords to identify species in your protein identifiers.
+        Default keywords are provided but can be edited.
+        """)
+        
+        # Initialize default species in session state
+        if 'species_keywords' not in st.session_state:
+            st.session_state.species_keywords = [
+                {'keyword': 'HUMAN', 'species': 'Human'},
+                {'keyword': 'YEAST', 'species': 'Yeast'},
+                {'keyword': 'ECOLI', 'species': 'E. coli'}
+            ]
+        
+        # Number of species selector
         num_species = st.number_input(
             "Number of species", 
             min_value=1, 
             max_value=10, 
-            value=3,
+            value=len(st.session_state.species_keywords),
             key="num_species_input"
         )
         
+        # Adjust list size if changed
+        current_count = len(st.session_state.species_keywords)
+        if num_species > current_count:
+            # Add empty entries
+            for i in range(num_species - current_count):
+                st.session_state.species_keywords.append({'keyword': '', 'species': ''})
+        elif num_species < current_count:
+            # Remove extra entries
+            st.session_state.species_keywords = st.session_state.species_keywords[:num_species]
+        
+        # Editable species inputs
         mapping = {}
+        
+        st.markdown("**Species Keywords** (edit as needed)")
+        
         for i in range(num_species):
             col1, col2 = st.columns(2)
+            
+            # Get current values
+            current_kw = st.session_state.species_keywords[i]['keyword']
+            current_sp = st.session_state.species_keywords[i]['species']
+            
             with col1:
                 keyword = st.text_input(
                     f"Keyword {i+1}", 
+                    value=current_kw,
                     key=f"species_kw_{i}", 
                     placeholder="e.g., HUMAN"
                 )
-            with col2:
-                species = st.text_input(
-                    f"Species {i+1}", 
-                    key=f"species_sp_{i}", 
-                    placeholder="e.g., Human"
-                )
-            
-            if keyword and species:
-                mapping[keyword] = species
-        
-        if mapping:
-            # Find column with species info
-            text_cols = [col for col in df.columns if df[col].dtype == 'object']
-            
-            if text_cols:
-                selected_col = st.selectbox(
-                    "Column with species identifiers", 
-                    options=text_cols,
-                    key="species_column_selector"
-                )
-                
-                # Assign species
-                def assign_species(val):
-                    if pd.isna(val):
-                        return "Unknown"
-                    val_str = str(val).upper()
-                    for kw, sp in mapping.items():
-                        if kw.upper() in val_str:
-                            return sp
-                    return "Unknown"
-                
-                species_series = df[selected_col].apply(assign_species)
-                st.session_state.species_assignments = species_series
-                
-                # Show distribution
-                st.bar_chart(species_series.value_counts())
-            else:
-                st.warning("No text columns found for species assignment")
-        else:
-            st.warning("Please enter at least one species keyword")
-    
-    def _step5_workflow_suggestion(self):
-        """Step 5: Workflow selection"""
-        
-        st.header("Step 5: Workflow Selection")
-        
-        if 'raw_data' not in st.session_state:
-            st.error("No data loaded.")
-            return
-        
-        df = st.session_state.raw_data
-        species_series = st.session_state.get('species_assignments', pd.Series())
-        quantity_cols = st.session_state.get('selected_quantity_cols', [])
-        
-        # Show summary
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("Proteins", len(df))
-        with col2:
-            st.metric("Samples", len(quantity_cols))
-        with col3:
-            n_species = species_series.nunique() if len(species_series) > 0 else 1
-            st.metric("Species", n_species)
-        with col4:
-            missing = (df[quantity_cols].isna().sum().sum() / df[quantity_cols].size) * 100 if quantity_cols else 0
-            st.metric("Missing", f"{missing:.1f}%")
-        
-        # Workflow selection
-        workflow = st.selectbox(
-            "Select workflow",
-            ["LFQbench", "Standard DIA"],
-            key="workflow_choice_selector"
-        )
-        
-        st.session_state.workflow_choice = workflow
-        st.session_state.upload_complete = True
-        
-        st.success("✅ Data upload complete! Ready for analysis.")
-    
-    def _render_navigation(self):
-        """Render navigation buttons"""
-        
-        st.divider()
-        
-        col1, col2, col3 = st.columns([1, 1, 1])
-        
-        with col1:
-            if st.session_state.upload_step > 1:
-                if st.button("⬅️ Previous", use_container_width=True, key="nav_prev_btn"):
-                    st.session_state.upload_step -= 1
-                    st.rerun()
-        
-        with col2:
-            if st.button("🔄 Reset", use_container_width=True, key="nav_reset_btn"):
-                for key in list(st.session_state.keys()):
-                    del st.session_state[key]
-                st.rerun()
-        
-        with col3:
-            can_proceed = self._can_proceed_to_next_step()
-            
-            if st.session_state.upload_step < 5:
-                if st.button("Next ➡️", use_container_width=True, disabled=not can_proceed, key="nav_next_btn"):
-                    st.session_state.upload_step += 1
-                    st.rerun()
-    
-    def _can_proceed_to_next_step(self) -> bool:
-        """Check if can proceed"""
-        step = st.session_state.upload_step
-        
-        if step == 1:
-            return st.session_state.get('data_validated', False)
-        elif step == 2:
-            return 'raw_data' in st.session_state
-        elif step == 3:
-            return 'selected_quantity_cols' in st.session_state and 'column_name_mapping' in st.session_state
-        elif step == 4:
-            return 'species_assignments' in st.session_state
-        else:
-            return True
-
-
-def run_upload_module():
-    """Run the upload module"""
-    module = DataUploadModule()
-    module.run()
+            with
