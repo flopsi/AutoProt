@@ -512,117 +512,117 @@ with tab1:
     st.plotly_chart(fig_confusion, use_container_width=True)
 
         
-        with tab2:
-            st.subheader("Performance Metrics")
-            
-            # Accuracy box plot
-            st.markdown("**Fold-Change Accuracy**")
-            fig_accuracy = self.visualizer.plot_fc_boxplot(results_df)
-            st.plotly_chart(fig_accuracy, use_container_width=True)
-            
-            # Precision violin plot
-            st.markdown("**Quantitative Precision (CV)**")
-            fig_cv = self.visualizer.plot_cv_violin(results_df)
-            st.plotly_chart(fig_cv, use_container_width=True)
-            
-            # Asymmetry table
-            st.markdown("**Asymmetry Factors**")
-            st.markdown("Values near 1.0 indicate good performance. Values <0.5 or >2.0 indicate ratio compression/extension issues.")
-            fig_asymmetry = self.visualizer.plot_asymmetry_table(asymmetry_df)
-            st.plotly_chart(fig_asymmetry, use_container_width=True)
+    with tab2:
+        st.subheader("Performance Metrics")
         
-        with tab3:
-            st.subheader("Fold-Change Distributions")
-            
-            # Density plot
-            fig_density = self.visualizer.plot_density(results_df)
-            st.plotly_chart(fig_density, use_container_width=True)
-            
-            # MA plot
-            st.markdown("**MA Plot**")
-            fig_ma = self.visualizer.plot_ma(results_df)
-            st.plotly_chart(fig_ma, use_container_width=True)
+        # Accuracy box plot
+        st.markdown("**Fold-Change Accuracy**")
+        fig_accuracy = self.visualizer.plot_fc_boxplot(results_df)
+        st.plotly_chart(fig_accuracy, use_container_width=True)
         
-        with tab4:
-            st.subheader("Volcano Plot - Differential Abundance")
-            
-            fig_volcano = self.visualizer.plot_volcano(
-                results_df,
-                fc_threshold=st.session_state.lfqbench_config.limit_fc,
-                alpha=st.session_state.lfqbench_config.alpha_limma
-            )
-            st.plotly_chart(fig_volcano, use_container_width=True)
+        # Precision violin plot
+        st.markdown("**Quantitative Precision (CV)**")
+        fig_cv = self.visualizer.plot_cv_violin(results_df)
+        st.plotly_chart(fig_cv, use_container_width=True)
         
-        with tab5:
-            st.subheader("Detailed Analysis")
-            
-            # Faceted scatter
-            st.markdown("**Species-Specific Fold-Changes**")
-            fig_facet = self.visualizer.plot_facet_scatter(results_df)
-            st.plotly_chart(fig_facet, use_container_width=True)
-            
-            # PCA if available
-            if len(results['experimental_cols']) >= 2:
-                st.markdown("**Sample PCA**")
-                try:
-                    all_cols = results['control_cols'] + results['experimental_cols']
-                    pca_result, var_explained = self.analyzer.perform_pca(results_df, all_cols)
-                    
-                    name_mapping = st.session_state.get('column_name_mapping', {})
-                    sample_names = [name_mapping.get(col, col) for col in all_cols]
-                    
-                    fig_pca = self.visualizer.plot_pca(pca_result, var_explained, sample_names)
-                    st.plotly_chart(fig_pca, use_container_width=True)
-                except Exception as e:
-                    st.warning(f"Could not generate PCA plot: {str(e)}")
-        
-        with tab6:
-            st.subheader("Export Results")
-            
-            st.markdown("Download analysis results and all visualizations.")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                # Export results dataframe
-                csv_results = results_df.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download Results (CSV)",
-                    data=csv_results,
-                    file_name="lfqbench_results.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                    key="download_results_btn"
-                )
-            
-            with col2:
-                # Export metrics
-                metrics_df = pd.DataFrame([metrics])
-                csv_metrics = metrics_df.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download Metrics (CSV)",
-                    data=csv_metrics,
-                    file_name="lfqbench_metrics.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                    key="download_metrics_btn"
-                )
-            
-            with col3:
-                # Export all figures as ZIP
-                try:
-                    zip_data = self.visualizer.export_all_figures()
-                    st.download_button(
-                        label="📦 Download All Figures (ZIP)",
-                        data=zip_data,
-                        file_name="lfqbench_figures.zip",
-                        mime="application/zip",
-                        use_container_width=True,
-                        key="download_figures_btn"
-                    )
-                except Exception as e:
-                    st.error(f"Could not export figures: {str(e)}")
+        # Asymmetry table
+        st.markdown("**Asymmetry Factors**")
+        st.markdown("Values near 1.0 indicate good performance. Values <0.5 or >2.0 indicate ratio compression/extension issues.")
+        fig_asymmetry = self.visualizer.plot_asymmetry_table(asymmetry_df)
+        st.plotly_chart(fig_asymmetry, use_container_width=True)
     
+    with tab3:
+        st.subheader("Fold-Change Distributions")
+        
+        # Density plot
+        fig_density = self.visualizer.plot_density(results_df)
+        st.plotly_chart(fig_density, use_container_width=True)
+        
+        # MA plot
+        st.markdown("**MA Plot**")
+        fig_ma = self.visualizer.plot_ma(results_df)
+        st.plotly_chart(fig_ma, use_container_width=True)
+    
+    with tab4:
+        st.subheader("Volcano Plot - Differential Abundance")
+        
+        fig_volcano = self.visualizer.plot_volcano(
+            results_df,
+            fc_threshold=st.session_state.lfqbench_config.limit_fc,
+            alpha=st.session_state.lfqbench_config.alpha_limma
+        )
+        st.plotly_chart(fig_volcano, use_container_width=True)
+    
+    with tab5:
+        st.subheader("Detailed Analysis")
+        
+        # Faceted scatter
+        st.markdown("**Species-Specific Fold-Changes**")
+        fig_facet = self.visualizer.plot_facet_scatter(results_df)
+        st.plotly_chart(fig_facet, use_container_width=True)
+        
+        # PCA if available
+        if len(results['experimental_cols']) >= 2:
+            st.markdown("**Sample PCA**")
+            try:
+                all_cols = results['control_cols'] + results['experimental_cols']
+                pca_result, var_explained = self.analyzer.perform_pca(results_df, all_cols)
+                
+                name_mapping = st.session_state.get('column_name_mapping', {})
+                sample_names = [name_mapping.get(col, col) for col in all_cols]
+                
+                fig_pca = self.visualizer.plot_pca(pca_result, var_explained, sample_names)
+                st.plotly_chart(fig_pca, use_container_width=True)
+            except Exception as e:
+                st.warning(f"Could not generate PCA plot: {str(e)}")
+    
+    with tab6:
+        st.subheader("Export Results")
+        
+        st.markdown("Download analysis results and all visualizations.")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            # Export results dataframe
+            csv_results = results_df.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Results (CSV)",
+                data=csv_results,
+                file_name="lfqbench_results.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key="download_results_btn"
+            )
+        
+        with col2:
+            # Export metrics
+            metrics_df = pd.DataFrame([metrics])
+            csv_metrics = metrics_df.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Metrics (CSV)",
+                data=csv_metrics,
+                file_name="lfqbench_metrics.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key="download_metrics_btn"
+            )
+        
+        with col3:
+            # Export all figures as ZIP
+            try:
+                zip_data = self.visualizer.export_all_figures()
+                st.download_button(
+                    label="📦 Download All Figures (ZIP)",
+                    data=zip_data,
+                    file_name="lfqbench_figures.zip",
+                    mime="application/zip",
+                    use_container_width=True,
+                    key="download_figures_btn"
+                )
+            except Exception as e:
+                st.error(f"Could not export figures: {str(e)}")
+
     def _render_navigation(self):
         """Render navigation buttons"""
         
