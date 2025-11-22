@@ -33,6 +33,9 @@ class LFQbenchModule:
         
         if 'lfqbench_color_scheme' not in st.session_state:
             st.session_state.lfqbench_color_scheme = 'Default'
+        
+        if 'lfqbench_auto_run' not in st.session_state:
+            st.session_state.lfqbench_auto_run = False
     
     def run(self):
         """Execute LFQbench analysis workflow"""
@@ -89,7 +92,7 @@ class LFQbenchModule:
         
         st.header("Step 1: Analysis Configuration")
         
-        # Color scheme selector - NEW
+        # Color scheme selector
         st.subheader("🎨 Color Scheme")
         
         color_schemes = {
@@ -143,7 +146,7 @@ class LFQbenchModule:
         These are used to calculate accuracy and classify true/false positives.
         """)
         
-        # Get detected species from upload module - FIXED
+        # Get detected species from upload module
         species_assignments = st.session_state.get('species_assignments', pd.Series())
         detected_species = species_assignments.unique().tolist() if len(species_assignments) > 0 else []
         
@@ -156,12 +159,12 @@ class LFQbenchModule:
         
         st.info(f"**Detected species**: {', '.join(detected_species)}")
         
-        # Create dynamic species fold-change inputs - FIXED
+        # Create dynamic species fold-change inputs
         species_fold_changes = {}
         
         # Create columns based on number of species
         n_species = len(detected_species)
-        cols = st.columns(min(2, n_species))  # Max 2 columns
+        cols = st.columns(min(2, n_species))
         
         # Map species to default fold-changes
         default_fc_map = {
@@ -279,7 +282,7 @@ class LFQbenchModule:
             st.warning("⚠️ Please select at least one sample for both Control and Experimental groups.")
             return
         
-        # Store configuration with dynamic species - FIXED
+        # Store configuration with dynamic species
         config = BenchmarkConfig(
             limit_mv=limit_mv,
             limit_cv=limit_cv,
@@ -324,7 +327,7 @@ class LFQbenchModule:
             })
     
     def _step2_run_analysis(self):
-        """Step 2: Run LFQbench analysis"""
+        """Step 2: Run LFQbench analysis - AUTO-RUN"""
         
         st.header("Step 2: Run Analysis")
         
@@ -369,9 +372,14 @@ class LFQbenchModule:
         selected_colors = color_schemes[st.session_state.lfqbench_color_scheme]
         self.visualizer = get_lfqbench_visualizer(selected_colors)
         
-        # Run analysis button
-        if st.button("▶️ Run Analysis", type="primary", use_container_width=True, key="run_analysis_btn"):
-            
+        # AUTO-RUN: Check if analysis should run automatically
+        should_auto_run = (
+            st.session_state.lfqbench_results is None and 
+            st.session_state.get('lfqbench_auto_run', False)
+        )
+        
+        if should_auto_run or st.session_state.lfqbench_results is None:
+            # Run analysis automatically
             with st.spinner("Running LFQbench analysis..."):
                 
                 # Progress container
@@ -399,6 +407,9 @@ class LFQbenchModule:
                         'experimental_cols': experimental_cols
                     }
                     
+                    # Reset auto-run flag
+                    st.session_state.lfqbench_auto_run = False
+                    
                     st.success("✅ Analysis completed successfully!")
                     
                     # Show quick summary
@@ -407,7 +418,7 @@ class LFQbenchModule:
                     col1, col2, col3, col4 = st.columns(4)
                     
                     with col1:
-                        st.metric("Proteins Analyzed", metrics['n_proteins'])
+                        st.metric("Proteins Analyzed", int(metrics['n_proteins']))
                     
                     with col2:
                         st.metric("Sensitivity (%)", f"{metrics['sensitivity']:.1f}")
@@ -432,7 +443,7 @@ class LFQbenchModule:
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
-                st.metric("Proteins Analyzed", metrics['n_proteins'])
+                st.metric("Proteins Analyzed", int(metrics['n_proteins']))
             
             with col2:
                 st.metric("Sensitivity (%)", f"{metrics['sensitivity']:.1f}")
@@ -513,7 +524,7 @@ class LFQbenchModule:
         with tab3:
             st.subheader("Fold-Change Distributions")
             
-            # Density plot - FIXED
+            # Density plot
             fig_density = self.visualizer.plot_density(results_df)
             st.plotly_chart(fig_density, use_container_width=True)
             
@@ -535,102 +546,4 @@ class LFQbenchModule:
         with tab5:
             st.subheader("Detailed Analysis")
             
-            # Faceted scatter
-            st.markdown("**Species-Specific Fold-Changes**")
-            fig_facet = self.visualizer.plot_facet_scatter(results_df)
-            st.plotly_chart(fig_facet, use_container_width=True)
-            
-            # PCA if available
-            if len(results['experimental_cols']) >= 2:
-                st.markdown("**Sample PCA**")
-                try:
-                    all_cols = results['control_cols'] + results['experimental_cols']
-                    pca_result, var_explained = self.analyzer.perform_pca(results_df, all_cols)
-                    
-                    name_mapping = st.session_state.get('column_name_mapping', {})
-                    sample_names = [name_mapping.get(col, col) for col in all_cols]
-                    
-                    fig_pca = self.visualizer.plot_pca(pca_result, var_explained, sample_names)
-                    st.plotly_chart(fig_pca, use_container_width=True)
-                except Exception as e:
-                    st.warning(f"Could not generate PCA plot: {str(e)}")
-        
-        with tab6:
-            st.subheader("Export Results")
-            
-            st.markdown("Download analysis results and filtered data.")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # Export results dataframe
-                csv_results = results_df.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download Results (CSV)",
-                    data=csv_results,
-                    file_name="lfqbench_results.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                    key="download_results_btn"
-                )
-            
-            with col2:
-                # Export metrics
-                metrics_df = pd.DataFrame([metrics])
-                csv_metrics = metrics_df.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download Metrics (CSV)",
-                    data=csv_metrics,
-                    file_name="lfqbench_metrics.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                    key="download_metrics_btn"
-                )
-    
-    def _render_navigation(self):
-        """Render navigation buttons"""
-        
-        st.divider()
-        
-        col1, col2, col3 = st.columns([1, 1, 1])
-        
-        with col1:
-            if st.session_state.lfqbench_step > 1:
-                if st.button("⬅️ Previous", use_container_width=True, key="lfq_prev_btn"):
-                    st.session_state.lfqbench_step -= 1
-                    st.rerun()
-        
-        with col2:
-            if st.button("🔄 Reset", use_container_width=True, key="lfq_reset_btn"):
-                st.session_state.lfqbench_step = 1
-                st.session_state.lfqbench_config = None
-                st.session_state.lfqbench_results = None
-                st.rerun()
-        
-        with col3:
-            can_proceed = self._can_proceed_to_next_step()
-            
-            if st.session_state.lfqbench_step < 3:
-                if st.button("Next ➡️", use_container_width=True, disabled=not can_proceed, key="lfq_next_btn"):
-                    st.session_state.lfqbench_step += 1
-                    st.rerun()
-    
-    def _can_proceed_to_next_step(self) -> bool:
-        """Check if can proceed to next step"""
-        
-        step = st.session_state.lfqbench_step
-        
-        if step == 1:
-            return (st.session_state.lfqbench_config is not None and
-                   len(st.session_state.get('lfq_control_samples', [])) > 0 and
-                   len(st.session_state.get('lfq_experimental_samples', [])) > 0)
-        elif step == 2:
-            return st.session_state.lfqbench_results is not None
-        else:
-            return True
-
-
-def run_lfqbench_module():
-    """Convenience function to run LFQbench module"""
-    module = LFQbenchModule()
-    module.run()
+            # Fac
