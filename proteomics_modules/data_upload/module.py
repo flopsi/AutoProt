@@ -86,9 +86,7 @@ class DataUploadModule:
         
         elif st.session_state.upload_step == 5:
             self._step5_workflow_selection()
-        
-        # Navigation buttons
-        self._render_navigation()
+
     
     def _render_progress(self):
         """Render progress bar"""
