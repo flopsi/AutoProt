@@ -526,7 +526,7 @@ class LFQbenchVisualizer:
     
     def export_all_figures(self) -> bytes:
         """
-        Export all figures as HTML files in a ZIP - NEW
+        Export all figures as HTML files in a ZIP
         """
         zip_buffer = io.BytesIO()
         
