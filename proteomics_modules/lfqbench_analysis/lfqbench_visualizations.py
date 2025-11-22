@@ -465,9 +465,9 @@ class LFQbenchVisualizer:
         return fig
     
     def create_summary_metrics_table(self, metrics: Dict[str, float]) -> go.Figure:
-        """
-        Create summary metrics display table - COMPLETELY FIXED
-        """
+            """
+            Create summary metrics display table - COMPLETELY FIXED
+            """
         
         # Debug: Print what we received
         print(f"DEBUG - Creating metrics table with {len(metrics)} metrics")
