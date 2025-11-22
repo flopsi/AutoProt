@@ -1,41 +1,27 @@
-"""
-AutoProt - Automated Proteomics Analysis Platform
-Main application entry point
-"""
-
 import streamlit as st
-
-# Page config MUST be first Streamlit command
-st.set_page_config(
-    page_title="AutoProt Analysis",
-    page_icon="🧬",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Import modules
 from proteomics_modules.data_upload.module import run_upload_module
 from proteomics_modules.lfqbench_analysis.lfqbench_module import run_lfqbench_module
 
+# Initialize session state
+if 'current_page' not in st.session_state:
+    st.session_state.current_page = "Data Upload"
+
 # Sidebar navigation
 st.sidebar.title("📊 AutoProt Analysis")
-st.sidebar.markdown("---")
 
+# Navigation options
 page = st.sidebar.radio(
-    "Select Module",
-    ["🔼 Data Upload", "🧪 LFQbench Analysis"],
-    key="main_navigation"
+    "Navigate to:",
+    ["Data Upload", "LFQbench Analysis"],
+    index=0 if st.session_state.current_page == "Data Upload" else 1,
+    key="sidebar_navigation"
 )
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("### About")
-st.sidebar.info(
-    "AutoProt provides comprehensive proteomics data analysis "
-    "with benchmark evaluation capabilities."
-)
+# Update current page from sidebar selection
+st.session_state.current_page = page
 
-# Main content - ONLY ONE module runs at a time
-if page == "🔼 Data Upload":
+# Render selected page
+if st.session_state.current_page == "Data Upload":
     run_upload_module()
-elif page == "🧪 LFQbench Analysis":
+elif st.session_state.current_page == "LFQbench Analysis":
     run_lfqbench_module()
