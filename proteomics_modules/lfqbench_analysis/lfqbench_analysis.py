@@ -69,7 +69,7 @@ class LFQbenchAnalyzer:
         exp_mean = np.nanmean(exp_values)
         ctr_mean = np.nanmean(ctr_values)
         
-        if exp_mean <= 0 or ctr_mean <= 0:
+        if exp_mean <= 0 or ctr_mean <= 0 or np.isnan(exp_mean) or np.isnan(ctr_mean):
             return np.nan
         
         return np.log2(exp_mean / ctr_mean)
@@ -127,7 +127,7 @@ class LFQbenchAnalyzer:
         # Add expected fold-change based on species
         df['expected_log2_fc'] = df['Species'].map(self.expected_fc_map)
         
-        # Calculate deviation from expected
+        # Calculate deviation from expected - FIXED
         df['fc_deviation'] = np.abs(df['log2_fc'] - df['expected_log2_fc'])
         
         return df
@@ -137,14 +137,13 @@ class LFQbenchAnalyzer:
                           ctr_cols: List[str]) -> pd.DataFrame:
         """
         Perform differential expression analysis using limma-like approach
-        Uses t-test with empirical Bayes moderation approximation
         """
         
         p_values = []
         t_stats = []
         
         for idx, row in df.iterrows():
-            # Convert to numeric and drop NaN - FIXED
+            # Convert to numeric and drop NaN
             exp_vals = pd.to_numeric(row[exp_cols], errors='coerce').dropna().values.astype(float)
             ctr_vals = pd.to_numeric(row[ctr_cols], errors='coerce').dropna().values.astype(float)
             
@@ -221,7 +220,7 @@ class LFQbenchAnalyzer:
         return df
     
     def calculate_performance_metrics(self, df: pd.DataFrame) -> Dict[str, float]:
-        """Calculate comprehensive performance metrics"""
+        """Calculate comprehensive performance metrics - FIXED"""
         
         # Confusion matrix counts
         tp = len(df[df['de_result'] == 'true positive'])
@@ -230,69 +229,71 @@ class LFQbenchAnalyzer:
         fn = len(df[df['de_result'] == 'false negative'])
         
         # Sensitivity and specificity
-        sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0
-        specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+        sensitivity = (tp / (tp + fn) * 100) if (tp + fn) > 0 else 0.0
+        specificity = (tn / (tn + fp) * 100) if (tn + fp) > 0 else 0.0
         
         # Empirical FDR (deFDR)
-        de_fdr = fp / (tp + fp) if (tp + fp) > 0 else 0
+        de_fdr = (fp / (tp + fp) * 100) if (tp + fp) > 0 else 0.0
         
-        # Accuracy metrics
-        accuracy = np.mean(df['fc_deviation'].dropna())
+        # Accuracy (mean absolute deviation from expected)
+        accuracy = float(df['fc_deviation'].mean()) if 'fc_deviation' in df.columns else np.nan
         
         # Trueness (cumulative systematic bias)
         trueness_values = []
         for species in self.expected_fc_map.keys():
             species_data = df[df['Species'] == species]
             if len(species_data) > 0:
-                median_fc = species_data['log2_fc'].median()
+                median_fc = float(species_data['log2_fc'].median())
                 expected_fc = self.expected_fc_map[species]
-                trueness_values.append(np.abs(median_fc - expected_fc))
+                trueness_values.append(abs(median_fc - expected_fc))
         
-        trueness = np.sum(trueness_values) if trueness_values else np.nan
+        trueness = float(np.sum(trueness_values)) if trueness_values else np.nan
         
         # Precision (CV)
-        cv_mean = np.mean([df['exp_cv'].mean(), df['ctr_cv'].mean()])
-        cv_median = np.median([df['exp_cv'].median(), df['ctr_cv'].median()])
+        cv_mean = float(np.mean([df['exp_cv'].mean(), df['ctr_cv'].mean()]))
+        cv_median = float(np.median([df['exp_cv'].median(), df['ctr_cv'].median()]))
         
         return {
-            'tp': tp,
-            'tn': tn,
-            'fp': fp,
-            'fn': fn,
-            'sensitivity': sensitivity * 100,
-            'specificity': specificity * 100,
-            'de_fdr': de_fdr * 100,
-            'accuracy': accuracy,
-            'trueness': trueness,
-            'cv_mean': cv_mean,
-            'cv_median': cv_median,
-            'n_proteins': len(df)
+            'tp': float(tp),
+            'tn': float(tn),
+            'fp': float(fp),
+            'fn': float(fn),
+            'sensitivity': float(sensitivity),
+            'specificity': float(specificity),
+            'de_fdr': float(de_fdr),
+            'accuracy': float(accuracy),
+            'trueness': float(trueness),
+            'cv_mean': float(cv_mean),
+            'cv_median': float(cv_median),
+            'n_proteins': float(len(df))
         }
     
     def calculate_asymmetry_factor(self, log2_fc_values: np.ndarray) -> float:
         """
-        Calculate asymmetry factor to detect fold-change compression/extension
-        Values near 1.0 indicate good performance, <0.5 or >2.0 indicate issues
+        Calculate asymmetry factor - FIXED
         """
+        # Remove NaN values
+        log2_fc_values = log2_fc_values[~np.isnan(log2_fc_values)]
+        
         if len(log2_fc_values) < 10:
             return np.nan
         
-        q1 = np.percentile(log2_fc_values, 25)
-        q2 = np.percentile(log2_fc_values, 50)  # median
-        q3 = np.percentile(log2_fc_values, 75)
+        q1 = float(np.percentile(log2_fc_values, 25))
+        q2 = float(np.percentile(log2_fc_values, 50))  # median
+        q3 = float(np.percentile(log2_fc_values, 75))
         
-        q2_q1 = np.abs(q2 - q1)
-        q2_q3 = np.abs(q2 - q3)
+        q2_q1 = abs(q2 - q1)
+        q3_q2 = abs(q3 - q2)
         
-        if q2_q3 == 0:
+        if q3_q2 == 0:
             return np.nan
         
-        asymmetry = q2_q1 / q2_q3
+        asymmetry = q2_q1 / q3_q2
         
-        return asymmetry
+        return float(asymmetry)
     
     def calculate_asymmetry_metrics(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate asymmetry factors for each species"""
+        """Calculate asymmetry factors for each species - FIXED"""
         
         asymmetry_data = []
         
@@ -300,14 +301,13 @@ class LFQbenchAnalyzer:
             species_data = df[df['Species'] == species]
             
             if len(species_data) >= 10:
-                asymmetry = self.calculate_asymmetry_factor(
-                    species_data['log2_fc'].dropna().values
-                )
+                fc_values = species_data['log2_fc'].dropna().values
+                asymmetry = self.calculate_asymmetry_factor(fc_values)
                 
                 asymmetry_data.append({
                     'Species': species,
-                    'asymmetry_factor': asymmetry,
-                    'n_proteins': len(species_data)
+                    'Asymmetry Factor': float(asymmetry) if not np.isnan(asymmetry) else np.nan,
+                    'N Proteins': int(len(species_data))
                 })
         
         return pd.DataFrame(asymmetry_data)
@@ -317,14 +317,9 @@ class LFQbenchAnalyzer:
                              ctr_cols: List[str]) -> Tuple[pd.DataFrame, Dict, pd.DataFrame]:
         """
         Run complete LFQbench analysis pipeline
-        
-        Returns:
-            - Filtered and analyzed dataframe
-            - Performance metrics dictionary
-            - Asymmetry metrics dataframe
         """
         
-        # Ensure quantity columns are numeric - FIXED
+        # Ensure quantity columns are numeric
         print("Step 0: Converting columns to numeric...")
         for col in exp_cols + ctr_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce')
