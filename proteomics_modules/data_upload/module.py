@@ -10,6 +10,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 import uuid
 import shutil
+import numpy as np
 
 
 class DataUploadModule:
@@ -170,12 +171,11 @@ class DataUploadModule:
         df = st.session_state.raw_data
         
         # Auto-detect columns
-        metadata_cols = [col for col in df.columns and df[col].dtype in ["string"]]
-        
-        quantity_cols = [col for col in df.columns if col not in metadata_cols 
-                        and df[col].dtype in ['float64', 'int64']]
-        ##metadata_cols = [col for col in df.columns if df[col].dtype in ["string"]]
-        
+        quantity_cols = [col for col in df.columns if np.issubdtype(df[col].dtype, np.number)]
+
+        metadata_cols = [col for col in df.columns if not np.issubdtype(df[col].dtype, np.number)]
+
+
         st.markdown("**Metadata Columns**")
         selected_metadata = st.multiselect(
             "Select metadata columns",
