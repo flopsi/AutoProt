@@ -238,17 +238,123 @@ class DataUploadModule:
             st.session_state.column_name_mapping = trimmed_mapping
     
     def _step4_sample_annotation(self):
-        """Step 4: Species annotation"""
+        """Step 4: Species annotation with EDITABLE DEFAULTS"""
+        
         st.header("Step 4: Sample Annotation")
         
         if 'raw_data' not in st.session_state:
-            st.error("No data loaded")
+            st.error("No data loaded. Please go back to Step 1.")
             return
         
-        # Simplified version that works
-        st.info("✅ Species annotation available. Configure in LFQbench Analysis module.")
-    
-    
+        df = st.session_state.raw_data
+        
+        st.subheader("🧬 Species Annotation")
+        
+        st.markdown("""
+        Define keywords to identify species in your protein identifiers.
+        Default keywords are provided but can be edited.
+        """)
+        
+        if 'species_keywords' not in st.session_state:
+            st.session_state.species_keywords = [
+                {'keyword': 'HUMAN', 'species': 'Human'},
+                {'keyword': 'YEAST', 'species': 'Yeast'},
+                {'keyword': 'ECOLI', 'species': 'E. coli'}
+            ]
+        
+        num_species = st.number_input(
+            "Number of species", 
+            min_value=1, 
+            max_value=10, 
+            value=len(st.session_state.species_keywords),
+            key="num_species_input"
+        )
+        
+        current_count = len(st.session_state.species_keywords)
+        if num_species > current_count:
+            for i in range(num_species - current_count):
+                st.session_state.species_keywords.append({'keyword': '', 'species': ''})
+        elif num_species < current_count:
+            st.session_state.species_keywords = st.session_state.species_keywords[:num_species]
+        
+        mapping = {}
+        st.markdown("**Species Keywords** (edit as needed)")
+        
+        for i in range(num_species):
+            col1, col2 = st.columns(2)
+            
+            current_kw = st.session_state.species_keywords[i]['keyword']
+            current_sp = st.session_state.species_keywords[i]['species']
+            
+            with col1:
+                keyword = st.text_input(
+                    f"Keyword {i+1}", 
+                    value=current_kw,
+                    key=f"species_kw_{i}", 
+                    placeholder="e.g., HUMAN"
+                )
+            with col2:
+                species = st.text_input(
+                    f"Species {i+1}", 
+                    value=current_sp,
+                    key=f"species_sp_{i}", 
+                    placeholder="e.g., Human"
+                )
+            
+            st.session_state.species_keywords[i] = {'keyword': keyword, 'species': species}
+            
+            if keyword and species:
+                mapping[keyword] = species
+        
+        if mapping:
+            text_cols = [col for col in df.columns if df[col].dtype == 'object']
+            
+            if text_cols:
+                selected_col = st.selectbox(
+                    "Column with species identifiers", 
+                    options=text_cols,
+                    key="species_column_selector"
+                )
+                
+                def assign_species(val):
+                    if pd.isna(val):
+                        return "Unknown"
+                    val_str = str(val).upper()
+                    for kw, sp in mapping.items():
+                        if kw.upper() in val_str:
+                            return sp
+                    return "Unknown"
+                
+                species_series = df[selected_col].apply(assign_species)
+                st.session_state.species_assignments = species_series
+                
+                st.markdown("**Species Distribution**")
+                
+                species_counts = species_series.value_counts()
+                chart_data = pd.DataFrame({
+                    'Species': species_counts.index.tolist(),
+                    'Count': species_counts.values.tolist()
+                })
+                
+                st.bar_chart(chart_data.set_index('Species'))
+                
+                cols = st.columns(len(species_counts))
+                for idx, (species, count) in enumerate(species_counts.items()):
+                    with cols[idx]:
+                        st.metric(species, f"{count:,}")
+                
+                detected_species = [s for s in species_series.unique() if s != 'Unknown']
+                st.success(f"✅ Detected {len(detected_species)} species: {', '.join(detected_species)}")
+                
+                unknown_count = (species_series == 'Unknown').sum()
+                if unknown_count > 0:
+                    unknown_pct = (unknown_count / len(species_series)) * 100
+                    st.warning(f"⚠️ {unknown_count:,} proteins ({unknown_pct:.1f}%) could not be assigned to any species")
+            else:
+                st.warning("No text columns found for species assignment")
+        else:
+            st.warning("Please enter at least one species keyword")
+
 
     
     def _step5_workflow_suggestion(self):
