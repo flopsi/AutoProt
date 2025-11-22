@@ -85,7 +85,7 @@ class DataUploadModule:
             self._step4_sample_annotation()
         
         elif st.session_state.upload_step == 5:
-            self._step5_workflow_suggestion()
+            self._step5_workflow_selection()
         
         # Navigation buttons
         self._render_navigation()
