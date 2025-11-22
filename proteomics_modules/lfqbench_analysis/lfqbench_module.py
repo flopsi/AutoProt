@@ -102,6 +102,7 @@ class LFQbenchModule:
                 value=0.0,
                 step=0.5,
                 format="%.1f",
+                key="fc_human_input",
                 help="Expected fold-change for human proteins (typically 0 = no change)"
             )
             
@@ -111,6 +112,7 @@ class LFQbenchModule:
                 value=1.0,
                 step=0.5,
                 format="%.1f",
+                key="fc_yeast_input",
                 help="Expected fold-change for yeast proteins (e.g., 1 = 2x increase)"
             )
         
@@ -121,6 +123,7 @@ class LFQbenchModule:
                 value=-2.0,
                 step=0.5,
                 format="%.1f",
+                key="fc_ecoli_input",
                 help="Expected fold-change for E. coli proteins (e.g., -2 = 4x decrease)"
             )
             
@@ -130,6 +133,7 @@ class LFQbenchModule:
                 value=-1.0,
                 step=0.5,
                 format="%.1f",
+                key="fc_celegans_input",
                 help="Expected fold-change for C. elegans proteins"
             )
         
@@ -146,6 +150,7 @@ class LFQbenchModule:
                 max_value=1.0,
                 value=0.67,
                 step=0.1,
+                key="limit_mv_slider",
                 help="Maximum fraction of missing values allowed per protein (2/3 = 67%)"
             )
         
@@ -156,6 +161,7 @@ class LFQbenchModule:
                 max_value=50.0,
                 value=20.0,
                 step=5.0,
+                key="limit_cv_slider",
                 help="Maximum coefficient of variation (%) for filtering"
             )
         
@@ -166,6 +172,7 @@ class LFQbenchModule:
                 max_value=2.0,
                 value=0.5,
                 step=0.1,
+                key="limit_fc_slider",
                 help="Minimum |log2 FC| to classify as differentially abundant"
             )
         
@@ -177,6 +184,7 @@ class LFQbenchModule:
             "Adjusted P-value Threshold (α)",
             options=[0.001, 0.01, 0.05, 0.1],
             index=1,
+            key="alpha_limma_select",
             help="Significance threshold for differential abundance (typical: 0.01)"
         )
         
@@ -206,7 +214,7 @@ class LFQbenchModule:
                 "Select control samples",
                 options=trimmed_names,
                 default=trimmed_names[:len(trimmed_names)//2] if len(trimmed_names) >= 2 else [],
-                key="control_samples"
+                key="control_samples_select"
             )
         
         with col2:
@@ -215,7 +223,7 @@ class LFQbenchModule:
                 "Select experimental samples",
                 options=[s for s in trimmed_names if s not in control_samples],
                 default=[s for s in trimmed_names if s not in control_samples][:len(trimmed_names)//2],
-                key="experimental_samples"
+                key="experimental_samples_select"
             )
         
         # Validate selection
@@ -223,7 +231,7 @@ class LFQbenchModule:
             st.warning("⚠️ Please select at least one sample for both Control and Experimental groups.")
             return
         
-        # Store configuration
+        # Store configuration (FIXED: use different names than widget keys)
         config = BenchmarkConfig(
             expected_fc_human=fc_human,
             expected_fc_yeast=fc_yeast,
@@ -236,8 +244,8 @@ class LFQbenchModule:
         )
         
         st.session_state.lfqbench_config = config
-        st.session_state.control_samples = control_samples
-        st.session_state.experimental_samples = experimental_samples
+        st.session_state.lfq_control_samples = control_samples  # FIXED: different name
+        st.session_state.lfq_experimental_samples = experimental_samples  # FIXED: different name
         
         # Show summary
         with st.expander("📋 Configuration Summary", expanded=False):
@@ -282,9 +290,9 @@ class LFQbenchModule:
         # Add species to dataframe
         df['Species'] = species_assignments
         
-        # Get sample columns
-        control_samples = st.session_state.control_samples
-        experimental_samples = st.session_state.experimental_samples
+        # Get sample columns (FIXED: use different session state keys)
+        control_samples = st.session_state.lfq_control_samples
+        experimental_samples = st.session_state.lfq_experimental_samples
         
         # Map trimmed names back to original column names
         name_mapping = st.session_state.get('column_name_mapping', {})
@@ -298,7 +306,7 @@ class LFQbenchModule:
         self.visualizer = get_lfqbench_visualizer()
         
         # Run analysis button
-        if st.button("▶️ Run Analysis", type="primary", use_container_width=True):
+        if st.button("▶️ Run Analysis", type="primary", use_container_width=True, key="run_analysis_btn"):
             
             with st.spinner("Running LFQbench analysis..."):
                 
@@ -387,162 +395,4 @@ class LFQbenchModule:
         asymmetry_df = results['asymmetry_df']
         
         # Initialize visualizer if not done
-        if self.visualizer is None:
-            self.visualizer = get_lfqbench_visualizer()
-        
-        # Create tabs for different visualizations
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-            "📊 Summary", "🎯 Performance", "📈 Distributions", 
-            "🌋 Volcano", "🔍 Detailed", "💾 Export"
-        ])
-        
-        with tab1:
-            st.subheader("Analysis Summary")
-            
-            # Metrics table
-            fig_metrics = self.visualizer.create_summary_metrics_table(metrics)
-            st.plotly_chart(fig_metrics, use_container_width=True)
-            
-            # Confusion matrix
-            st.subheader("Confusion Matrix")
-            fig_confusion = self.visualizer.plot_confusion_matrix(metrics)
-            st.plotly_chart(fig_confusion, use_container_width=True)
-        
-        with tab2:
-            st.subheader("Performance Metrics")
-            
-            # Accuracy box plot
-            st.markdown("**Fold-Change Accuracy**")
-            fig_accuracy = self.visualizer.plot_fc_boxplot(results_df)
-            st.plotly_chart(fig_accuracy, use_container_width=True)
-            
-            # Precision violin plot
-            st.markdown("**Quantitative Precision (CV)**")
-            fig_cv = self.visualizer.plot_cv_violin(results_df)
-            st.plotly_chart(fig_cv, use_container_width=True)
-            
-            # Asymmetry table
-            st.markdown("**Asymmetry Factors**")
-            st.markdown("Values near 1.0 indicate good performance. Values <0.5 or >2.0 indicate ratio compression/extension issues.")
-            fig_asymmetry = self.visualizer.plot_asymmetry_table(asymmetry_df)
-            st.plotly_chart(fig_asymmetry, use_container_width=True)
-        
-        with tab3:
-            st.subheader("Fold-Change Distributions")
-            
-            # Density plot
-            fig_density = self.visualizer.plot_density(results_df)
-            st.plotly_chart(fig_density, use_container_width=True)
-            
-            # MA plot
-            st.markdown("**MA Plot**")
-            fig_ma = self.visualizer.plot_ma(results_df)
-            st.plotly_chart(fig_ma, use_container_width=True)
-        
-        with tab4:
-            st.subheader("Volcano Plot - Differential Abundance")
-            
-            fig_volcano = self.visualizer.plot_volcano(
-                results_df,
-                fc_threshold=st.session_state.lfqbench_config.limit_fc,
-                alpha=st.session_state.lfqbench_config.alpha_limma
-            )
-            st.plotly_chart(fig_volcano, use_container_width=True)
-        
-        with tab5:
-            st.subheader("Detailed Analysis")
-            
-            # Faceted scatter
-            st.markdown("**Species-Specific Fold-Changes**")
-            fig_facet = self.visualizer.plot_facet_scatter(results_df)
-            st.plotly_chart(fig_facet, use_container_width=True)
-            
-            # PCA if available
-            if len(results['experimental_cols']) >= 2:
-                st.markdown("**Sample PCA**")
-                all_cols = results['control_cols'] + results['experimental_cols']
-                pca_result, var_explained = self.analyzer.perform_pca(results_df, all_cols)
-                
-                name_mapping = st.session_state.get('column_name_mapping', {})
-                sample_names = [name_mapping.get(col, col) for col in all_cols]
-                
-                fig_pca = self.visualizer.plot_pca(pca_result, var_explained, sample_names)
-                st.plotly_chart(fig_pca, use_container_width=True)
-        
-        with tab6:
-            st.subheader("Export Results")
-            
-            st.markdown("Download analysis results and filtered data.")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # Export results dataframe
-                csv_results = results_df.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download Results (CSV)",
-                    data=csv_results,
-                    file_name="lfqbench_results.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-            
-            with col2:
-                # Export metrics
-                metrics_df = pd.DataFrame([metrics])
-                csv_metrics = metrics_df.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download Metrics (CSV)",
-                    data=csv_metrics,
-                    file_name="lfqbench_metrics.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-    
-    def _render_navigation(self):
-        """Render navigation buttons"""
-        
-        st.divider()
-        
-        col1, col2, col3 = st.columns([1, 1, 1])
-        
-        with col1:
-            if st.session_state.lfqbench_step > 1:
-                if st.button("⬅️ Previous", use_container_width=True):
-                    st.session_state.lfqbench_step -= 1
-                    st.rerun()
-        
-        with col2:
-            if st.button("🔄 Reset", use_container_width=True):
-                st.session_state.lfqbench_step = 1
-                st.session_state.lfqbench_config = None
-                st.session_state.lfqbench_results = None
-                st.rerun()
-        
-        with col3:
-            can_proceed = self._can_proceed_to_next_step()
-            
-            if st.session_state.lfqbench_step < 3:
-                if st.button("Next ➡️", use_container_width=True, disabled=not can_proceed):
-                    st.session_state.lfqbench_step += 1
-                    st.rerun()
-    
-    def _can_proceed_to_next_step(self) -> bool:
-        """Check if can proceed to next step"""
-        
-        step = st.session_state.lfqbench_step
-        
-        if step == 1:
-            return (st.session_state.lfqbench_config is not None and
-                   len(st.session_state.get('control_samples', [])) > 0 and
-                   len(st.session_state.get('experimental_samples', [])) > 0)
-        elif step == 2:
-            return st.session_state.lfqbench_results is not None
-        else:
-            return True
-
-
-def run_lfqbench_module():
-    """Convenience function to run LFQbench module"""
-    module = LFQbenchModule()
-    module.run()
+        if self.visualizer is
