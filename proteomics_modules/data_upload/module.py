@@ -390,36 +390,6 @@ class DataUploadModule:
         # Success message
         st.success("✅ Data upload complete! Ready for analysis.")
         
-        st.divider()
-        
-        # NAVIGATION BUTTONS
-        col1, col2, col3 = st.columns([1, 1, 2])
-        
-        with col1:
-            if st.button("⬅️ Previous", use_container_width=True, key="prev_step5"):
-                st.session_state.upload_step = 4
-                st.rerun()
-        
-        with col2:
-            if st.button("🔄 Reset", use_container_width=True, key="reset_step5"):
-                st.session_state.upload_step = 1
-                st.session_state.raw_data = None
-                st.session_state.selected_workflow = None
-                st.rerun()
-        
-        with col3:
-            # BIG YELLOW BUTTON - Navigate to selected workflow
-            if workflow == "LFQbench":
-                button_text = "▶️ Start LFQbench Analysis"
-                button_type = "primary"
-            else:
-                button_text = f"▶️ Start {workflow}"
-                button_type = "primary"
-            
-            if st.button(button_text, use_container_width=True, type=button_type, key="goto_analysis"):
-                # Set session state to navigate to LFQbench module
-                st.session_state.current_page = "LFQbench Analysis"
-                st.rerun()
 
     
     def _render_navigation(self):
@@ -442,12 +412,19 @@ class DataUploadModule:
                 st.rerun()
         
         with col3:
-            can_proceed = self._can_proceed_to_next_step()
+            # BIG YELLOW BUTTON - Navigate to selected workflow
+            if workflow == "LFQbench":
+                button_text = "▶️ Start LFQbench Analysis"
+                button_type = "primary"
+            else:
+                button_text = f"▶️ Start {workflow}"
+                button_type = "primary"
             
-            if st.session_state.upload_step < 5:
-                if st.button("Next ➡️", use_container_width=True, disabled=not can_proceed, key="nav_next_btn"):
-                    st.session_state.upload_step += 1
-                    st.rerun()
+            if st.button(button_text, use_container_width=True, type=button_type, key="goto_analysis"):
+                # Set session state to navigate to LFQbench module
+                st.session_state.current_page = "LFQbench Analysis"
+                st.rerun()
+
     
     def _can_proceed_to_next_step(self) -> bool:
         """Check if can proceed"""
