@@ -63,91 +63,137 @@ class LFQbenchVisualizer:
         return fig
     
     def plot_volcano(self, df: pd.DataFrame, fc_threshold: float = 0.5, alpha: float = 0.01, title: str = "Volcano Plot") -> go.Figure:
-        """Create volcano plot"""
+        """Create volcano plot with proper p-value handling"""
         df = df.copy()
         
         if 'p_adj' not in df.columns or 'log2_fc' not in df.columns:
             fig = go.Figure()
-            fig.add_annotation(text="Missing required data", showarrow=False, font=dict(size=16))
+            fig.add_annotation(text="Missing required data (p_adj or log2_fc)", showarrow=False, font=dict(size=16))
             return fig
         
+        # Convert to numeric and handle errors
         df['p_adj'] = pd.to_numeric(df['p_adj'], errors='coerce')
         df['log2_fc'] = pd.to_numeric(df['log2_fc'], errors='coerce')
+        
+        # Drop invalid rows
         df = df.dropna(subset=['p_adj', 'log2_fc'])
         
         if len(df) == 0:
             fig = go.Figure()
-            fig.add_annotation(text="No valid data", showarrow=False, font=dict(size=16))
+            fig.add_annotation(text="No valid data for volcano plot", showarrow=False, font=dict(size=16))
             return fig
         
+        # Fix p-values: replace zeros with very small value
         df.loc[df['p_adj'] <= 0, 'p_adj'] = 1e-300
-        df['-log10_pval'] = -np.log10(df['p_adj'])
-        df['-log10_pval'] = df['-log10_pval'].replace([np.inf], 300)
-        df['-log10_pval'] = df['-log10_pval'].replace([-np.inf], 0)
         
+        # Calculate -log10(p_adj)
+        df['-log10_pval'] = -np.log10(df['p_adj'])
+        
+        # Handle inf values
+        df['-log10_pval'] = df['-log10_pval'].replace([np.inf, -np.inf], 300)
+        
+        # Cap extremely high values for better visualization
         max_display = 50
         df.loc[df['-log10_pval'] > max_display, '-log10_pval'] = max_display
         
+        print(f"DEBUG Volcano: p_adj range = {df['p_adj'].min():.2e} to {df['p_adj'].max():.2e}")
+        print(f"DEBUG Volcano: -log10(p_adj) range = {df['-log10_pval'].min():.2f} to {df['-log10_pval'].max():.2f}")
+        print(f"DEBUG Volcano: Significant proteins = {(df['is_significant'] == True).sum() if 'is_significant' in df.columns else 'N/A'}")
+        
         fig = go.Figure()
+        
         has_significance = 'is_significant' in df.columns
         
-        for species in df['Species'].unique():
+        for species in sorted(df['Species'].unique()):
             species_data = df[df['Species'] == species].copy()
             
             if has_significance:
+                # Separate significant and non-significant
                 sig_data = species_data[species_data['is_significant'] == True]
                 non_sig_data = species_data[species_data['is_significant'] == False]
                 
+                # Plot non-significant (smaller, transparent)
                 if len(non_sig_data) > 0:
                     fig.add_trace(go.Scatter(
                         x=non_sig_data['log2_fc'],
                         y=non_sig_data['-log10_pval'],
                         mode='markers',
-                        name=f"{species} (NS)",
-                        marker=dict(color=self.color_map.get(species, 'gray'), size=4, opacity=0.3),
-                        showlegend=False,
+                        name=f"{species}",
+                        marker=dict(
+                            color=self.color_map.get(species, 'gray'),
+                            size=4,
+                            opacity=0.3,
+                            symbol='circle'
+                        ),
                         text=non_sig_data.index,
-                        hovertemplate='<b>%{text}</b><br>Log2FC: %{x:.2f}<br>-log10(padj): %{y:.2f}<extra></extra>'
+                        hovertemplate='<b>%{text}</b><br>Log2FC: %{x:.2f}<br>-log10(padj): %{y:.2f}<extra></extra>',
+                        showlegend=True
                     ))
                 
+                # Plot significant (larger, opaque)
                 if len(sig_data) > 0:
                     fig.add_trace(go.Scatter(
                         x=sig_data['log2_fc'],
                         y=sig_data['-log10_pval'],
                         mode='markers',
-                        name=species,
-                        marker=dict(color=self.color_map.get(species, 'gray'), size=8, opacity=0.8, line=dict(width=1, color='white')),
+                        name=f"{species} (Sig)",
+                        marker=dict(
+                            color=self.color_map.get(species, 'gray'),
+                            size=10,
+                            opacity=0.9,
+                            symbol='diamond',
+                            line=dict(width=2, color='white')
+                        ),
                         text=sig_data.index,
-                        hovertemplate='<b>%{text}</b><br>Log2FC: %{x:.2f}<br>-log10(padj): %{y:.2f}<extra></extra>'
+                        hovertemplate='<b>%{text}</b><br>Log2FC: %{x:.2f}<br>-log10(padj): %{y:.2f}<extra></extra>',
+                        showlegend=True
                     ))
             else:
-                fig.add_trace(go.Scatter(
-                    x=species_data['log2_fc'],
-                    y=species_data['-log10_pval'],
-                    mode='markers',
-                    name=species,
-                    marker=dict(color=self.color_map.get(species, 'gray'), size=6, opacity=0.6),
-                    text=species_data.index,
-                    hovertemplate='<b>%{text}</b><br>Log2FC: %{x:.2f}<br>-log10(padj): %{y:.2f}<extra></extra>'
-                ))
+                # No significance column, plot all
+                if len(species_data) > 0:
+                    fig.add_trace(go.Scatter(
+                        x=species_data['log2_fc'],
+                        y=species_data['-log10_pval'],
+                        mode='markers',
+                        name=species,
+                        marker=dict(
+                            color=self.color_map.get(species, 'gray'),
+                            size=6,
+                            opacity=0.6
+                        ),
+                        text=species_data.index,
+                        hovertemplate='<b>%{text}</b><br>Log2FC: %{x:.2f}<br>-log10(padj): %{y:.2f}<extra></extra>'
+                    ))
         
-        fig.add_hline(y=-np.log10(alpha), line_dash="dot", line_color="red", opacity=0.5, annotation_text=f"α = {alpha}", annotation_position="right")
-        fig.add_vline(x=fc_threshold, line_dash="dot", line_color="gray", opacity=0.5)
-        fig.add_vline(x=-fc_threshold, line_dash="dot", line_color="gray", opacity=0.5)
+        # Add threshold lines
+        fig.add_hline(
+            y=-np.log10(alpha), 
+            line_dash="dash", 
+            line_color="red", 
+            opacity=0.7,
+            annotation_text=f"α = {alpha}",
+            annotation_position="right",
+            annotation_font=dict(color="red", size=12)
+        )
+        
+        fig.add_vline(x=fc_threshold, line_dash="dash", line_color="gray", opacity=0.5)
+        fig.add_vline(x=-fc_threshold, line_dash="dash", line_color="gray", opacity=0.5)
         
         fig.update_layout(
-            title=title,
+            title=dict(text=title, x=0.5, xanchor='center'),
             xaxis_title="Log2 Fold-Change",
             yaxis_title="-log10(adjusted p-value)",
             template="plotly_white",
-            height=600,
+            height=700,
+            width=1000,
             showlegend=True,
-            hovermode='closest'
+            hovermode='closest',
+            font=dict(size=12)
         )
         
         self.figures['volcano'] = fig
         return fig
-    
+
     def plot_fc_boxplot(self, df: pd.DataFrame, title: str = "Fold-Change Accuracy") -> go.Figure:
         """Boxplot of fold-change deviations"""
         fig = go.Figure()
