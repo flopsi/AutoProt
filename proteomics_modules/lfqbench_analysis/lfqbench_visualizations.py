@@ -24,13 +24,10 @@ class LFQbenchVisualizer:
             'E. coli': '#7570b2',
             'C.elegans': 'darkred'
         }
-        # Store figures for export
         self.figures = {}
     
     def plot_density(self, df: pd.DataFrame, title: str = "Log2 Fold-Change Distribution") -> go.Figure:
-        """
-        Create SCIENTIFICALLY CORRECT density plot using KDE
-        """
+        """Create density plot using KDE"""
         fig = go.Figure()
         
         for species in df['Species'].unique():
@@ -46,10 +43,7 @@ class LFQbenchVisualizer:
                     y=density,
                     mode='lines',
                     name=species,
-                    line=dict(
-                        color=self.color_map.get(species, 'gray'),
-                        width=2
-                    ),
+                    line=dict(color=self.color_map.get(species, 'gray'), width=2),
                     fill='tozeroy',
                     fillcolor=self.color_map.get(species, 'gray'),
                     opacity=0.3
@@ -68,82 +62,76 @@ class LFQbenchVisualizer:
         self.figures['density'] = fig
         return fig
     
-    def plot_volcano(self, df: pd.DataFrame, 
-                    fc_threshold: float = 0.5,
-                    alpha: float = 0.01,
-                    title: str = "Volcano Plot") -> go.Figure:
-        """
-        Create volcano plot - FIXED
-        """
+    def plot_volcano(self, df: pd.DataFrame, fc_threshold: float = 0.5, alpha: float = 0.01, title: str = "Volcano Plot") -> go.Figure:
+        """Create volcano plot"""
         df = df.copy()
         
-        # Handle p_adj values - FIXED
+        if 'p_adj' not in df.columns or 'log2_fc' not in df.columns:
+            fig = go.Figure()
+            fig.add_annotation(text="Missing required data", showarrow=False, font=dict(size=16))
+            return fig
+        
         df['p_adj'] = pd.to_numeric(df['p_adj'], errors='coerce')
+        df['log2_fc'] = pd.to_numeric(df['log2_fc'], errors='coerce')
+        df = df.dropna(subset=['p_adj', 'log2_fc'])
         
-        # Replace zeros and very small values
+        if len(df) == 0:
+            fig = go.Figure()
+            fig.add_annotation(text="No valid data", showarrow=False, font=dict(size=16))
+            return fig
+        
         df.loc[df['p_adj'] <= 0, 'p_adj'] = 1e-300
-        df.loc[df['p_adj'].isna(), 'p_adj'] = 1.0
-        
-        # Calculate -log10(p_adj)
         df['-log10_pval'] = -np.log10(df['p_adj'])
+        df['-log10_pval'] = df['-log10_pval'].replace([np.inf], 300)
+        df['-log10_pval'] = df['-log10_pval'].replace([-np.inf], 0)
         
-        # Cap extremely high values for better visualization
-        max_log_p = df['-log10_pval'].replace([np.inf, -np.inf], np.nan).max()
-        if pd.isna(max_log_p) or max_log_p > 50:
-            max_log_p = 50
-        df.loc[df['-log10_pval'] > max_log_p, '-log10_pval'] = max_log_p
+        max_display = 50
+        df.loc[df['-log10_pval'] > max_display, '-log10_pval'] = max_display
         
         fig = go.Figure()
+        has_significance = 'is_significant' in df.columns
         
         for species in df['Species'].unique():
-            species_data = df[df['Species'] == species]
+            species_data = df[df['Species'] == species].copy()
             
-            # Separate significant and non-significant
-            sig_data = species_data[species_data['is_significant'] == True]
-            non_sig_data = species_data[species_data['is_significant'] == False]
-            
-            # Plot non-significant (smaller, transparent)
-            if len(non_sig_data) > 0:
+            if has_significance:
+                sig_data = species_data[species_data['is_significant'] == True]
+                non_sig_data = species_data[species_data['is_significant'] == False]
+                
+                if len(non_sig_data) > 0:
+                    fig.add_trace(go.Scatter(
+                        x=non_sig_data['log2_fc'],
+                        y=non_sig_data['-log10_pval'],
+                        mode='markers',
+                        name=f"{species} (NS)",
+                        marker=dict(color=self.color_map.get(species, 'gray'), size=4, opacity=0.3),
+                        showlegend=False,
+                        text=non_sig_data.index,
+                        hovertemplate='<b>%{text}</b><br>Log2FC: %{x:.2f}<br>-log10(padj): %{y:.2f}<extra></extra>'
+                    ))
+                
+                if len(sig_data) > 0:
+                    fig.add_trace(go.Scatter(
+                        x=sig_data['log2_fc'],
+                        y=sig_data['-log10_pval'],
+                        mode='markers',
+                        name=species,
+                        marker=dict(color=self.color_map.get(species, 'gray'), size=8, opacity=0.8, line=dict(width=1, color='white')),
+                        text=sig_data.index,
+                        hovertemplate='<b>%{text}</b><br>Log2FC: %{x:.2f}<br>-log10(padj): %{y:.2f}<extra></extra>'
+                    ))
+            else:
                 fig.add_trace(go.Scatter(
-                    x=non_sig_data['log2_fc'],
-                    y=non_sig_data['-log10_pval'],
-                    mode='markers',
-                    name=f"{species} (NS)",
-                    marker=dict(
-                        color=self.color_map.get(species, 'gray'),
-                        size=4,
-                        opacity=0.3
-                    ),
-                    showlegend=False,
-                    text=non_sig_data.index,
-                    hovertemplate='<b>%{text}</b><br>Log2FC: %{x:.2f}<br>-log10(padj): %{y:.2f}<extra></extra>'
-                ))
-            
-            # Plot significant (larger, opaque)
-            if len(sig_data) > 0:
-                fig.add_trace(go.Scatter(
-                    x=sig_data['log2_fc'],
-                    y=sig_data['-log10_pval'],
+                    x=species_data['log2_fc'],
+                    y=species_data['-log10_pval'],
                     mode='markers',
                     name=species,
-                    marker=dict(
-                        color=self.color_map.get(species, 'gray'),
-                        size=8,
-                        opacity=0.8,
-                        line=dict(width=1, color='white')
-                    ),
-                    text=sig_data.index,
+                    marker=dict(color=self.color_map.get(species, 'gray'), size=6, opacity=0.6),
+                    text=species_data.index,
                     hovertemplate='<b>%{text}</b><br>Log2FC: %{x:.2f}<br>-log10(padj): %{y:.2f}<extra></extra>'
                 ))
         
-        # Add threshold lines
-        fig.add_hline(
-            y=-np.log10(alpha), 
-            line_dash="dot", 
-            line_color="red", 
-            opacity=0.5,
-            annotation_text=f"α = {alpha}"
-        )
+        fig.add_hline(y=-np.log10(alpha), line_dash="dot", line_color="red", opacity=0.5, annotation_text=f"α = {alpha}", annotation_position="right")
         fig.add_vline(x=fc_threshold, line_dash="dot", line_color="gray", opacity=0.5)
         fig.add_vline(x=-fc_threshold, line_dash="dot", line_color="gray", opacity=0.5)
         
@@ -153,19 +141,16 @@ class LFQbenchVisualizer:
             yaxis_title="-log10(adjusted p-value)",
             template="plotly_white",
             height=600,
-            showlegend=True
+            showlegend=True,
+            hovermode='closest'
         )
         
         self.figures['volcano'] = fig
         return fig
     
-    def plot_fc_boxplot(self, df: pd.DataFrame, 
-                       title: str = "Fold-Change Accuracy") -> go.Figure:
-        """
-        Boxplot of |measured - expected| fold-changes by species
-        """
+    def plot_fc_boxplot(self, df: pd.DataFrame, title: str = "Fold-Change Accuracy") -> go.Figure:
+        """Boxplot of fold-change deviations"""
         fig = go.Figure()
-        
         has_data = False
         
         for species in df['Species'].unique():
@@ -182,11 +167,7 @@ class LFQbenchVisualizer:
                 ))
         
         if not has_data:
-            fig.add_annotation(
-                text="No fold-change deviation data available",
-                showarrow=False,
-                font=dict(size=16)
-            )
+            fig.add_annotation(text="No data available", showarrow=False, font=dict(size=16))
         
         fig.update_layout(
             title=title,
@@ -200,11 +181,8 @@ class LFQbenchVisualizer:
         self.figures['fc_boxplot'] = fig
         return fig
     
-    def plot_cv_violin(self, df: pd.DataFrame,
-                      title: str = "Coefficient of Variation") -> go.Figure:
-        """
-        Violin plot of CV distribution by species
-        """
+    def plot_cv_violin(self, df: pd.DataFrame, title: str = "Coefficient of Variation") -> go.Figure:
+        """Violin plot of CV distribution"""
         cv_data = []
         for _, row in df.iterrows():
             exp_cv = pd.to_numeric(row['exp_cv'], errors='coerce')
@@ -219,22 +197,10 @@ class LFQbenchVisualizer:
         
         if len(cv_df) == 0:
             fig = go.Figure()
-            fig.add_annotation(
-                text="No CV data available",
-                showarrow=False,
-                font=dict(size=16)
-            )
+            fig.add_annotation(text="No CV data available", showarrow=False, font=dict(size=16))
             return fig
         
-        fig = px.violin(
-            cv_df,
-            x='Species',
-            y='CV',
-            color='Species',
-            color_discrete_map=self.color_map,
-            box=True,
-            points=False
-        )
+        fig = px.violin(cv_df, x='Species', y='CV', color='Species', color_discrete_map=self.color_map, box=True, points=False)
         
         fig.update_layout(
             title=title,
@@ -249,22 +215,14 @@ class LFQbenchVisualizer:
         self.figures['cv_violin'] = fig
         return fig
     
-    def plot_ma(self, df: pd.DataFrame,
-                title: str = "MA Plot") -> go.Figure:
-        """
-        MA plot - FIXED
-        """
+    def plot_ma(self, df: pd.DataFrame, title: str = "MA Plot") -> go.Figure:
+        """MA plot"""
         df = df.copy()
         
-        # Ensure numeric
         df['exp_mean'] = pd.to_numeric(df['exp_mean'], errors='coerce')
         df['ctr_mean'] = pd.to_numeric(df['ctr_mean'], errors='coerce')
         df['log2_fc'] = pd.to_numeric(df['log2_fc'], errors='coerce')
-        
-        # Calculate average intensity (A value)
         df['log2_mean'] = np.log2((df['exp_mean'] + df['ctr_mean']) / 2)
-        
-        # Remove inf and nan
         df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=['log2_mean', 'log2_fc'])
         
         fig = go.Figure()
@@ -278,13 +236,9 @@ class LFQbenchVisualizer:
                     y=species_data['log2_fc'],
                     mode='markers',
                     name=species,
-                    marker=dict(
-                        color=self.color_map.get(species, 'gray'),
-                        size=5,
-                        opacity=0.5
-                    ),
+                    marker=dict(color=self.color_map.get(species, 'gray'), size=5, opacity=0.5),
                     text=species_data.index,
-                    hovertemplate='<b>%{text}</b><br>A (Mean): %{x:.2f}<br>M (Log2FC): %{y:.2f}<extra></extra>'
+                    hovertemplate='<b>%{text}</b><br>A: %{x:.2f}<br>M: %{y:.2f}<extra></extra>'
                 ))
         
         fig.add_hline(y=0, line_dash="dash", line_color="black", opacity=0.5)
@@ -301,23 +255,15 @@ class LFQbenchVisualizer:
         self.figures['ma_plot'] = fig
         return fig
     
-    def plot_facet_scatter(self, df: pd.DataFrame,
-                          title: str = "Control vs Experimental") -> go.Figure:
-        """
-        Faceted scatter plot: control mean vs log2FC
-        """
+    def plot_facet_scatter(self, df: pd.DataFrame, title: str = "Control vs Experimental") -> go.Figure:
+        """Faceted scatter plot"""
         species_list = df['Species'].unique()
         n_species = len(species_list)
         
-        fig = make_subplots(
-            rows=1, cols=n_species,
-            subplot_titles=list(species_list),
-            horizontal_spacing=0.1
-        )
+        fig = make_subplots(rows=1, cols=n_species, subplot_titles=list(species_list), horizontal_spacing=0.1)
         
         for i, species in enumerate(species_list, 1):
             species_data = df[df['Species'] == species]
-            
             ctr_mean = pd.to_numeric(species_data['ctr_mean'], errors='coerce')
             log2_fc = pd.to_numeric(species_data['log2_fc'], errors='coerce')
             
@@ -326,11 +272,7 @@ class LFQbenchVisualizer:
                     x=np.log2(ctr_mean),
                     y=log2_fc,
                     mode='markers',
-                    marker=dict(
-                        color=self.color_map.get(species, 'gray'),
-                        size=5,
-                        opacity=0.5
-                    ),
+                    marker=dict(color=self.color_map.get(species, 'gray'), size=5, opacity=0.5),
                     name=species,
                     showlegend=False
                 ),
@@ -339,33 +281,17 @@ class LFQbenchVisualizer:
             
             median_fc = log2_fc.median()
             if not pd.isna(median_fc):
-                fig.add_hline(
-                    y=median_fc,
-                    line_dash="dash",
-                    line_color=self.color_map.get(species, 'gray'),
-                    row=1, col=i
-                )
+                fig.add_hline(y=median_fc, line_dash="dash", line_color=self.color_map.get(species, 'gray'), row=1, col=i)
         
-        fig.update_layout(
-            title=title,
-            template="plotly_white",
-            height=400,
-            showlegend=False
-        )
-        
+        fig.update_layout(title=title, template="plotly_white", height=400, showlegend=False)
         fig.update_xaxes(title_text="Log2(Control Mean)")
         fig.update_yaxes(title_text="Log2 Fold-Change")
         
         self.figures['facet_scatter'] = fig
         return fig
     
-    def plot_pca(self, pca_result: np.ndarray,
-                variance_explained: np.ndarray,
-                sample_names: List[str],
-                title: str = "PCA - Sample Overview") -> go.Figure:
-        """
-        PCA plot of samples
-        """
+    def plot_pca(self, pca_result: np.ndarray, variance_explained: np.ndarray, sample_names: List[str], title: str = "PCA - Sample Overview") -> go.Figure:
+        """PCA plot"""
         fig = go.Figure()
         
         fig.add_trace(go.Scatter(
@@ -391,52 +317,28 @@ class LFQbenchVisualizer:
         return fig
     
     def plot_asymmetry_table(self, asymmetry_df: pd.DataFrame) -> go.Figure:
-        """
-        Display asymmetry factors as interactive table
-        """
+        """Display asymmetry factors"""
         if len(asymmetry_df) == 0:
             fig = go.Figure()
-            fig.add_annotation(
-                text="No asymmetry data available",
-                showarrow=False,
-                font=dict(size=14)
-            )
+            fig.add_annotation(text="No asymmetry data available", showarrow=False, font=dict(size=14))
             return fig
         
-        # Format values
         display_df = asymmetry_df.copy()
         if 'Asymmetry Factor' in display_df.columns:
-            display_df['Asymmetry Factor'] = display_df['Asymmetry Factor'].apply(
-                lambda x: f"{x:.3f}" if not pd.isna(x) else "N/A"
-            )
+            display_df['Asymmetry Factor'] = display_df['Asymmetry Factor'].apply(lambda x: f"{x:.3f}" if not pd.isna(x) else "N/A")
         
         fig = go.Figure(data=[go.Table(
-            header=dict(
-                values=list(display_df.columns),
-                fill_color='lightgray',
-                align='left',
-                font=dict(size=12, color='black')
-            ),
-            cells=dict(
-                values=[display_df[col] for col in display_df.columns],
-                fill_color='white',
-                align='left',
-                font=dict(size=11)
-            )
+            header=dict(values=list(display_df.columns), fill_color='lightgray', align='left', font=dict(size=12, color='black')),
+            cells=dict(values=[display_df[col] for col in display_df.columns], fill_color='white', align='left', font=dict(size=11))
         )])
         
-        fig.update_layout(
-            title="Asymmetry Factors by Species",
-            height=300
-        )
+        fig.update_layout(title="Asymmetry Factors by Species", height=300)
         
         self.figures['asymmetry'] = fig
         return fig
     
     def plot_confusion_matrix(self, metrics: Dict[str, float]) -> go.Figure:
-        """
-        Heatmap of confusion matrix
-        """
+        """Confusion matrix heatmap"""
         confusion = np.array([
             [int(metrics['tn']), int(metrics['fp'])],
             [int(metrics['fn']), int(metrics['tp'])]
@@ -453,110 +355,50 @@ class LFQbenchVisualizer:
             showscale=False
         ))
         
-        fig.update_layout(
-            title="Confusion Matrix",
-            xaxis_title="Predicted",
-            yaxis_title="Actual",
-            height=400,
-            template="plotly_white"
-        )
+        fig.update_layout(title="Confusion Matrix", xaxis_title="Predicted", yaxis_title="Actual", height=400, template="plotly_white")
         
         self.figures['confusion'] = fig
         return fig
     
     def create_summary_metrics_table(self, metrics: Dict[str, float]) -> go.Figure:
-        """
-        Create summary metrics display table - COMPLETELY FIXED
-        """
-    
-        # Debug: Print what we received
-        print(f"DEBUG - Creating metrics table with {len(metrics)} metrics")
-        for key, value in metrics.items():
-            print(f"  {key}: {value}")
-            
-            # Create display data with explicit formatting
-            metric_names = [
-                'Sensitivity (%)',
-                'Specificity (%)',
-                'Empirical FDR (%)',
-                'Accuracy',
-                'Trueness',
-                'CV Mean (%)',
-                'CV Median (%)',
-                'True Positives',
-                'False Positives',
-                'True Negatives',
-                'False Negatives',
-                'Total Proteins'
-            ]
-            
-            metric_keys = [
-                'sensitivity',
-                'specificity',
-                'de_fdr',
-                'accuracy',
-                'trueness',
-                'cv_mean',
-                'cv_median',
-                'tp',
-                'fp',
-                'tn',
-                'fn',
-                'n_proteins'
-            ]
-            
-            # Format values safely
-            values = []
-            for key in metric_keys:
-                val = metrics.get(key, 0)
-                
-                # Format based on metric type
-                if key in ['sensitivity', 'specificity', 'de_fdr', 'cv_mean', 'cv_median']:
-                    values.append(f"{float(val):.2f}")
-                elif key in ['accuracy', 'trueness']:
-                    values.append(f"{float(val):.3f}")
-                elif key in ['tp', 'fp', 'tn', 'fn', 'n_proteins']:
-                    values.append(f"{int(val)}")
-                else:
-                    values.append(str(val))
-            
-            fig = go.Figure(data=[go.Table(
-                columnwidth=[200, 100],
-                header=dict(
-                    values=['<b>Metric</b>', '<b>Value</b>'],
-                    fill_color='steelblue',
-                    align=['left', 'right'],
-                    font=dict(size=14, color='white'),
-                    height=40
-                ),
-                cells=dict(
-                    values=[metric_names, values],
-                    fill_color='white',
-                    align=['left', 'right'],
-                    font=dict(size=13, color='black'),
-                    height=35
-                )
-            )])
-            
-            fig.update_layout(
-                title={
-                    'text': "Performance Metrics Summary",
-                    'x': 0.5,
-                    'xanchor': 'center',
-                    'font': {'size': 18}
-                },
-                height=550,
-                margin=dict(l=20, r=20, t=60, b=20)
-            )
-            
-            self.figures['metrics'] = fig
-            return fig
-
+        """Create summary metrics table"""
+        metric_names = [
+            'Sensitivity (%)', 'Specificity (%)', 'Empirical FDR (%)',
+            'Accuracy', 'Trueness', 'CV Mean (%)', 'CV Median (%)',
+            'True Positives', 'False Positives', 'True Negatives', 'False Negatives', 'Total Proteins'
+        ]
+        
+        metric_keys = ['sensitivity', 'specificity', 'de_fdr', 'accuracy', 'trueness', 'cv_mean', 'cv_median', 'tp', 'fp', 'tn', 'fn', 'n_proteins']
+        
+        values = []
+        for key in metric_keys:
+            val = metrics.get(key, 0)
+            if key in ['sensitivity', 'specificity', 'de_fdr', 'cv_mean', 'cv_median']:
+                values.append(f"{float(val):.2f}")
+            elif key in ['accuracy', 'trueness']:
+                values.append(f"{float(val):.3f}")
+            elif key in ['tp', 'fp', 'tn', 'fn', 'n_proteins']:
+                values.append(f"{int(val)}")
+            else:
+                values.append(str(val))
+        
+        fig = go.Figure(data=[go.Table(
+            columnwidth=[200, 100],
+            header=dict(values=['<b>Metric</b>', '<b>Value</b>'], fill_color='steelblue', align=['left', 'right'], font=dict(size=14, color='white'), height=40),
+            cells=dict(values=[metric_names, values], fill_color='white', align=['left', 'right'], font=dict(size=13, color='black'), height=35)
+        )])
+        
+        fig.update_layout(
+            title={'text': "Performance Metrics Summary", 'x': 0.5, 'xanchor': 'center', 'font': {'size': 18}},
+            height=550,
+            margin=dict(l=20, r=20, t=60, b=20)
+        )
+        
+        self.figures['metrics'] = fig
+        return fig
     
     def export_all_figures(self) -> bytes:
-        """
-        Export all figures as HTML files in a ZIP
-        """
+        """Export all figures as HTML in ZIP"""
         zip_buffer = io.BytesIO()
         
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
