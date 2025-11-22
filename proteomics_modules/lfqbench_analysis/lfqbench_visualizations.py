@@ -470,9 +470,9 @@ class LFQbenchVisualizer:
             """
         
         # Debug: Print what we received
-        print(f"DEBUG - Creating metrics table with {len(metrics)} metrics")
-        for key, value in metrics.items():
-            print(f"  {key}: {value}")
+            print(f"DEBUG - Creating metrics table with {len(metrics)} metrics")
+            for key, value in metrics.items():
+                print(f"  {key}: {value}")
         
         # Create display data with explicit formatting
         metric_names = [
