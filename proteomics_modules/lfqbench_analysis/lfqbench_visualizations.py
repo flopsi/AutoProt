@@ -25,7 +25,6 @@ class LFQbenchVisualizer:
     def plot_density(self, df: pd.DataFrame, title: str = "Log2 Fold-Change Distribution") -> go.Figure:
         """
         Create density plot of log2 fold-changes by species
-        Replicates: ggplot geom_density
         """
         fig = go.Figure()
         
@@ -33,7 +32,6 @@ class LFQbenchVisualizer:
             species_data = df[df['Species'] == species]['log2_fc'].dropna()
             
             if len(species_data) > 0:
-                # Create density using histogram with KDE
                 fig.add_trace(go.Violin(
                     x=species_data,
                     name=species,
@@ -60,10 +58,13 @@ class LFQbenchVisualizer:
                     title: str = "Volcano Plot") -> go.Figure:
         """
         Create volcano plot (log2FC vs -log10 p-value)
-        Replicates: ggplot geom_point with volcano layout
         """
         df = df.copy()
-        df['-log10_pval'] = -np.log10(df['p_adj'].replace(0, 1e-300))
+        
+        # Handle p_adj values
+        df['p_adj'] = pd.to_numeric(df['p_adj'], errors='coerce')
+        df.loc[df['p_adj'] == 0, 'p_adj'] = 1e-300
+        df['-log10_pval'] = -np.log10(df['p_adj'])
         
         fig = go.Figure()
         
@@ -80,7 +81,7 @@ class LFQbenchVisualizer:
                     size=6,
                     opacity=0.6
                 ),
-                text=species_data.get('Protein.Names', species_data.index),
+                text=species_data.index,
                 hovertemplate='<b>%{text}</b><br>Log2FC: %{x:.2f}<br>-log10(padj): %{y:.2f}<extra></extra>'
             ))
         
@@ -104,20 +105,34 @@ class LFQbenchVisualizer:
                        title: str = "Fold-Change Accuracy") -> go.Figure:
         """
         Boxplot of |measured - expected| fold-changes by species
-        Shows accuracy metric
+        Shows accuracy metric - FIXED
         """
         fig = go.Figure()
         
+        has_data = False
+        
         for species in df['Species'].unique():
             species_data = df[df['Species'] == species]
-            deviations = species_data['fc_deviation'].dropna()
             
-            fig.add_trace(go.Box(
-                y=deviations,
-                name=species,
-                marker_color=self.color_map.get(species, 'gray'),
-                boxmean='sd'  # Show mean and std dev
-            ))
+            # Ensure fc_deviation is numeric
+            deviations = pd.to_numeric(species_data['fc_deviation'], errors='coerce').dropna()
+            
+            if len(deviations) > 0:
+                has_data = True
+                fig.add_trace(go.Box(
+                    y=deviations,
+                    name=species,
+                    marker_color=self.color_map.get(species, 'gray'),
+                    boxmean='sd'
+                ))
+        
+        if not has_data:
+            # Show empty state message
+            fig.add_annotation(
+                text="No fold-change deviation data available",
+                showarrow=False,
+                font=dict(size=16)
+            )
         
         fig.update_layout(
             title=title,
@@ -134,15 +149,27 @@ class LFQbenchVisualizer:
                       title: str = "Coefficient of Variation") -> go.Figure:
         """
         Violin plot of CV distribution by species
-        Shows precision metric
         """
-        # Reshape data for plotting
         cv_data = []
         for _, row in df.iterrows():
-            cv_data.append({'Species': row['Species'], 'CV': row['exp_cv'], 'Condition': 'Experimental'})
-            cv_data.append({'Species': row['Species'], 'CV': row['ctr_cv'], 'Condition': 'Control'})
+            exp_cv = pd.to_numeric(row['exp_cv'], errors='coerce')
+            ctr_cv = pd.to_numeric(row['ctr_cv'], errors='coerce')
+            
+            if not pd.isna(exp_cv):
+                cv_data.append({'Species': row['Species'], 'CV': exp_cv, 'Condition': 'Experimental'})
+            if not pd.isna(ctr_cv):
+                cv_data.append({'Species': row['Species'], 'CV': ctr_cv, 'Condition': 'Control'})
         
         cv_df = pd.DataFrame(cv_data)
+        
+        if len(cv_df) == 0:
+            fig = go.Figure()
+            fig.add_annotation(
+                text="No CV data available",
+                showarrow=False,
+                font=dict(size=16)
+            )
+            return fig
         
         fig = px.violin(
             cv_df,
@@ -170,9 +197,15 @@ class LFQbenchVisualizer:
                 title: str = "MA Plot") -> go.Figure:
         """
         MA plot: log2(mean intensity) vs log2(fold-change)
-        Replicates: ggplot geom_point for MA plot
         """
         df = df.copy()
+        
+        # Ensure numeric columns
+        df['exp_mean'] = pd.to_numeric(df['exp_mean'], errors='coerce')
+        df['ctr_mean'] = pd.to_numeric(df['ctr_mean'], errors='coerce')
+        df['log2_fc'] = pd.to_numeric(df['log2_fc'], errors='coerce')
+        
+        # Calculate log2 mean
         df['log2_mean'] = np.log2((df['exp_mean'] + df['ctr_mean']) / 2)
         
         fig = go.Figure()
@@ -190,11 +223,10 @@ class LFQbenchVisualizer:
                     size=5,
                     opacity=0.5
                 ),
-                text=species_data.get('Protein.Names', species_data.index),
+                text=species_data.index,
                 hovertemplate='<b>%{text}</b><br>Mean: %{x:.2f}<br>Log2FC: %{y:.2f}<extra></extra>'
             ))
         
-        # Add horizontal line at y=0
         fig.add_hline(y=0, line_dash="dash", line_color="black", opacity=0.5)
         
         fig.update_layout(
@@ -212,12 +244,10 @@ class LFQbenchVisualizer:
                           title: str = "Control vs Experimental") -> go.Figure:
         """
         Faceted scatter plot: control mean vs log2FC
-        One panel per species
         """
         species_list = df['Species'].unique()
         n_species = len(species_list)
         
-        # Create subplots
         fig = make_subplots(
             rows=1, cols=n_species,
             subplot_titles=list(species_list),
@@ -227,10 +257,14 @@ class LFQbenchVisualizer:
         for i, species in enumerate(species_list, 1):
             species_data = df[df['Species'] == species]
             
+            # Ensure numeric
+            ctr_mean = pd.to_numeric(species_data['ctr_mean'], errors='coerce')
+            log2_fc = pd.to_numeric(species_data['log2_fc'], errors='coerce')
+            
             fig.add_trace(
                 go.Scatter(
-                    x=np.log2(species_data['ctr_mean']),
-                    y=species_data['log2_fc'],
+                    x=np.log2(ctr_mean),
+                    y=log2_fc,
                     mode='markers',
                     marker=dict(
                         color=self.color_map.get(species, 'gray'),
@@ -243,14 +277,14 @@ class LFQbenchVisualizer:
                 row=1, col=i
             )
             
-            # Add median line
-            median_fc = species_data['log2_fc'].median()
-            fig.add_hline(
-                y=median_fc,
-                line_dash="dash",
-                line_color=self.color_map.get(species, 'gray'),
-                row=1, col=i
-            )
+            median_fc = log2_fc.median()
+            if not pd.isna(median_fc):
+                fig.add_hline(
+                    y=median_fc,
+                    line_dash="dash",
+                    line_color=self.color_map.get(species, 'gray'),
+                    row=1, col=i
+                )
         
         fig.update_layout(
             title=title,
@@ -298,6 +332,15 @@ class LFQbenchVisualizer:
         """
         Display asymmetry factors as interactive table
         """
+        if len(asymmetry_df) == 0:
+            fig = go.Figure()
+            fig.add_annotation(
+                text="No asymmetry data available",
+                showarrow=False,
+                font=dict(size=14)
+            )
+            return fig
+        
         fig = go.Figure(data=[go.Table(
             header=dict(
                 values=list(asymmetry_df.columns),
@@ -325,8 +368,8 @@ class LFQbenchVisualizer:
         Heatmap of confusion matrix
         """
         confusion = np.array([
-            [metrics['tn'], metrics['fp']],
-            [metrics['fn'], metrics['tp']]
+            [int(metrics['tn']), int(metrics['fp'])],
+            [int(metrics['fn']), int(metrics['tp'])]
         ])
         
         fig = go.Figure(data=go.Heatmap(
@@ -370,13 +413,13 @@ class LFQbenchVisualizer:
                 'Total Proteins'
             ],
             'Value': [
-                f"{metrics['sensitivity']:.2f}",
-                f"{metrics['specificity']:.2f}",
-                f"{metrics['de_fdr']:.2f}",
-                f"{metrics['accuracy']:.3f}",
-                f"{metrics['trueness']:.3f}",
-                f"{metrics['cv_mean']:.2f}",
-                f"{metrics['cv_median']:.2f}",
+                f"{float(metrics['sensitivity']):.2f}",
+                f"{float(metrics['specificity']):.2f}",
+                f"{float(metrics['de_fdr']):.2f}",
+                f"{float(metrics['accuracy']):.3f}",
+                f"{float(metrics['trueness']):.3f}",
+                f"{float(metrics['cv_mean']):.2f}",
+                f"{float(metrics['cv_median']):.2f}",
                 str(int(metrics['tp'])),
                 str(int(metrics['fp'])),
                 str(int(metrics['tn'])),
