@@ -355,71 +355,72 @@ class DataUploadModule:
 
 
     
-    def _step5_workflow_selection(self):
-    """Step 5: Workflow selection with direct navigation to analysis"""
-    
-    st.header("Step 5: Workflow Selection")
-    
-    # Display summary
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("Proteins", f"{len(st.session_state.raw_data):,}")
-    
-    with col2:
-        quantity_cols = st.session_state.get('selected_quantity_cols', [])
-        st.metric("Samples", len(quantity_cols))
-    
-    with col3:
-        species = st.session_state.get('species_assignments', pd.Series())
-        detected_species = [s for s in species.unique() if s != 'Unknown']
-        st.metric("Species", len(detected_species))
-    
-    st.subheader("Select workflow")
-    
-    workflow = st.selectbox(
-        "Select workflow",
-        options=["LFQbench", "Standard Proteomics", "DIA Analysis"],
-        index=0,
-        key="workflow_selector",
-        label_visibility="collapsed"
-    )
-    
-    st.session_state.selected_workflow = workflow
-    
-    # Success message
-    st.success("✅ Data upload complete! Ready for analysis.")
-    
-    st.divider()
-    
-    # NAVIGATION BUTTONS
-    col1, col2, col3 = st.columns([1, 1, 2])
-    
-    with col1:
-        if st.button("⬅️ Previous", use_container_width=True, key="prev_step5"):
-            st.session_state.upload_step = 4
-            st.rerun()
-    
-    with col2:
-        if st.button("🔄 Reset", use_container_width=True, key="reset_step5"):
-            st.session_state.upload_step = 1
-            st.session_state.raw_data = None
-            st.session_state.selected_workflow = None
-            st.rerun()
-    
-    with col3:
-        # BIG YELLOW BUTTON - Navigate to selected workflow
-        if workflow == "LFQbench":
-            button_text = "▶️ Start LFQbench Analysis"
-            button_type = "primary"
-        else:
-            button_text = f"▶️ Start {workflow}"
-            button_type = "primary"
+   def _step5_workflow_selection(self):
+        """Step 5: Workflow selection with direct navigation to analysis"""
         
-        if st.button(button_text, use_container_width=True, type=button_type, key="goto_analysis"):
-            # Set session state to navigate to LFQbench module
-            st.session_state.current_page = "LFQbench Analysis"
-            st.rerun()
+        st.header("Step 5: Workflow Selection")
+        
+        # Display summary
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Proteins", f"{len(st.session_state.raw_data):,}")
+        
+        with col2:
+            quantity_cols = st.session_state.get('selected_quantity_cols', [])
+            st.metric("Samples", len(quantity_cols))
+        
+        with col3:
+            species = st.session_state.get('species_assignments', pd.Series())
+            detected_species = [s for s in species.unique() if s != 'Unknown']
+            st.metric("Species", len(detected_species))
+        
+        st.subheader("Select workflow")
+        
+        workflow = st.selectbox(
+            "Select workflow",
+            options=["LFQbench", "Standard Proteomics", "DIA Analysis"],
+            index=0,
+            key="workflow_selector",
+            label_visibility="collapsed"
+        )
+        
+        st.session_state.selected_workflow = workflow
+        
+        # Success message
+        st.success("✅ Data upload complete! Ready for analysis.")
+        
+        st.divider()
+        
+        # NAVIGATION BUTTONS
+        col1, col2, col3 = st.columns([1, 1, 2])
+        
+        with col1:
+            if st.button("⬅️ Previous", use_container_width=True, key="prev_step5"):
+                st.session_state.upload_step = 4
+                st.rerun()
+        
+        with col2:
+            if st.button("🔄 Reset", use_container_width=True, key="reset_step5"):
+                st.session_state.upload_step = 1
+                st.session_state.raw_data = None
+                st.session_state.selected_workflow = None
+                st.rerun()
+        
+        with col3:
+            # BIG YELLOW BUTTON - Navigate to selected workflow
+            if workflow == "LFQbench":
+                button_text = "▶️ Start LFQbench Analysis"
+                button_type = "primary"
+            else:
+                button_text = f"▶️ Start {workflow}"
+                button_type = "primary"
+            
+            if st.button(button_text, use_container_width=True, type=button_type, key="goto_analysis"):
+                # Set session state to navigate to LFQbench module
+                st.session_state.current_page = "LFQbench Analysis"
+                st.rerun()
+
     
     def _render_navigation(self):
         """Render navigation buttons"""
