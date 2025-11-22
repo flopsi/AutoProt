@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 from typing import List, Dict, Optional
+from scipy.stats import gaussian_kde
 
 
 class LFQbenchVisualizer:
@@ -24,21 +25,35 @@ class LFQbenchVisualizer:
     
     def plot_density(self, df: pd.DataFrame, title: str = "Log2 Fold-Change Distribution") -> go.Figure:
         """
-        Create density plot of log2 fold-changes by species
+        Create SCIENTIFICALLY CORRECT density plot using KDE
+        This matches R's geom_density() - NOT violin plots
         """
         fig = go.Figure()
         
         for species in df['Species'].unique():
             species_data = df[df['Species'] == species]['log2_fc'].dropna()
             
-            if len(species_data) > 0:
-                fig.add_trace(go.Violin(
-                    x=species_data,
+            if len(species_data) > 10:  # Need enough points for KDE
+                # Calculate KDE (Kernel Density Estimation)
+                kde = gaussian_kde(species_data, bw_method='scott')
+                
+                # Generate smooth x-axis
+                x_range = np.linspace(species_data.min() - 1, species_data.max() + 1, 200)
+                density = kde(x_range)
+                
+                # Plot density curve
+                fig.add_trace(go.Scatter(
+                    x=x_range,
+                    y=density,
+                    mode='lines',
                     name=species,
-                    line_color=self.color_map.get(species, 'gray'),
+                    line=dict(
+                        color=self.color_map.get(species, 'gray'),
+                        width=2
+                    ),
+                    fill='tozeroy',
                     fillcolor=self.color_map.get(species, 'gray'),
-                    opacity=0.6,
-                    showlegend=True
+                    opacity=0.3
                 ))
         
         fig.update_layout(
@@ -47,7 +62,8 @@ class LFQbenchVisualizer:
             yaxis_title="Density",
             template="plotly_white",
             height=500,
-            showlegend=True
+            showlegend=True,
+            hovermode='x unified'
         )
         
         return fig
@@ -105,7 +121,6 @@ class LFQbenchVisualizer:
                        title: str = "Fold-Change Accuracy") -> go.Figure:
         """
         Boxplot of |measured - expected| fold-changes by species
-        Shows accuracy metric - FIXED
         """
         fig = go.Figure()
         
@@ -113,8 +128,6 @@ class LFQbenchVisualizer:
         
         for species in df['Species'].unique():
             species_data = df[df['Species'] == species]
-            
-            # Ensure fc_deviation is numeric
             deviations = pd.to_numeric(species_data['fc_deviation'], errors='coerce').dropna()
             
             if len(deviations) > 0:
@@ -127,7 +140,6 @@ class LFQbenchVisualizer:
                 ))
         
         if not has_data:
-            # Show empty state message
             fig.add_annotation(
                 text="No fold-change deviation data available",
                 showarrow=False,
@@ -200,12 +212,10 @@ class LFQbenchVisualizer:
         """
         df = df.copy()
         
-        # Ensure numeric columns
         df['exp_mean'] = pd.to_numeric(df['exp_mean'], errors='coerce')
         df['ctr_mean'] = pd.to_numeric(df['ctr_mean'], errors='coerce')
         df['log2_fc'] = pd.to_numeric(df['log2_fc'], errors='coerce')
         
-        # Calculate log2 mean
         df['log2_mean'] = np.log2((df['exp_mean'] + df['ctr_mean']) / 2)
         
         fig = go.Figure()
@@ -257,7 +267,6 @@ class LFQbenchVisualizer:
         for i, species in enumerate(species_list, 1):
             species_data = df[df['Species'] == species]
             
-            # Ensure numeric
             ctr_mean = pd.to_numeric(species_data['ctr_mean'], errors='coerce')
             log2_fc = pd.to_numeric(species_data['log2_fc'], errors='coerce')
             
