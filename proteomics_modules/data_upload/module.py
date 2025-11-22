@@ -339,17 +339,41 @@ class DataUploadModule:
                 species_series = df[selected_col].apply(assign_species)
                 st.session_state.species_assignments = species_series
                 
-                # Show distribution
+                # Show distribution - FIXED
                 st.markdown("**Species Distribution**")
+                
                 species_counts = species_series.value_counts()
-                st.bar_chart(species_counts)
+                
+                # Create a proper dataframe for bar chart
+                chart_data = pd.DataFrame({
+                    'Species': species_counts.index.tolist(),
+                    'Count': species_counts.values.tolist()
+                })
+                
+                # Display bar chart with Streamlit's native chart
+                st.bar_chart(chart_data.set_index('Species'))
+                
+                # Show detailed counts as metrics
+                cols = st.columns(len(species_counts))
+                for idx, (species, count) in enumerate(species_counts.items()):
+                    with cols[idx]:
+                        st.metric(species, f"{count:,}")
                 
                 # Show summary
-                st.info(f"✅ Detected {species_series.nunique()} species: {', '.join(species_series.unique())}")
+                detected_species = [s for s in species_series.unique() if s != 'Unknown']
+                st.success(f"✅ Detected {len(detected_species)} species: {', '.join(detected_species)}")
+                
+                # Warn if many unknowns
+                unknown_count = (species_series == 'Unknown').sum()
+                if unknown_count > 0:
+                    unknown_pct = (unknown_count / len(species_series)) * 100
+                    st.warning(f"⚠️ {unknown_count:,} proteins ({unknown_pct:.1f}%) could not be assigned to any species")
+                    
             else:
                 st.warning("No text columns found for species assignment")
         else:
             st.warning("Please enter at least one species keyword")
+
     
     def _step5_workflow_suggestion(self):
         """Step 5: Workflow selection"""
