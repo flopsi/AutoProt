@@ -237,7 +237,7 @@ class DataUploadModule:
         else:
             st.session_state.column_name_mapping = trimmed_mapping
     
-    def _step4_sample_annotation(self):
+     def _step4_sample_annotation(self):
         """Step 4: Species annotation with EDITABLE DEFAULTS"""
         
         st.header("Step 4: Sample Annotation")
@@ -275,11 +275,9 @@ class DataUploadModule:
         # Adjust list size if changed
         current_count = len(st.session_state.species_keywords)
         if num_species > current_count:
-            # Add empty entries
             for i in range(num_species - current_count):
                 st.session_state.species_keywords.append({'keyword': '', 'species': ''})
         elif num_species < current_count:
-            # Remove extra entries
             st.session_state.species_keywords = st.session_state.species_keywords[:num_species]
         
         # Editable species inputs
@@ -290,7 +288,6 @@ class DataUploadModule:
         for i in range(num_species):
             col1, col2 = st.columns(2)
             
-            # Get current values
             current_kw = st.session_state.species_keywords[i]['keyword']
             current_sp = st.session_state.species_keywords[i]['species']
             
@@ -309,14 +306,12 @@ class DataUploadModule:
                     placeholder="e.g., Human"
                 )
             
-            # Update session state
             st.session_state.species_keywords[i] = {'keyword': keyword, 'species': species}
             
             if keyword and species:
                 mapping[keyword] = species
         
         if mapping:
-            # Find column with species info
             text_cols = [col for col in df.columns if df[col].dtype == 'object']
             
             if text_cols:
@@ -326,7 +321,6 @@ class DataUploadModule:
                     key="species_column_selector"
                 )
                 
-                # Assign species
                 def assign_species(val):
                     if pd.isna(val):
                         return "Unknown"
@@ -339,40 +333,33 @@ class DataUploadModule:
                 species_series = df[selected_col].apply(assign_species)
                 st.session_state.species_assignments = species_series
                 
-                # Show distribution - FIXED
                 st.markdown("**Species Distribution**")
                 
                 species_counts = species_series.value_counts()
-                
-                # Create a proper dataframe for bar chart
                 chart_data = pd.DataFrame({
                     'Species': species_counts.index.tolist(),
                     'Count': species_counts.values.tolist()
                 })
                 
-                # Display bar chart with Streamlit's native chart
                 st.bar_chart(chart_data.set_index('Species'))
                 
-                # Show detailed counts as metrics
                 cols = st.columns(len(species_counts))
                 for idx, (species, count) in enumerate(species_counts.items()):
                     with cols[idx]:
                         st.metric(species, f"{count:,}")
                 
-                # Show summary
                 detected_species = [s for s in species_series.unique() if s != 'Unknown']
                 st.success(f"✅ Detected {len(detected_species)} species: {', '.join(detected_species)}")
                 
-                # Warn if many unknowns
                 unknown_count = (species_series == 'Unknown').sum()
                 if unknown_count > 0:
                     unknown_pct = (unknown_count / len(species_series)) * 100
                     st.warning(f"⚠️ {unknown_count:,} proteins ({unknown_pct:.1f}%) could not be assigned to any species")
-                    
             else:
                 st.warning("No text columns found for species assignment")
         else:
             st.warning("Please enter at least one species keyword")
+
 
     
     def _step5_workflow_suggestion(self):
