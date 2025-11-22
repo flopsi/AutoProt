@@ -237,7 +237,7 @@ class DataUploadModule:
         else:
             st.session_state.column_name_mapping = trimmed_mapping
     
-     def _step4_sample_annotation(self):
+         def _step4_sample_annotation(self):
         """Step 4: Species annotation with EDITABLE DEFAULTS"""
         
         st.header("Step 4: Sample Annotation")
