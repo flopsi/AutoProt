@@ -115,7 +115,7 @@ class DataUploadModule:
         
         uploaded_file = st.file_uploader(
             "Choose a CSV/TSV file",
-            type=['csv', 'tsv', 'txt'],
+            type=['csv', 'tsv', 'txt','xlsx'],
             key="main_data_file_uploader",
             help="Upload DIA-NN, Spectronaut, or MaxQuant output"
         )
@@ -173,7 +173,7 @@ class DataUploadModule:
         
         # Auto-detect columns
         metadata_cols = [col for col in df.columns if any(x in col for x in 
-                        ['Protein', 'Gene', 'Description', 'Q.Value', 'PEP'])]
+                        ["Protein", 'Gene', 'Description', 'Q.Value', 'PEP'])]
         
         quantity_cols = [col for col in df.columns if col not in metadata_cols 
                         and df[col].dtype in ['float64', 'int64']]
