@@ -195,11 +195,9 @@ class LFQbenchAnalyzer:
         
         print(f"  Significant proteins: {df['is_significant'].sum()}/{len(df)}")
     
-    return df
-
-        
         return df
-    
+
+            
     def _benjamini_hochberg(self, p_values: np.ndarray) -> np.ndarray:
         """Benjamini-Hochberg FDR correction"""
         p_values = np.array(p_values)
