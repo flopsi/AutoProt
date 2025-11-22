@@ -248,17 +248,22 @@ class LFQbenchAnalyzer:
         for species in self.expected_fc_map.keys():
             species_data = df[df['Species'] == species]
             
-            if len(species_data) >= 10:
+            if len(species_data) >= 1:  # CHANGED FROM >= 10
                 fc_values = species_data['log2_fc'].dropna().values
-                asymmetry = self.calculate_asymmetry_factor(fc_values)
                 
-                asymmetry_data.append({
-                    'Species': species,
-                    'Asymmetry Factor': float(asymmetry) if not np.isnan(asymmetry) else np.nan,
-                    'N Proteins': int(len(species_data))
-                })
+                if len(fc_values) >= 2:  # Need at least 2 values for percentile
+                    asymmetry = self.calculate_asymmetry_factor(fc_values)
+                    
+                    asymmetry_data.append({
+                        'Species': species,
+                        'Asymmetry Factor': float(asymmetry) if not np.isnan(asymmetry) else np.nan,
+                        'N Proteins': int(len(species_data))
+                    })
         
-        return pd.DataFrame(asymmetry_data)
+        result_df = pd.DataFrame(asymmetry_data)
+        print(f"DEBUG: Asymmetry DF created with {len(result_df)} rows")
+        return result_df
+
     
     def run_complete_analysis(self, df: pd.DataFrame, exp_cols: List[str], ctr_cols: List[str]) -> Tuple[pd.DataFrame, Dict, pd.DataFrame]:
         """Run complete LFQbench analysis pipeline"""
