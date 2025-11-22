@@ -490,17 +490,27 @@ class LFQbenchModule:
             "🌋 Volcano", "🔍 Detailed", "💾 Export"
         ])
         
-        with tab1:
-            st.subheader("Analysis Summary")
-            
-            # Metrics table
-            fig_metrics = self.visualizer.create_summary_metrics_table(metrics)
-            st.plotly_chart(fig_metrics, use_container_width=True)
-            
-            # Confusion matrix
-            st.subheader("Confusion Matrix")
-            fig_confusion = self.visualizer.plot_confusion_matrix(metrics)
-            st.plotly_chart(fig_confusion, use_container_width=True)
+with tab1:
+    st.subheader("Analysis Summary")
+    
+    # DEBUG: Print metrics before visualization
+    st.write("**Debug - Metrics Dictionary:**")
+    st.json(metrics)
+    
+    # Metrics table
+    try:
+        fig_metrics = self.visualizer.create_summary_metrics_table(metrics)
+        st.plotly_chart(fig_metrics, use_container_width=True)
+    except Exception as e:
+        st.error(f"Error creating metrics table: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
+    
+    # Confusion matrix
+    st.subheader("Confusion Matrix")
+    fig_confusion = self.visualizer.plot_confusion_matrix(metrics)
+    st.plotly_chart(fig_confusion, use_container_width=True)
+
         
         with tab2:
             st.subheader("Performance Metrics")
