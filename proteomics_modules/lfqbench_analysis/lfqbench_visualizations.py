@@ -10,6 +10,8 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 from typing import List, Dict, Optional
 from scipy.stats import gaussian_kde
+import io
+import zipfile
 
 
 class LFQbenchVisualizer:
@@ -22,26 +24,23 @@ class LFQbenchVisualizer:
             'E. coli': '#7570b2',
             'C.elegans': 'darkred'
         }
+        # Store figures for export
+        self.figures = {}
     
     def plot_density(self, df: pd.DataFrame, title: str = "Log2 Fold-Change Distribution") -> go.Figure:
         """
         Create SCIENTIFICALLY CORRECT density plot using KDE
-        This matches R's geom_density() - NOT violin plots
         """
         fig = go.Figure()
         
         for species in df['Species'].unique():
             species_data = df[df['Species'] == species]['log2_fc'].dropna()
             
-            if len(species_data) > 10:  # Need enough points for KDE
-                # Calculate KDE (Kernel Density Estimation)
+            if len(species_data) > 10:
                 kde = gaussian_kde(species_data, bw_method='scott')
-                
-                # Generate smooth x-axis
                 x_range = np.linspace(species_data.min() - 1, species_data.max() + 1, 200)
                 density = kde(x_range)
                 
-                # Plot density curve
                 fig.add_trace(go.Scatter(
                     x=x_range,
                     y=density,
@@ -66,6 +65,7 @@ class LFQbenchVisualizer:
             hovermode='x unified'
         )
         
+        self.figures['density'] = fig
         return fig
     
     def plot_volcano(self, df: pd.DataFrame, 
@@ -73,38 +73,79 @@ class LFQbenchVisualizer:
                     alpha: float = 0.01,
                     title: str = "Volcano Plot") -> go.Figure:
         """
-        Create volcano plot (log2FC vs -log10 p-value)
+        Create volcano plot - FIXED
         """
         df = df.copy()
         
-        # Handle p_adj values
+        # Handle p_adj values - FIXED
         df['p_adj'] = pd.to_numeric(df['p_adj'], errors='coerce')
-        df.loc[df['p_adj'] == 0, 'p_adj'] = 1e-300
+        
+        # Replace zeros and very small values
+        df.loc[df['p_adj'] <= 0, 'p_adj'] = 1e-300
+        df.loc[df['p_adj'].isna(), 'p_adj'] = 1.0
+        
+        # Calculate -log10(p_adj)
         df['-log10_pval'] = -np.log10(df['p_adj'])
+        
+        # Cap extremely high values for better visualization
+        max_log_p = df['-log10_pval'].replace([np.inf, -np.inf], np.nan).max()
+        if pd.isna(max_log_p) or max_log_p > 50:
+            max_log_p = 50
+        df.loc[df['-log10_pval'] > max_log_p, '-log10_pval'] = max_log_p
         
         fig = go.Figure()
         
         for species in df['Species'].unique():
             species_data = df[df['Species'] == species]
             
-            fig.add_trace(go.Scatter(
-                x=species_data['log2_fc'],
-                y=species_data['-log10_pval'],
-                mode='markers',
-                name=species,
-                marker=dict(
-                    color=self.color_map.get(species, 'gray'),
-                    size=6,
-                    opacity=0.6
-                ),
-                text=species_data.index,
-                hovertemplate='<b>%{text}</b><br>Log2FC: %{x:.2f}<br>-log10(padj): %{y:.2f}<extra></extra>'
-            ))
+            # Separate significant and non-significant
+            sig_data = species_data[species_data['is_significant'] == True]
+            non_sig_data = species_data[species_data['is_significant'] == False]
+            
+            # Plot non-significant (smaller, transparent)
+            if len(non_sig_data) > 0:
+                fig.add_trace(go.Scatter(
+                    x=non_sig_data['log2_fc'],
+                    y=non_sig_data['-log10_pval'],
+                    mode='markers',
+                    name=f"{species} (NS)",
+                    marker=dict(
+                        color=self.color_map.get(species, 'gray'),
+                        size=4,
+                        opacity=0.3
+                    ),
+                    showlegend=False,
+                    text=non_sig_data.index,
+                    hovertemplate='<b>%{text}</b><br>Log2FC: %{x:.2f}<br>-log10(padj): %{y:.2f}<extra></extra>'
+                ))
+            
+            # Plot significant (larger, opaque)
+            if len(sig_data) > 0:
+                fig.add_trace(go.Scatter(
+                    x=sig_data['log2_fc'],
+                    y=sig_data['-log10_pval'],
+                    mode='markers',
+                    name=species,
+                    marker=dict(
+                        color=self.color_map.get(species, 'gray'),
+                        size=8,
+                        opacity=0.8,
+                        line=dict(width=1, color='white')
+                    ),
+                    text=sig_data.index,
+                    hovertemplate='<b>%{text}</b><br>Log2FC: %{x:.2f}<br>-log10(padj): %{y:.2f}<extra></extra>'
+                ))
         
         # Add threshold lines
-        fig.add_hline(y=-np.log10(alpha), line_dash="dot", line_color="gray", opacity=0.7)
-        fig.add_vline(x=fc_threshold, line_dash="dot", line_color="gray", opacity=0.7)
-        fig.add_vline(x=-fc_threshold, line_dash="dot", line_color="gray", opacity=0.7)
+        fig.add_hline(
+            y=-np.log10(alpha), 
+            line_dash="dot", 
+            line_color="red", 
+            opacity=0.5,
+            annotation_text=f"α = {alpha}"
+        )
+        fig.add_vline(x=fc_threshold, line_dash="dot", line_color="gray", opacity=0.5)
+        fig.add_vline(x=-fc_threshold, line_dash="dot", line_color="gray", opacity=0.5)
         
         fig.update_layout(
             title=title,
@@ -115,6 +156,7 @@ class LFQbenchVisualizer:
             showlegend=True
         )
         
+        self.figures['volcano'] = fig
         return fig
     
     def plot_fc_boxplot(self, df: pd.DataFrame, 
@@ -155,6 +197,7 @@ class LFQbenchVisualizer:
             showlegend=False
         )
         
+        self.figures['fc_boxplot'] = fig
         return fig
     
     def plot_cv_violin(self, df: pd.DataFrame,
@@ -203,51 +246,59 @@ class LFQbenchVisualizer:
             yaxis_range=[0, 30]
         )
         
+        self.figures['cv_violin'] = fig
         return fig
     
     def plot_ma(self, df: pd.DataFrame,
                 title: str = "MA Plot") -> go.Figure:
         """
-        MA plot: log2(mean intensity) vs log2(fold-change)
+        MA plot - FIXED
         """
         df = df.copy()
         
+        # Ensure numeric
         df['exp_mean'] = pd.to_numeric(df['exp_mean'], errors='coerce')
         df['ctr_mean'] = pd.to_numeric(df['ctr_mean'], errors='coerce')
         df['log2_fc'] = pd.to_numeric(df['log2_fc'], errors='coerce')
         
+        # Calculate average intensity (A value)
         df['log2_mean'] = np.log2((df['exp_mean'] + df['ctr_mean']) / 2)
+        
+        # Remove inf and nan
+        df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=['log2_mean', 'log2_fc'])
         
         fig = go.Figure()
         
         for species in df['Species'].unique():
             species_data = df[df['Species'] == species]
             
-            fig.add_trace(go.Scatter(
-                x=species_data['log2_mean'],
-                y=species_data['log2_fc'],
-                mode='markers',
-                name=species,
-                marker=dict(
-                    color=self.color_map.get(species, 'gray'),
-                    size=5,
-                    opacity=0.5
-                ),
-                text=species_data.index,
-                hovertemplate='<b>%{text}</b><br>Mean: %{x:.2f}<br>Log2FC: %{y:.2f}<extra></extra>'
-            ))
+            if len(species_data) > 0:
+                fig.add_trace(go.Scatter(
+                    x=species_data['log2_mean'],
+                    y=species_data['log2_fc'],
+                    mode='markers',
+                    name=species,
+                    marker=dict(
+                        color=self.color_map.get(species, 'gray'),
+                        size=5,
+                        opacity=0.5
+                    ),
+                    text=species_data.index,
+                    hovertemplate='<b>%{text}</b><br>A (Mean): %{x:.2f}<br>M (Log2FC): %{y:.2f}<extra></extra>'
+                ))
         
         fig.add_hline(y=0, line_dash="dash", line_color="black", opacity=0.5)
         
         fig.update_layout(
             title=title,
-            xaxis_title="Log2(Mean Intensity)",
-            yaxis_title="Log2 Fold-Change",
+            xaxis_title="A = Log2(Mean Intensity)",
+            yaxis_title="M = Log2 Fold-Change",
             template="plotly_white",
             height=600,
             showlegend=True
         )
         
+        self.figures['ma_plot'] = fig
         return fig
     
     def plot_facet_scatter(self, df: pd.DataFrame,
@@ -305,6 +356,7 @@ class LFQbenchVisualizer:
         fig.update_xaxes(title_text="Log2(Control Mean)")
         fig.update_yaxes(title_text="Log2 Fold-Change")
         
+        self.figures['facet_scatter'] = fig
         return fig
     
     def plot_pca(self, pca_result: np.ndarray,
@@ -335,6 +387,7 @@ class LFQbenchVisualizer:
             showlegend=False
         )
         
+        self.figures['pca'] = fig
         return fig
     
     def plot_asymmetry_table(self, asymmetry_df: pd.DataFrame) -> go.Figure:
@@ -350,15 +403,22 @@ class LFQbenchVisualizer:
             )
             return fig
         
+        # Format values
+        display_df = asymmetry_df.copy()
+        if 'Asymmetry Factor' in display_df.columns:
+            display_df['Asymmetry Factor'] = display_df['Asymmetry Factor'].apply(
+                lambda x: f"{x:.3f}" if not pd.isna(x) else "N/A"
+            )
+        
         fig = go.Figure(data=[go.Table(
             header=dict(
-                values=list(asymmetry_df.columns),
+                values=list(display_df.columns),
                 fill_color='lightgray',
                 align='left',
                 font=dict(size=12, color='black')
             ),
             cells=dict(
-                values=[asymmetry_df[col] for col in asymmetry_df.columns],
+                values=[display_df[col] for col in display_df.columns],
                 fill_color='white',
                 align='left',
                 font=dict(size=11)
@@ -370,6 +430,7 @@ class LFQbenchVisualizer:
             height=300
         )
         
+        self.figures['asymmetry'] = fig
         return fig
     
     def plot_confusion_matrix(self, metrics: Dict[str, float]) -> go.Figure:
@@ -400,6 +461,7 @@ class LFQbenchVisualizer:
             template="plotly_white"
         )
         
+        self.figures['confusion'] = fig
         return fig
     
     def create_summary_metrics_table(self, metrics: Dict[str, float]) -> go.Figure:
@@ -459,7 +521,22 @@ class LFQbenchVisualizer:
             height=500
         )
         
+        self.figures['metrics'] = fig
         return fig
+    
+    def export_all_figures(self) -> bytes:
+        """
+        Export all figures as HTML files in a ZIP - NEW
+        """
+        zip_buffer = io.BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            for name, fig in self.figures.items():
+                html_str = fig.to_html(include_plotlyjs='cdn')
+                zip_file.writestr(f"{name}.html", html_str)
+        
+        zip_buffer.seek(0)
+        return zip_buffer.getvalue()
 
 
 def get_lfqbench_visualizer(color_map: Optional[Dict[str, str]] = None) -> LFQbenchVisualizer:
