@@ -390,11 +390,6 @@ class DataUploadModule:
         # Success message
         st.success("✅ Data upload complete! Ready for analysis.")
         
-
-    
-    def _render_navigation(self):
-        """Render navigation buttons"""
-        
         st.divider()
         
         col1, col2, col3 = st.columns([1, 1, 1])
