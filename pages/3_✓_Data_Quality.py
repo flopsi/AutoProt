@@ -16,7 +16,7 @@ if not protein_uploaded:
         st.switch_page("pages/1_📊_Protein_Upload.py")
     st.stop()
 
-# Data selection tabs
+# Data selection tabs - ONLY difference is data source
 data_tab1, data_tab2 = st.tabs(["Protein Data (default)", "Peptide Data"])
 
 with data_tab1:
@@ -49,16 +49,13 @@ intensity_data = []
 for col in quant_data.columns:
     condition = condition_mapping.get(col, col)
     condition_letter = condition[0]  # 'A' or 'B'
-    replicate_num = condition[1:]    # '1', '2', '3', etc.
     
     for idx, value in quant_data[col].items():
         if pd.notna(value) and value > 0:
             intensity_data.append({
                 'Sample': condition,
                 'Condition': condition_letter,
-                'Replicate': replicate_num,
                 'Log10_Intensity': np.log10(value),
-                'Original_Column': col
             })
 
 intensity_df = pd.DataFrame(intensity_data)
@@ -112,19 +109,13 @@ boxplot = alt.Chart(intensity_df).mark_boxplot(
 )
 
 # ============================================================
-# DISPLAY WITH THEME TABS
+# DISPLAY CHART (SAME THEME FOR BOTH TABS)
 # ============================================================
 
 st.markdown("---")
 st.markdown("### Intensity Distribution Analysis")
 
-theme_tab1, theme_tab2 = st.tabs(["Streamlit theme (default)", "Altair native theme"])
-
-with theme_tab1:
-    st.altair_chart(boxplot, theme="streamlit", use_container_width=True)
-
-with theme_tab2:
-    st.altair_chart(boxplot, theme=None, use_container_width=True)
+st.altair_chart(boxplot, theme="streamlit", use_container_width=True)
 
 # ============================================================
 # SUMMARY STATISTICS
