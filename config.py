@@ -20,6 +20,28 @@ GREEN = "#B5BD00"
 SKY = "#9BD3DD"
 
 # ============================================================
+# DATA LEVEL DETECTION PATTERNS
+# ============================================================
+PEPTIDE_COLUMN_PATTERNS = [
+    r'peptide',
+    r'modified[._\s]sequence',
+    r'stripped[._\s]sequence',
+    r'peptide[._\s]sequence',
+    r'^pep\.',
+    r'precursor'
+]
+
+PROTEIN_COLUMN_PATTERNS = [
+    r'protein[._\s]group',
+    r'protein[._\s]id',
+    r'majority[._\s]protein',
+    r'protein[._\s]name',
+    r'^pg\.',
+    r'uniprot',
+    r'gene[._\s]name'
+]
+
+# ============================================================
 # COLUMN DETECTION
 # ============================================================
 def detect_column_types(df):
@@ -27,8 +49,8 @@ def detect_column_types(df):
     Automatically detect metadata vs quantitative columns.
     
     Rules:
-    1. Object/string dtype → metadata
-    2. Numerical dtype → quantitative
+    1. Non-numerical (object/string) → metadata
+    2. Numerical → quantitative
     
     Returns:
         tuple: (metadata_cols, quant_cols)
@@ -47,6 +69,40 @@ def detect_column_types(df):
             quant_cols.append(col)
     
     return metadata_cols, quant_cols
+
+def detect_data_level(df, metadata_cols):
+    """
+    Detect if data contains peptide-level or protein-level information.
+    
+    Returns:
+        str: 'peptide', 'protein', 'both', or 'unknown'
+    """
+    has_peptide = False
+    has_protein = False
+    
+    # Check all columns (case-insensitive)
+    all_cols_lower = [col.lower() for col in df.columns]
+    
+    # Check for peptide patterns
+    for pattern in PEPTIDE_COLUMN_PATTERNS:
+        if any(re.search(pattern, col, re.IGNORECASE) for col in all_cols_lower):
+            has_peptide = True
+            break
+    
+    # Check for protein patterns
+    for pattern in PROTEIN_COLUMN_PATTERNS:
+        if any(re.search(pattern, col, re.IGNORECASE) for col in all_cols_lower):
+            has_protein = True
+            break
+    
+    if has_peptide and has_protein:
+        return 'both'
+    elif has_peptide:
+        return 'peptide'
+    elif has_protein:
+        return 'protein'
+    else:
+        return 'unknown'
 
 # ============================================================
 # NAME TRIMMING
