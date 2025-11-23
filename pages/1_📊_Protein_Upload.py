@@ -274,20 +274,6 @@ elif st.session_state.upload_stage == 'summary':
 
     st.markdown("### Protein Distribution by Species")
     
-    # Calculate counts for all three categories
-    # After calculating species counts, create summary DataFrame
-    from utils.data_summary import create_species_condition_summary
-
-    summary_df = b_data = protein_data.get_condition_data('B')
-    st.bar_chart(
-        summary_df,
-        x="Number of Proteins",
-        y=["Species"],
-        color=["#FF0000", "#0000FF","#0000FF"]
-    )
-
-    
-
 
 
 
