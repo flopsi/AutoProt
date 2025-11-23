@@ -275,10 +275,10 @@ elif st.session_state.upload_stage == 'summary':
 
 
     with nav_col3:
-        if if st.button("🔄 Start Over", use_container_width=True):
-    for key in ['upload_stage', 'protein_df', 'auto_species_col', 'auto_condition_mapping',
+        if st.button("🔄 Start Over", use_container_width=True):
+            for key in ['upload_stage', 'protein_df', 'auto_species_col', 'auto_condition_mapping',
                 'selected_species_col', 'selected_workflow', 'selected_quant_cols']:
-        if key in st.session_state:
-            del st.session_state[key]
-    st.session_state.upload_stage = 'upload'
-    st.rerun()
+                if key in st.session_state:
+                    del st.session_state[key]
+        st.session_state.upload_stage = 'upload'
+        st.rerun()
