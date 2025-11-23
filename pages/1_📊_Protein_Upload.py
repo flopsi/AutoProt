@@ -259,18 +259,8 @@ elif st.session_state.upload_stage == 'summary':
     st.markdown("## Upload Summary")
     st.success("✓ Data processed successfully!")
 
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Proteins", f"{protein_data.n_proteins:,}")
-    with col2:
-        n_a = len([c for c in protein_data.condition_mapping.values() if c.startswith('A')])
-        n_b = len([c for c in protein_data.condition_mapping.values() if c.startswith('B')])
-        st.metric("Samples", f"{n_a + n_b}")
-    with col4:
-        species_counts = protein_data.get_species_counts()
-        st.metric("Species", len([s for s in species_counts.values() if s > 0]))
 
-    st.markdown("### Protein Distribution by Species")
+    st.metric("Proteins", f"{protein_data.n_proteins:,}")")
     
 
 
