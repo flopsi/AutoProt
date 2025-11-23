@@ -1,4 +1,5 @@
 # DIA Proteomics Analysis App
+by Florian Marty, Ph.D.
 
 A modular Streamlit app for automated proteomics data import, annotation, and quality control visualization – with Thermo Fisher Scientific branding.
 
@@ -22,13 +23,13 @@ Codebase structured for easy addition of new statistics and plots.
 <aside>
 💡
 
-Primary Red: #E71316
-Dark Red: #A6192E
-Sky Blue: #9BD3DD
-Primary Gray: #54585A
-Light Gray: #E2E3E4
-Green: #B5BD00
-Orange: #EA7600
+    Primary Red: #E71316
+    Dark Red: #A6192E
+    Sky Blue: #9BD3DD
+    Primary Gray: #54585A
+    Light Gray: #E2E3E4
+    Green: #B5BD00
+    Orange: #EA7600
 
 </aside>
 
@@ -37,10 +38,10 @@ Orange: #EA7600
 <aside>
 💡
 
-├── [app.py](http://app.py/) # Main Streamlit entrypoint
-├── [config.py](http://config.py/) # Utilities: column detection, trimming, assignment, color
-├── requirements.txt # Environment for deployment
-└── ... # Additional modules easily added
+    ├── [app.py](http://app.py/) # Main Streamlit entrypoint
+    ├── [config.py](http://config.py/) # Utilities: column detection, trimming,         assignment, color
+    ├── requirements.txt # Environment for deployment
+    └── ... # Additional modules easily added
 
 </aside>
 
