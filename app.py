@@ -1,21 +1,26 @@
 import streamlit as st
-import pandas as pd
-from io import StringIO
 
-uploaded_file = st.file_uploader("Choose a file")
-if uploaded_file is not None:
-    # To read file as bytes:
-    bytes_data = uploaded_file.getvalue()
-    st.write(bytes_data)
+st.set_page_config(
+    page_title="DIA Proteomics App",
+    page_icon="🧬",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-    # To convert to a string based IO:
-    stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
-    st.write(stringio)
+st.title("DIA Proteomics Analysis Framework")
+st.markdown("""
+Welcome to the DIA Proteomics App!
 
-    # To read file as string:
-    string_data = stringio.read()
-    st.write(string_data)
+- The sidebar (left) lets you access individual modules:
+    - Protein-Level Upload
+    - Peptide-Level Upload
+    - (Next, Analysis, or others as you add them)
 
-    # Can be used wherever a "file-like" object is accepted:
-    dataframe = pd.read_csv(uploaded_file)
-    st.write(dataframe)
+Each module is a separate page in the app. The widgets used on each page will always be local to that page—**they don't appear or interfere across pages**.
+
+**To get started, select a page from the sidebar.**
+""")
+
+# Optional project/company info, styling, branding, or instructions...
+st.markdown("---")
+st.caption("© 2025 Your Organization | Confidential")
