@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 
 from components.header import render_header
-from components.charts import create_species_bar_chart
+from components.charts import create_combined_species_chart
 from components.condition_selector import render_condition_selector
 from utils.file_handlers import load_data_file
 from utils.species_detector import auto_detect_species_column, extract_species_map, extract_protein_groups
@@ -106,7 +106,6 @@ elif st.session_state.upload_stage == 'annotate':
         default_index = 0
         st.warning("Could not auto-detect species column. Please select manually.")
     
-    # THIS WAS UNINDENTED - FIXED
     selected_species_col = st.selectbox(
         "Select column containing species information:",
         options=object_columns,
@@ -193,7 +192,7 @@ elif st.session_state.upload_stage == 'annotate':
     if selected_workflow == WorkflowType.LFQ_BENCH.value:
         st.info(WorkflowType.LFQ_BENCH.description)
 
-    if st.button("Proceed to Condition Assignment", type="primary", disabled=(len(selected_quant_cols) == 0)):
+    if st.button("Proceed to Condition Assignment", type="primary", disabled=(len(selected_quant_cols) == 0 or not species_confirmed)):
         st.session_state.selected_species_col = selected_species_col
         st.session_state.selected_workflow = selected_workflow
         st.session_state.selected_quant_cols = selected_quant_cols
@@ -252,7 +251,7 @@ elif st.session_state.upload_stage == 'conditions':
             st.session_state.upload_stage = 'summary'
             st.rerun()
 
-# ========== STAGE 4: SUMMARY & CHARTS ==========
+# ========== STAGE 4: SUMMARY & COMBINED CHART ==========
 elif st.session_state.upload_stage == 'summary':
     protein_data = st.session_state.protein_data
     filename = st.session_state.protein_filename
@@ -277,22 +276,20 @@ elif st.session_state.upload_stage == 'summary':
     
     # Calculate counts for all three categories
     total_species_counts = protein_data.get_species_counts()
-    
+
     a_data = protein_data.get_condition_data('A')
     a_detected_indices = a_data.dropna(how='all').index
     species_a_counts = {sp: sum(1 for idx in a_detected_indices if protein_data.species_map.get(idx) == sp)
                        for sp in ['human', 'ecoli', 'yeast']}
-    
+
     b_data = protein_data.get_condition_data('B')
     b_detected_indices = b_data.dropna(how='all').index
     species_b_counts = {sp: sum(1 for idx in b_detected_indices if protein_data.species_map.get(idx) == sp)
                        for sp in ['human', 'ecoli', 'yeast']}
-    
-    # Create combined chart
-    from components.charts import create_combined_species_chart
+
+    # Create combined chart with three bars
     fig = create_combined_species_chart(total_species_counts, species_a_counts, species_b_counts)
     st.plotly_chart(fig, use_container_width=True)
-
 
     st.markdown("---")
     st.markdown("### Next Steps")
