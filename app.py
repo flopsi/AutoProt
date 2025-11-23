@@ -81,7 +81,20 @@ st.markdown(f"""
 
 # Header
 st.markdown("""
-<div class
+<div class="header-banner">
+  <h1>DIA Proteomics Analysis Framework</h1>
+  <p>Comprehensive Data Import, Validation & Statistical Analysis | Thermo Fisher Scientific</p>
+</div>
+""", unsafe_allow_html=True)
+
+# Welcome content
+st.markdown("## Welcome to the DIA Proteomics Analysis Platform")
+
+st.info("""
+Getting Started: Use the sidebar to navigate between pages:
+- Protein-Level Upload: Import and configure protein-level data
+- Peptide-Level Upload: Import and configure peptide-level data (optional)
+- Analysis: Perform statistical analysis on uploaded data
 """)
 
 # Instructions
