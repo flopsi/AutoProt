@@ -127,4 +127,44 @@ st.markdown("### Current Status")
 try:
     from models import SessionKeys
     
-    col
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if SessionKeys.PROTEIN_DATASET.value in st.session_state:
+            dataset = st.session_state[SessionKeys.PROTEIN_DATASET.value]
+            st.success("Protein Data Loaded")
+            st.metric("Proteins", f"{dataset.n_proteins:,}")
+            st.metric("Samples", dataset.n_samples)
+        else:
+            st.warning("Protein Data Not Loaded")
+            st.caption("Go to Protein page to get started")
+    
+    with col2:
+        if SessionKeys.PEPTIDE_DATASET.value in st.session_state:
+            dataset = st.session_state[SessionKeys.PEPTIDE_DATASET.value]
+            st.success("Peptide Data Loaded")
+            st.metric("Peptides", f"{dataset.n_proteins:,}")
+            st.metric("Samples", dataset.n_samples)
+        else:
+            st.info("Peptide Data Optional")
+            st.caption("Peptide-level data provides additional statistical power")
+    
+    with col3:
+        if SessionKeys.RESULTS.value in st.session_state:
+            st.success("Analysis Complete")
+            st.caption("View results in Analysis page")
+        else:
+            st.info("Ready for Analysis")
+            st.caption("Upload data and configure parameters")
+
+except ImportError:
+    st.warning("Models module not found. Please ensure models.py is in the project root.")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div class="footer">
+  <strong>Proprietary & Confidential | For Internal Use Only</strong>
+  <p>© 2024 Thermo Fisher Scientific Inc. All rights reserved.</p>
+</div>
+""", unsafe_allow_html=True)
