@@ -1,3 +1,7 @@
+import plotly.graph_objects as go
+from typing import Dict
+from config.colors import ThermoFisherColors
+
 def create_species_bar_chart(species_counts: Dict[str, int], title: str, show_percentages: bool = True) -> go.Figure:
     species_order = ['human', 'ecoli', 'yeast']
     sorted_counts = {sp: species_counts.get(sp, 0) for sp in species_order}
