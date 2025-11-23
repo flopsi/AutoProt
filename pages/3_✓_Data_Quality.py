@@ -17,7 +17,10 @@ if not protein_uploaded:
         st.switch_page("pages/1_📊_Protein_Upload.py")
     st.stop()
 
-# Data selection tabs - ONLY difference is data source
+st.markdown("---")
+st.markdown("### Intensity Distribution Analysis")
+
+# Data selection tabs
 data_tab1, data_tab2 = st.tabs(["Protein Data (default)", "Peptide Data"])
 
 with data_tab1:
@@ -25,6 +28,51 @@ with data_tab1:
     current_data = st.session_state.protein_data
     data_type = "Protein"
     st.success(f"✓ Analyzing protein data: {current_data.n_proteins:,} proteins")
+    
+    # Get condition data
+    condition_mapping = current_data.condition_mapping
+    quant_data = current_data.quant_data
+    
+    # Create figure
+    fig = go.Figure()
+    
+    # Add boxplot for each sample
+    for col in quant_data.columns:
+        condition = condition_mapping.get(col, col)
+        condition_letter = condition[0]
+        
+        # Get log10 values
+        values = quant_data[col].dropna()
+        log10_values = np.log10(values[values > 0])
+        
+        # Color based on condition
+        color = '#E71316' if condition_letter == 'A' else '#9BD3DD'
+        
+        fig.add_trace(go.Box(
+            y=log10_values,
+            name=condition,
+            marker_color=color,
+            boxmean='sd',
+            hovertemplate='<b>%{fullData.name}</b><br>Log₁₀ Intensity: %{y:.2f}<extra></extra>'
+        ))
+    
+    # Update layout
+    fig.update_layout(
+        title=dict(
+            text=f'{data_type} Intensity Distribution by Sample',
+            font=dict(size=16, color=ThermoFisherColors.PRIMARY_GRAY, family='Arial', weight=600)
+        ),
+        yaxis_title='Log₁₀ Intensity',
+        showlegend=False,
+        height=500,
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
+        xaxis=dict(tickangle=-45, showgrid=False),
+        yaxis=dict(gridcolor='rgba(0,0,0,0.1)', showgrid=True, zeroline=False)
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
 
 with data_tab2:
     if peptide_uploaded:
@@ -32,72 +80,53 @@ with data_tab2:
         current_data = st.session_state.peptide_data
         data_type = "Peptide"
         st.success(f"✓ Analyzing peptide data: {current_data.n_rows:,} peptides")
+        
+        # Get condition data
+        condition_mapping = current_data.condition_mapping
+        quant_data = current_data.quant_data
+        
+        # Create figure
+        fig = go.Figure()
+        
+        # Add boxplot for each sample
+        for col in quant_data.columns:
+            condition = condition_mapping.get(col, col)
+            condition_letter = condition[0]
+            
+            # Get log10 values
+            values = quant_data[col].dropna()
+            log10_values = np.log10(values[values > 0])
+            
+            # Color based on condition
+            color = '#E71316' if condition_letter == 'A' else '#9BD3DD'
+            
+            fig.add_trace(go.Box(
+                y=log10_values,
+                name=condition,
+                marker_color=color,
+                boxmean='sd',
+                hovertemplate='<b>%{fullData.name}</b><br>Log₁₀ Intensity: %{y:.2f}<extra></extra>'
+            ))
+        
+        # Update layout
+        fig.update_layout(
+            title=dict(
+                text=f'{data_type} Intensity Distribution by Sample',
+                font=dict(size=16, color=ThermoFisherColors.PRIMARY_GRAY, family='Arial', weight=600)
+            ),
+            yaxis_title='Log₁₀ Intensity',
+            showlegend=False,
+            height=500,
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
+            xaxis=dict(tickangle=-45, showgrid=False),
+            yaxis=dict(gridcolor='rgba(0,0,0,0.1)', showgrid=True, zeroline=False)
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("ℹ️ Peptide data not loaded. Upload peptide data to enable this view.")
-        st.stop()
-
-# ============================================================
-# PREPARE DATA FOR BOXPLOTS
-# ============================================================
-
-# Get condition data
-condition_mapping = current_data.condition_mapping
-quant_data = current_data.quant_data
-
-# Create figure
-fig = go.Figure()
-
-# Add boxplot for each sample
-for col in quant_data.columns:
-    condition = condition_mapping.get(col, col)
-    condition_letter = condition[0]  # 'A' or 'B'
-    
-    # Get log10 values for this sample
-    values = quant_data[col].dropna()
-    log10_values = np.log10(values[values > 0])
-    
-    # Determine color based on condition
-    color = '#E71316' if condition_letter == 'A' else '#9BD3DD'  # Red for A, Sky for B
-    
-    fig.add_trace(go.Box(
-        y=log10_values,
-        name=condition,
-        marker_color=color,
-        boxmean='sd',  # Show mean and standard deviation
-        hovertemplate='<b>%{fullData.name}</b><br>Log₁₀ Intensity: %{y:.2f}<extra></extra>'
-    ))
-
-# Update layout
-fig.update_layout(
-    title=dict(
-        text=f'{data_type} Intensity Distribution by Sample',
-        font=dict(size=16, color=ThermoFisherColors.PRIMARY_GRAY, family='Arial', weight=600)
-    ),
-    yaxis_title='Log₁₀ Intensity',
-    showlegend=False,
-    height=500,
-    plot_bgcolor='rgba(0,0,0,0)',
-    paper_bgcolor='rgba(0,0,0,0)',
-    font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
-    xaxis=dict(
-        tickangle=-45,
-        showgrid=False
-    ),
-    yaxis=dict(
-        gridcolor='rgba(0,0,0,0.1)',
-        showgrid=True,
-        zeroline=False
-    )
-)
-
-# ============================================================
-# DISPLAY CHART
-# ============================================================
-
-st.markdown("---")
-st.markdown("### Intensity Distribution Analysis")
-
-st.plotly_chart(fig, use_container_width=True)
 
 # ============================================================
 # NAVIGATION
