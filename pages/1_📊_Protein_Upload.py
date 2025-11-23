@@ -288,8 +288,13 @@ elif st.session_state.upload_stage == 'summary':
                        for sp in ['human', 'ecoli', 'yeast']}
 
     # Create combined chart with three bars
-    fig = create_combined_species_chart(total_species_counts, species_a_counts, species_b_counts)
-    st.plotly_chart(fig, use_container_width=True)
+with st.container():
+    st.write("This is inside the container")
+
+    # You can call any Streamlit command, including custom components:
+    st.bar_chart(np.random.randn(50, 3))
+
+st.write("This is outside the container")
 
     st.markdown("---")
     st.markdown("### Next Steps")
