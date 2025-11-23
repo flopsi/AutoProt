@@ -260,7 +260,7 @@ elif st.session_state.upload_stage == 'summary':
     st.success("✓ Data processed successfully!")
 
 
-    st.metric("Proteins", f"{protein_data.n_proteins:,}")")
+    st.metric("Proteins", f"{protein_data.n_proteins:,}")
     
 
 
