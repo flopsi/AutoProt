@@ -8,6 +8,7 @@ from sklearn.decomposition import PCA
 # Import from config
 from config import (
     detect_column_types,
+    detect_data_level,
     auto_assign_conditions,
     PRIMARY_RED,
     DARK_RED,
@@ -33,14 +34,18 @@ st.set_page_config(
 # ============================================================
 # SESSION STATE INITIALIZATION
 # ============================================================
-if 'uploaded_data' not in st.session_state:
-    st.session_state.uploaded_data = None
-if 'column_annotations' not in st.session_state:
-    st.session_state.column_annotations = {}
-if 'metadata_cols' not in st.session_state:
-    st.session_state.metadata_cols = []
-if 'quant_cols' not in st.session_state:
-    st.session_state.quant_cols = []
+if 'protein_data' not in st.session_state:
+    st.session_state.protein_data = None
+if 'peptide_data' not in st.session_state:
+    st.session_state.peptide_data = None
+if 'protein_annotations' not in st.session_state:
+    st.session_state.protein_annotations = {}
+if 'protein_metadata_cols' not in st.session_state:
+    st.session_state.protein_metadata_cols = []
+if 'protein_quant_cols' not in st.session_state:
+    st.session_state.protein_quant_cols = []
+if 'protein_data_level' not in st.session_state:
+    st.session_state.protein_data_level = None
 
 # ============================================================
 # CACHED CSS
@@ -59,6 +64,23 @@ def load_css():
             border-radius: 6px; font-weight: 500; border: none;
         }}
         .stButton > button[kind="primary"]:hover {{background-color: {DARK_RED};}}
+        .data-level-badge {{
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 600;
+            margin: 10px 0;
+        }}
+        .badge-protein {{
+            background-color: rgba(155, 211, 221, 0.2);
+            border: 2px solid {SKY};
+            color: {PRIMARY_GRAY};
+        }}
+        .badge-peptide {{
+            background-color: rgba(231, 19, 22, 0.1);
+            border: 2px solid {PRIMARY_RED};
+            color: {PRIMARY_GRAY};
+        }}
     </style>
     """
 
@@ -74,7 +96,7 @@ def clean_intensity_data(df, quant_cols):
     return df_clean
 
 # ============================================================
-# PLOTTING FUNCTIONS
+# PLOTTING FUNCTIONS (unchanged)
 # ============================================================
 @st.cache_data
 def plot_intensity_distribution(df, quant_cols, annotations):
@@ -96,25 +118,11 @@ def plot_intensity_distribution(df, quant_cols, annotations):
             })
     
     plot_df = pd.DataFrame(data_list)
-    
     colors = get_condition_colors()
     
-    fig = px.violin(
-        plot_df,
-        x='Sample',
-        y='Log10_Intensity',
-        color='Condition',
-        color_discrete_map=colors,
-        box=True,
-        points=False
-    )
-    
-    fig.update_layout(
-        title="Intensity Distribution (Log10)",
-        height=500,
-        template="plotly_white"
-    )
-    
+    fig = px.violin(plot_df, x='Sample', y='Log10_Intensity', color='Condition',
+                   color_discrete_map=colors, box=True, points=False)
+    fig.update_layout(title="Intensity Distribution (Log10)", height=500, template="plotly_white")
     return fig
 
 @st.cache_data
@@ -126,7 +134,6 @@ def plot_cv_analysis(df, quant_cols, annotations):
     treatment_cols = [col for col in quant_cols if annotations[col]['condition'] == 'Treatment']
     
     cv_data = []
-    
     for idx, row in df_clean.iterrows():
         control_vals = row[control_cols].dropna()
         if len(control_vals) > 1:
@@ -141,38 +148,22 @@ def plot_cv_analysis(df, quant_cols, annotations):
                 cv_data.append({'Condition': 'Treatment', 'CV': cv})
     
     cv_df = pd.DataFrame(cv_data)
-    
     colors = get_condition_colors()
     
-    fig = px.violin(
-        cv_df,
-        x='Condition',
-        y='CV',
-        color='Condition',
-        color_discrete_map=colors,
-        box=True,
-        points=False
-    )
-    
-    fig.update_layout(
-        title="Coefficient of Variation by Condition",
-        height=500,
-        template="plotly_white",
-        yaxis_title="CV (%)"
-    )
-    
+    fig = px.violin(cv_df, x='Condition', y='CV', color='Condition',
+                   color_discrete_map=colors, box=True, points=False)
+    fig.update_layout(title="Coefficient of Variation by Condition", height=500,
+                     template="plotly_white", yaxis_title="CV (%)")
     return fig
 
 @st.cache_data
 def plot_pca(df, quant_cols, annotations):
     """PCA clustering"""
     df_clean = clean_intensity_data(df, quant_cols)
-    
     df_pca = df_clean.dropna(thresh=len(quant_cols) * 0.5)
     df_pca = df_pca.fillna(df_pca.mean())
     
     data_transposed = df_pca.T
-    
     pca = PCA(n_components=2)
     components = pca.fit_transform(data_transposed)
     
@@ -186,27 +177,14 @@ def plot_pca(df, quant_cols, annotations):
         })
     
     plot_df = pd.DataFrame(plot_data)
-    
     colors = get_condition_colors()
     
-    fig = px.scatter(
-        plot_df,
-        x='PC1',
-        y='PC2',
-        color='Condition',
-        text='Sample',
-        color_discrete_map=colors,
-        size_max=15
-    )
-    
+    fig = px.scatter(plot_df, x='PC1', y='PC2', color='Condition', text='Sample',
+                    color_discrete_map=colors, size_max=15)
     fig.update_traces(marker=dict(size=12), textposition='top center')
-    
     fig.update_layout(
         title=f"PCA: Sample Clustering (PC1: {pca.explained_variance_ratio_[0]:.1%}, PC2: {pca.explained_variance_ratio_[1]:.1%})",
-        height=500,
-        template="plotly_white"
-    )
-    
+        height=500, template="plotly_white")
     return fig
 
 # ============================================================
@@ -215,7 +193,7 @@ def plot_pca(df, quant_cols, annotations):
 st.markdown(f"""
 <div style="background: {PRIMARY_RED}; padding: 20px; margin: -1rem -1rem 2rem -1rem; color: white;">
     <h1 style="margin: 0; font-size: 28px;">DIA Proteomics Analysis Pipeline</h1>
-    <p style="margin: 5px 0 0 0; font-size: 14px;">Multi-Module Data Analysis Platform</p>
+    <p style="margin: 5px 0 0 0; font-size: 14px;">Multi-Level Data Import & Analysis</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -225,80 +203,94 @@ st.markdown(f"""
 tab1, tab2 = st.tabs(["Module 1: Data Import", "Module 2: Quality Control"])
 
 # ============================================================
-# MODULE 1: DATA IMPORT
+# MODULE 1: DATA IMPORT (DUAL UPLOAD)
 # ============================================================
 with tab1:
     st.markdown("""
     <div class="module-header">
         <h2 style="margin:0; font-size:24px;">Data Import & Validation</h2>
-        <p style="margin:5px 0 0 0; opacity:0.9;">Import mass spectrometry data with automatic format detection</p>
+        <p style="margin:5px 0 0 0; opacity:0.9;">Upload protein-level and/or peptide-level quantification data</p>
     </div>
     """, unsafe_allow_html=True)
     
-    st.subheader("Step 1: Upload Data File")
+    # ============================================================
+    # PROTEIN-LEVEL UPLOAD
+    # ============================================================
+    st.subheader("Step 1A: Upload Protein-Level Data")
+    st.caption("Generic protein quantification matrix - any number of columns supported")
     
-    uploaded_file = st.file_uploader(
-        "Drop CSV or TSV file here",
+    protein_file = st.file_uploader(
+        "Drop protein-level CSV or TSV file here",
         type=["csv", "tsv", "txt"],
-        help="Supports CSV/TSV files from Spectronaut, DIA-NN, MaxQuant, FragPipe"
+        key="protein_upload",
+        help="Supports any format: non-numerical columns = metadata, numerical columns = quantification"
     )
     
-    if uploaded_file is not None:
+    if protein_file is not None:
         try:
-            sep = "\t" if uploaded_file.name.endswith((".tsv", ".txt")) else ","
-            df = pd.read_csv(uploaded_file, sep=sep)
+            sep = "\t" if protein_file.name.endswith((".tsv", ".txt")) else ","
+            df_protein = pd.read_csv(protein_file, sep=sep)
             
-            st.session_state.uploaded_data = df
+            st.session_state.protein_data = df_protein
             
-            st.success(f"File loaded: {uploaded_file.name} • {len(df):,} rows • {len(df.columns)} columns")
+            # Detect data level
+            metadata_cols, quant_cols = detect_column_types(df_protein)
+            data_level = detect_data_level(df_protein, metadata_cols)
             
-            col1, col2, col3 = st.columns(3)
+            st.session_state.protein_metadata_cols = metadata_cols
+            st.session_state.protein_quant_cols = quant_cols
+            st.session_state.protein_data_level = data_level
+            
+            # Display data level badge
+            if data_level == 'protein':
+                st.markdown(f'<div class="data-level-badge badge-protein">Data Level: Protein ✓</div>', unsafe_allow_html=True)
+            elif data_level == 'peptide':
+                st.markdown(f'<div class="data-level-badge badge-peptide">Data Level: Peptide (uploaded in protein section)</div>', unsafe_allow_html=True)
+            elif data_level == 'both':
+                st.markdown(f'<div class="data-level-badge badge-protein">Data Level: Both Protein & Peptide</div>', unsafe_allow_html=True)
+            else:
+                st.info("Data level: Unknown - no specific protein/peptide identifiers detected")
+            
+            st.success(f"File loaded: {protein_file.name} • {len(df_protein):,} rows • {len(df_protein.columns)} columns")
+            
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Total Rows", f"{len(df):,}")
+                st.metric("Total Rows", f"{len(df_protein):,}")
             with col2:
-                st.metric("Total Columns", len(df.columns))
+                st.metric("Total Columns", len(df_protein.columns))
             with col3:
-                st.metric("File Size", f"{df.memory_usage(deep=True).sum() / 1024**2:.1f} MB")
+                st.metric("Metadata Columns", len(metadata_cols))
+            with col4:
+                st.metric("Quantitative Columns", len(quant_cols))
             
             st.divider()
             
-            # Column Detection
-            st.subheader("Step 2: Column Detection")
-            
-            metadata_cols, quant_cols = detect_column_types(df)
-            st.session_state.metadata_cols = metadata_cols
-            st.session_state.quant_cols = quant_cols
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Metadata Columns", len(metadata_cols))
-                with st.expander("View metadata columns"):
+            # Column Details
+            with st.expander("View Column Details"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("**Metadata Columns:**")
                     for col in metadata_cols:
                         st.text(f"• {col}")
-            
-            with col2:
-                st.metric("Quantitative Columns", len(quant_cols))
-                with st.expander("View quantitative columns"):
+                with col2:
+                    st.markdown("**Quantitative Columns:**")
                     for col in quant_cols:
                         st.text(f"• {col}")
             
             st.divider()
             
             # Condition Assignment
-            st.subheader("Step 3: Assign Conditions")
+            st.subheader("Step 2: Assign Conditions to Quantitative Columns")
             
-            # Auto-assign on first load
-            if not st.session_state.column_annotations:
-                st.session_state.column_annotations = auto_assign_conditions(quant_cols)
+            if not st.session_state.protein_annotations and len(quant_cols) > 0:
+                st.session_state.protein_annotations = auto_assign_conditions(quant_cols)
             
-            st.info(f"Auto-assignment: {len(quant_cols)} columns detected • First {len(quant_cols)//2} = Control • Remaining = Treatment")
+            st.info(f"Auto-assignment: {len(quant_cols)} quantitative columns • First {len(quant_cols)//2} = Control • Remaining = Treatment")
             
-            # Show assignment table
-            st.markdown("### Column Assignment")
-            
+            # Assignment table
             assignment_data = []
             for col in quant_cols:
-                ann = st.session_state.column_annotations[col]
+                ann = st.session_state.protein_annotations[col]
                 assignment_data.append({
                     'Original Name': col,
                     'Trimmed Name': ann['trimmed_name'],
@@ -308,50 +300,67 @@ with tab1:
             assignment_df = pd.DataFrame(assignment_data)
             st.dataframe(assignment_df, use_container_width=True, hide_index=True)
             
-            # Dropdown to change condition assignment
-            st.markdown("### Modify Condition Assignment")
-            
+            # Modify assignment
+            st.markdown("**Modify Condition Assignment:**")
             condition_mode = st.selectbox(
                 "Select assignment mode",
                 options=["Auto (First half Control, Second half Treatment)", 
                         "All Control", 
                         "All Treatment",
                         "Custom"],
-                index=0
+                index=0,
+                key="protein_condition_mode"
             )
             
             if condition_mode == "All Control":
                 for col in quant_cols:
-                    st.session_state.column_annotations[col]['condition'] = 'Control'
+                    st.session_state.protein_annotations[col]['condition'] = 'Control'
             elif condition_mode == "All Treatment":
                 for col in quant_cols:
-                    st.session_state.column_annotations[col]['condition'] = 'Treatment'
+                    st.session_state.protein_annotations[col]['condition'] = 'Treatment'
             elif condition_mode == "Custom":
-                st.warning("Custom mode: Use checkboxes below to set conditions individually")
-                
+                st.warning("Custom mode: Set conditions individually below")
                 for col in quant_cols:
-                    ann = st.session_state.column_annotations[col]
+                    ann = st.session_state.protein_annotations[col]
                     is_treatment = st.checkbox(
-                        f"{ann['trimmed_name']} (Treatment)",
+                        f"{ann['trimmed_name']} → Treatment",
                         value=ann['condition'] == 'Treatment',
-                        key=f"custom_{col}"
+                        key=f"custom_protein_{col}"
                     )
-                    st.session_state.column_annotations[col]['condition'] = 'Treatment' if is_treatment else 'Control'
+                    st.session_state.protein_annotations[col]['condition'] = 'Treatment' if is_treatment else 'Control'
             
-            # Summary
-            n_control = sum(1 for ann in st.session_state.column_annotations.values() if ann['condition'] == 'Control')
-            n_treatment = sum(1 for ann in st.session_state.column_annotations.values() if ann['condition'] == 'Treatment')
+            # Summary metrics
+            n_control = sum(1 for ann in st.session_state.protein_annotations.values() if ann['condition'] == 'Control')
+            n_treatment = sum(1 for ann in st.session_state.protein_annotations.values() if ann['condition'] == 'Treatment')
             
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Total Columns", len(quant_cols))
+                st.metric("Total Quant Columns", len(quant_cols))
             with col2:
                 st.metric("Control Samples", n_control)
             with col3:
                 st.metric("Treatment Samples", n_treatment)
             
         except Exception as e:
-            st.error(f"Error: {str(e)}")
+            st.error(f"Error loading protein file: {str(e)}")
+    
+    st.divider()
+    
+    # ============================================================
+    # PEPTIDE-LEVEL UPLOAD (PLACEHOLDER)
+    # ============================================================
+    st.subheader("Step 1B: Upload Peptide-Level Data (Optional)")
+    st.caption("Coming soon - peptide-level quantification upload")
+    
+    peptide_file = st.file_uploader(
+        "Drop peptide-level CSV or TSV file here",
+        type=["csv", "tsv", "txt"],
+        key="peptide_upload",
+        help="Upload peptide-level data for peptide-specific QC",
+        disabled=True
+    )
+    
+    st.info("Peptide-level upload will be enabled in the next iteration")
 
 # ============================================================
 # MODULE 2: QUALITY CONTROL
@@ -360,40 +369,34 @@ with tab2:
     st.markdown("""
     <div class="module-header">
         <h2 style="margin:0; font-size:24px;">Quality Control Visualization</h2>
-        <p style="margin:5px 0 0 0; opacity:0.9;">Comprehensive data quality assessment</p>
+        <p style="margin:5px 0 0 0; opacity:0.9;">Protein-level data quality assessment</p>
     </div>
     """, unsafe_allow_html=True)
     
-    if st.session_state.uploaded_data is not None and st.session_state.column_annotations:
-        df = st.session_state.uploaded_data
-        quant_cols = st.session_state.quant_cols
-        annotations = st.session_state.column_annotations
+    if st.session_state.protein_data is not None and st.session_state.protein_annotations:
+        df = st.session_state.protein_data
+        quant_cols = st.session_state.protein_quant_cols
+        annotations = st.session_state.protein_annotations
         
         st.info("Data processing: Values 0, 1, and NaN are treated as missing")
-        
         st.divider()
         
-        # Plot 1
         st.subheader("1. Intensity Distribution")
         fig1 = plot_intensity_distribution(df, quant_cols, annotations)
         st.plotly_chart(fig1, use_container_width=True)
-        
         st.divider()
         
-        # Plot 2
         st.subheader("2. Coefficient of Variation (CV)")
         fig2 = plot_cv_analysis(df, quant_cols, annotations)
         st.plotly_chart(fig2, use_container_width=True)
-        
         st.divider()
         
-        # Plot 3
         st.subheader("3. PCA: Sample Clustering")
         fig3 = plot_pca(df, quant_cols, annotations)
         st.plotly_chart(fig3, use_container_width=True)
         
     else:
-        st.warning("No data uploaded. Please upload data in Module 1 first.")
+        st.warning("No protein data uploaded. Please upload data in Module 1 first.")
 
 # ============================================================
 # FOOTER
