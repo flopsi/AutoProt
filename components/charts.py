@@ -1,4 +1,4 @@
-icalimport streamlit as st
+import streamlit as st
 import pandas as pd
 import altair as alt
 from typing import Dict
@@ -42,7 +42,7 @@ def create_species_bar_chart(species_counts: Dict[str, int], title: str, show_pe
         y=alt.Y('Count:Q', title='Protein Count'),
         color=alt.Color('Species:N', scale=color_scale, legend=alt.Legend(
             orient='top',
-            direction='vertical',
+            direction='horizontal',
             title=None
         )),
         tooltip=['Species:N', 'Count:Q', 'Percentage:N']
