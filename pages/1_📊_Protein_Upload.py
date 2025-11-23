@@ -280,5 +280,5 @@ elif st.session_state.upload_stage == 'summary':
                 'selected_species_col', 'selected_workflow', 'selected_quant_cols']:
                 if key in st.session_state:
                     del st.session_state[key]
-        st.session_state.upload_stage = 'upload'
-        st.rerun()
+            st.session_state.upload_stage = 'upload'
+            st.rerun()
