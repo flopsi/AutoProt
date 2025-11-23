@@ -261,13 +261,11 @@ elif st.session_state.upload_stage == 'summary':
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("File", filename.split('(')[0].strip())
-    with col2:
         st.metric("Proteins", f"{protein_data.n_proteins:,}")
-    with col3:
+    with col2:
         n_a = len([c for c in protein_data.condition_mapping.values() if c.startswith('A')])
         n_b = len([c for c in protein_data.condition_mapping.values() if c.startswith('B')])
-        st.metric("Samples", f"{n_a + n_b} ({n_a}A + {n_b}B)")
+        st.metric("Samples", f"{n_a + n_b}")
     with col4:
         species_counts = protein_data.get_species_counts()
         st.metric("Species", len([s for s in species_counts.values() if s > 0]))
