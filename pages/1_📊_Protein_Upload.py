@@ -259,6 +259,43 @@ elif st.session_state.upload_stage == 'summary':
     st.markdown("## Upload Summary")
     st.success("✓ Data processed successfully!")
 
+    # Metrics row
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("File", filename.split('(')[0].strip())
+    with col2:
+        st.metric("Proteins", f"{protein_data.n_proteins:,}")
+    with col3:
+        n_a = len([c for c in protein_data.condition_mapping.values() if c.startswith('A')])
+        n_b = len([c for c in protein_data.condition_mapping.values() if c.startswith('B')])
+        st.metric("Samples", f"{n_a + n_b} ({n_a}A + {n_b}B)")
+    with col4:
+        species_counts = protein_data.get_species_counts()
+        st.metric("Species", len([s for s in species_counts.values() if s > 0]))
+
+    st.markdown("---")
+    st.markdown("### Interactive Protein Analysis")
+    
+    # Import the Altair chart function
+    from components.altair_charts import create_interactive_protein_analysis
+    
+    # Create tabs for different themes
+    tab1, tab2 = st.tabs(["Streamlit theme", "Altair native theme"])
+    
+    with tab1:
+        chart = create_interactive_protein_analysis(protein_data)
+        st.altair_chart(chart, theme="streamlit", use_container_width=True)
+    
+    with tab2:
+        chart = create_interactive_protein_analysis(protein_data)
+        st.altair_chart(chart, theme=None, use_container_width=True)
+    
+    st.info("""
+    **How to interact:**
+    - **Top panel**: Click and drag on boxplots to select a condition range
+    - **Bottom panel**: Click on species in the legend to filter data
+    - **Combined**: Both selections work together to filter the visualization
+    """)
 
     st.markdown("---")
     st.markdown("### Next Steps")
@@ -272,14 +309,3 @@ elif st.session_state.upload_stage == 'summary':
     with nav_col2:
         if st.button("✓ Go to Data Quality", type="secondary", use_container_width=True):
             st.switch_page("pages/3_✓_Data_Quality.py")
-
-# Reset button (always visible)
-st.markdown("---")
-if st.button("🔄 Start Over", use_container_width=True):
-    for key in ['upload_stage', 'protein_df', 'auto_species_col', 'auto_condition_mapping',
-                'selected_species_col', 'selected_workflow', 'selected_quant_cols']:
-        if key in st.session_state:
-            del st.session_state[key]
-    st.session_state.upload_stage = 'upload'
-    st.rerun()
-
