@@ -18,3 +18,50 @@ A modular Streamlit app for automated proteomics data import, annotation, and qu
   Codebase structured for easy addition of new statistics and plots.
 
 ## 🎨 Color Scheme (Thermo Fisher Style)
+Primary Red: #E71316
+Dark Red: #A6192E
+Sky Blue: #9BD3DD
+Primary Gray: #54585A
+Light Gray: #E2E3E4
+Green: #B5BD00
+Orange: #EA7600
+
+## 🏗️ Folder Structure
+.
+├── app.py # Main Streamlit entrypoint
+├── config.py # Utilities: column detection, trimming, assignment, color
+├── requirements.txt # Environment for deployment
+└── ... # Additional modules easily added
+
+
+## ➕ How to Use
+
+1. **Clone the repo:**
+git clone https://github.com/yourusername/dia-proteomics-app.git
+cd dia-proteomics-app
+
+2. **Install dependencies:**
+pip install -r requirements.txt
+
+3. **Run the app:**
+streamlit run app.py
+
+4. **Upload** a CSV/TSV data matrix.  
+Columns are automatically split and annotated.
+5. **Review visualizations.**  
+Interactive plot tabs update automatically as data/annotation change.
+
+## 📝 Module Expansion
+
+To add new stats/plots, simply add a new Python file (e.g., `modules/stats_newplot.py`) and connect in `app.py`. All utilities and styling are global.
+
+## 🛡️ License
+
+Proprietary & Confidential | For Internal Use Only  
+© 2024 Thermo Fisher Scientific Inc. All rights reserved.
+
+---
+
+**Support:**  
+- See code comments  
+- Open issues for technical help or feature requests  
