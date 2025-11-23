@@ -273,30 +273,26 @@ elif st.session_state.upload_stage == 'summary':
         species_counts = protein_data.get_species_counts()
         st.metric("Species", len([s for s in species_counts.values() if s > 0]))
 
-    st.markdown("### Protein Counts by Species")
-    chart_col1, chart_col2, chart_col3 = st.columns(3)
-
+    st.markdown("### Protein Distribution by Species")
+    
+    # Calculate counts for all three categories
     total_species_counts = protein_data.get_species_counts()
+    
+    a_data = protein_data.get_condition_data('A')
+    a_detected_indices = a_data.dropna(how='all').index
+    species_a_counts = {sp: sum(1 for idx in a_detected_indices if protein_data.species_map.get(idx) == sp)
+                       for sp in ['human', 'ecoli', 'yeast']}
+    
+    b_data = protein_data.get_condition_data('B')
+    b_detected_indices = b_data.dropna(how='all').index
+    species_b_counts = {sp: sum(1 for idx in b_detected_indices if protein_data.species_map.get(idx) == sp)
+                       for sp in ['human', 'ecoli', 'yeast']}
+    
+    # Create combined chart
+    from components.charts import create_combined_species_chart
+    fig = create_combined_species_chart(total_species_counts, species_a_counts, species_b_counts)
+    st.plotly_chart(fig, use_container_width=True)
 
-    with chart_col1:
-        fig1 = create_species_bar_chart(total_species_counts, "Total Proteins by Species")
-        st.plotly_chart(fig1, use_container_width=True)
-
-    with chart_col2:
-        a_data = protein_data.get_condition_data('A')
-        a_detected_indices = a_data.dropna(how='all').index
-        species_a_counts = {sp: sum(1 for idx in a_detected_indices if protein_data.species_map.get(idx) == sp)
-                           for sp in ['human', 'ecoli', 'yeast']}
-        fig2 = create_species_bar_chart(species_a_counts, "Condition A Proteins")
-        st.plotly_chart(fig2, use_container_width=True)
-
-    with chart_col3:
-        b_data = protein_data.get_condition_data('B')
-        b_detected_indices = b_data.dropna(how='all').index
-        species_b_counts = {sp: sum(1 for idx in b_detected_indices if protein_data.species_map.get(idx) == sp)
-                           for sp in ['human', 'ecoli', 'yeast']}
-        fig3 = create_species_bar_chart(species_b_counts, "Condition B Proteins")
-        st.plotly_chart(fig3, use_container_width=True)
 
     st.markdown("---")
     st.markdown("### Next Steps")
