@@ -1,6 +1,6 @@
 """
 Configuration module for DIA Proteomics App
-Handles column detection, name trimming, and condition assignment
+UPDATED: Enhanced trimming with duplicate handling
 """
 import pandas as pd
 import re
@@ -51,11 +51,12 @@ def get_metadata_columns(df: pd.DataFrame, numeric_cols: list) -> list:
 
 
 # ============================================================================
-# NAME TRIMMING
+# NAME TRIMMING WITH DUPLICATE HANDLING
 # ============================================================================
 def trim_column_names(cols: list) -> dict:
     """
     Remove common prefixes/suffixes from column names.
+    Handles duplicates by adding numeric suffixes.
     Returns dict: {original_name: trimmed_name}
     """
     # Common patterns to remove
@@ -65,15 +66,37 @@ def trim_column_names(cols: list) -> dict:
         r'^iBAQ\.',
         r'\.raw$',
         r'\.d$',
-        r'_\d+$',  # trailing numbers
+        r'^C:\\.*\\',  # Windows paths
+        r'^/.*/',      # Unix paths
     ]
     
     trimmed = {}
+    trimmed_counts = {}  # Track how many times we've seen each trimmed name
+    
     for col in cols:
         cleaned = col
+        
+        # Apply all trimming patterns
         for pattern in patterns_to_remove:
             cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
-        trimmed[col] = cleaned.strip()
+        
+        cleaned = cleaned.strip()
+        
+        # If empty after trimming, use original
+        if not cleaned:
+            cleaned = col
+        
+        # Handle duplicates by adding numeric suffix
+        base_cleaned = cleaned
+        if base_cleaned in trimmed_counts:
+            # This is a duplicate - add suffix
+            trimmed_counts[base_cleaned] += 1
+            cleaned = f"{base_cleaned}_{trimmed_counts[base_cleaned]}"
+        else:
+            # First occurrence
+            trimmed_counts[base_cleaned] = 0
+        
+        trimmed[col] = cleaned
     
     return trimmed
 
