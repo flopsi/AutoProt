@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import altair as alt
+import plotly.graph_objects as go
 from components.header import render_header
+from config.colors import ThermoFisherColors
 
 render_header()
 st.title("Data Quality Assessment")
@@ -43,118 +44,60 @@ with data_tab2:
 condition_mapping = current_data.condition_mapping
 quant_data = current_data.quant_data
 
-# Create long-form DataFrame for Altair
-intensity_data = []
+# Create figure
+fig = go.Figure()
 
+# Add boxplot for each sample
 for col in quant_data.columns:
     condition = condition_mapping.get(col, col)
     condition_letter = condition[0]  # 'A' or 'B'
     
-    for idx, value in quant_data[col].items():
-        if pd.notna(value) and value > 0:
-            intensity_data.append({
-                'Sample': condition,
-                'Condition': condition_letter,
-                'Log10_Intensity': np.log10(value),
-            })
+    # Get log10 values for this sample
+    values = quant_data[col].dropna()
+    log10_values = np.log10(values[values > 0])
+    
+    # Determine color based on condition
+    color = '#E71316' if condition_letter == 'A' else '#9BD3DD'  # Red for A, Sky for B
+    
+    fig.add_trace(go.Box(
+        y=log10_values,
+        name=condition,
+        marker_color=color,
+        boxmean='sd',  # Show mean and standard deviation
+        hovertemplate='<b>%{fullData.name}</b><br>Log₁₀ Intensity: %{y:.2f}<extra></extra>'
+    ))
 
-intensity_df = pd.DataFrame(intensity_data)
-
-# ============================================================
-# CREATE BOXPLOT CHART
-# ============================================================
-
-# Color scale for conditions
-color_scale = alt.Scale(
-    domain=['A', 'B'],
-    range=['#E71316', '#9BD3DD']  # Red for A, Sky for B
-)
-
-# Create boxplot
-boxplot = alt.Chart(intensity_df).mark_boxplot(
-    size=40,
-    extent='min-max'
-).encode(
-    x=alt.X('Sample:N', 
-            title='Sample Replicate',
-            sort=alt.EncodingSortField(field='Sample', order='ascending'),
-            axis=alt.Axis(labelAngle=-45)),
-    y=alt.Y('Log10_Intensity:Q', 
-            title='Log₁₀ Intensity',
-            scale=alt.Scale(zero=False)),
-    color=alt.Color('Condition:N', 
-                    scale=color_scale,
-                    legend=alt.Legend(title='Condition', orient='top', direction='horizontal')),
-    tooltip=[
-        alt.Tooltip('Sample:N', title='Sample'),
-        alt.Tooltip('Condition:N', title='Condition'),
-        alt.Tooltip('min(Log10_Intensity):Q', title='Min', format='.2f'),
-        alt.Tooltip('q1(Log10_Intensity):Q', title='Q1', format='.2f'),
-        alt.Tooltip('median(Log10_Intensity):Q', title='Median', format='.2f'),
-        alt.Tooltip('q3(Log10_Intensity):Q', title='Q3', format='.2f'),
-        alt.Tooltip('max(Log10_Intensity):Q', title='Max', format='.2f')
-    ]
-).properties(
-    title=f'{data_type} Intensity Distribution by Sample',
-    height=450
-).configure_view(
-    strokeWidth=0
-).configure_axis(
-    labelFontSize=11,
-    titleFontSize=12
-).configure_title(
-    fontSize=16,
-    fontWeight=600,
-    anchor='start'
+# Update layout
+fig.update_layout(
+    title=dict(
+        text=f'{data_type} Intensity Distribution by Sample',
+        font=dict(size=16, color=ThermoFisherColors.PRIMARY_GRAY, family='Arial', weight=600)
+    ),
+    yaxis_title='Log₁₀ Intensity',
+    showlegend=False,
+    height=500,
+    plot_bgcolor='rgba(0,0,0,0)',
+    paper_bgcolor='rgba(0,0,0,0)',
+    font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
+    xaxis=dict(
+        tickangle=-45,
+        showgrid=False
+    ),
+    yaxis=dict(
+        gridcolor='rgba(0,0,0,0.1)',
+        showgrid=True,
+        zeroline=False
+    )
 )
 
 # ============================================================
-# DISPLAY CHART (SAME THEME FOR BOTH TABS)
+# DISPLAY CHART
 # ============================================================
 
 st.markdown("---")
 st.markdown("### Intensity Distribution Analysis")
 
-st.altair_chart(boxplot, theme="streamlit", use_container_width=True)
-
-# ============================================================
-# SUMMARY STATISTICS
-# ============================================================
-
-st.markdown("---")
-st.markdown("### Sample Statistics")
-
-# Calculate statistics per sample
-stats_data = []
-for sample in sorted(intensity_df['Sample'].unique()):
-    sample_values = intensity_df[intensity_df['Sample'] == sample]['Log10_Intensity']
-    condition = intensity_df[intensity_df['Sample'] == sample]['Condition'].iloc[0]
-    
-    stats_data.append({
-        'Sample': sample,
-        'Condition': condition,
-        'Count': len(sample_values),
-        'Mean': sample_values.mean(),
-        'Median': sample_values.median(),
-        'Std Dev': sample_values.std(),
-        'Min': sample_values.min(),
-        'Max': sample_values.max()
-    })
-
-stats_df = pd.DataFrame(stats_data)
-
-# Format and display
-st.dataframe(
-    stats_df.style.format({
-        'Mean': '{:.2f}',
-        'Median': '{:.2f}',
-        'Std Dev': '{:.2f}',
-        'Min': '{:.2f}',
-        'Max': '{:.2f}'
-    }),
-    hide_index=True,
-    use_container_width=True
-)
+st.plotly_chart(fig, use_container_width=True)
 
 # ============================================================
 # NAVIGATION
