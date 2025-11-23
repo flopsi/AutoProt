@@ -296,7 +296,7 @@ elif st.session_state.upload_stage == 'summary':
 
     with chart_col1:
         st.header("Total Proteins")
-        st.plotly.fig1
+        st.image(fig1)
         
 
 
