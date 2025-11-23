@@ -1,98 +1,172 @@
 """
-Configuration settings for data upload module.
+Configuration module for DIA Proteomics App
+Handles column detection, name trimming, and condition assignment
 """
 
-from dataclasses import dataclass
-from typing import List, Dict
-from pathlib import Path
+import pandas as pd
+import re
 
+# ============================================================
+# THERMO FISHER BRAND COLORS
+# ============================================================
+PRIMARY_RED = "#E71316"
+DARK_RED = "#A6192E"
+PRIMARY_GRAY = "#54585A"
+LIGHT_GRAY = "#E2E3E4"
+NAVY = "#262262"
+ORANGE = "#EA7600"
+YELLOW = "#F1B434"
+GREEN = "#B5BD00"
+SKY = "#9BD3DD"
 
-@dataclass
-class DataUploadConfig:
-    """Configuration for data upload module"""
+# ============================================================
+# COLUMN DETECTION
+# ============================================================
+def detect_column_types(df):
+    """
+    Automatically detect metadata vs quantitative columns.
     
-    # File validation
-    ALLOWED_EXTENSIONS: List[str] = None
-    MAX_FILE_SIZE_MB: int = 500
+    Rules:
+    1. Object/string dtype → metadata
+    2. Numerical dtype → quantitative
     
-    # Column detection
-    METADATA_COLUMNS: List[str] = None
-    QUANTITY_SUFFIXES: List[str] = None
+    Returns:
+        tuple: (metadata_cols, quant_cols)
+    """
+    metadata_cols = []
+    quant_cols = []
     
-    # Name trimming patterns
-    TRIM_PATTERNS: Dict[str, str] = None
-    EXTRACT_PATTERN: str = r'([A-Z]\d{2}[-_][A-Z]\d{2}_\d{2})'
-    
-    # Session management
-    UPLOAD_DIR: Path = Path("data/uploads")
-    SESSION_TIMEOUT_HOURS: int = 24
-    
-    def __post_init__(self):
-        """Initialize default values"""
-        if self.ALLOWED_EXTENSIONS is None:
-            self.ALLOWED_EXTENSIONS = ['.csv', '.tsv', '.txt']
+    for col in df.columns:
+        # Try to convert to numeric
+        numeric_test = pd.to_numeric(df[col], errors='coerce')
         
-        if self.METADATA_COLUMNS is None:
-            self.METADATA_COLUMNS = [
-                'Protein.Group',
-                'Protein.Ids',
-                'Protein.Names',
-                'Genes',
-                'First.Protein.Description',
-                'Proteotypic',
-                'Stripped.Sequence',
-                'Modified.Sequence',
-                'Precursor.Id',
-                'Q.Value',
-                'PEP',
-                'Global.Q.Value',
-                'Protein.Q.Value',
-                'PG.Q.Value',
-                'Global.PG.Q.Value',
-                'GG.Q.Value',
-                'Translated.Q.Value',
-                'Lib.Q.Value',
-                'Lib.PG.Q.Value',
-                'Ms1.Translated',
-                'Genes.Quantity',
-                'Genes.Normalized',
-                'Genes.MaxLFQ',
-                'Genes.MaxLFQ.Unique'
-            ]
+        # If all values are NaN after conversion, it's metadata
+        if numeric_test.isna().all():
+            metadata_cols.append(col)
+        else:
+            quant_cols.append(col)
+    
+    return metadata_cols, quant_cols
+
+# ============================================================
+# NAME TRIMMING
+# ============================================================
+def trim_column_names(columns):
+    """
+    Remove common prefixes/suffixes from column names.
+    
+    Common patterns removed:
+    - LFQ.intensity.
+    - Intensity.
+    - Reporter.intensity.
+    - Sample_
+    - _Intensity
+    - Leading/trailing whitespace
+    
+    Returns:
+        dict: {original_name: trimmed_name}
+    """
+    trimmed = {}
+    
+    patterns_to_remove = [
+        r'^LFQ\.intensity\.',
+        r'^Intensity\.',
+        r'^Reporter\.intensity\.',
+        r'^Sample[_\.]',
+        r'[_\.]Intensity$',
+        r'^Abundance\.',
+        r'\.Raw$',
+        r'^PG\.',
+    ]
+    
+    for col in columns:
+        trimmed_name = col.strip()
         
-        if self.QUANTITY_SUFFIXES is None:
-            self.QUANTITY_SUFFIXES = [
-                '.PG.Quantity',
-                '.PG.Normalized',
-                '.PG.MaxLFQ',
-                'Intensity',
-                'LFQ',
-                '.raw'
-            ]
+        # Remove known patterns
+        for pattern in patterns_to_remove:
+            trimmed_name = re.sub(pattern, '', trimmed_name, flags=re.IGNORECASE)
         
-        if self.TRIM_PATTERNS is None:
-            self.TRIM_PATTERNS = {
-                'date_prefix': r'^\d{8}_',
-                'technical_suffix': r'\.(raw|PG\.Quantity|PG\.Normalized|PG\.MaxLFQ|Intensity|LFQ)$',
-                'method_prefix': r'^(MP\d+_|DIA_|DDA_)',
-                'instrument_codes': r'(IO\d+_|SPD_|LFQ_)',
-                'concentration': r'\d+pg_'
+        # Remove multiple dots/underscores
+        trimmed_name = re.sub(r'[._]+', '_', trimmed_name)
+        
+        # Remove leading/trailing underscores
+        trimmed_name = trimmed_name.strip('_')
+        
+        trimmed[col] = trimmed_name if trimmed_name else col
+    
+    return trimmed
+
+# ============================================================
+# CONDITION ASSIGNMENT
+# ============================================================
+def auto_assign_conditions(quant_cols):
+    """
+    Auto-assign conditions based on column count.
+    
+    Rules:
+    - If even number: First half = Control, Second half = Treatment
+    - Generates trimmed names automatically
+    
+    Returns:
+        dict: {
+            original_col: {
+                'trimmed_name': str,
+                'condition': 'Control' or 'Treatment',
+                'index': int
             }
+        }
+    """
+    assignments = {}
+    n_cols = len(quant_cols)
+    midpoint = n_cols // 2
+    
+    # Trim all names first
+    trimmed_names = trim_column_names(quant_cols)
+    
+    for idx, col in enumerate(quant_cols):
+        # Determine condition
+        if n_cols % 2 == 0:  # Even number
+            condition = 'Control' if idx < midpoint else 'Treatment'
+        else:  # Odd number - assign based on position
+            condition = 'Control' if idx <= midpoint else 'Treatment'
+        
+        assignments[col] = {
+            'trimmed_name': trimmed_names[col],
+            'condition': condition,
+            'index': idx
+        }
+    
+    return assignments
 
+# ============================================================
+# CONFIGURATION CONSTANTS
+# ============================================================
+MISSING_VALUES = [0, 1]  # Treat 0 and 1 as missing
+CV_THRESHOLD_DEFAULT = 100  # Default CV threshold percentage
+PCA_VARIANCE_THRESHOLD = 0.5  # Minimum variance for PCA
+MIN_VALID_VALUES = 2  # Minimum non-missing values for stats
 
-# Global config instance
-_config = None
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
+def get_condition_colors():
+    """Return color mapping for conditions"""
+    return {
+        'Control': SKY,
+        'Treatment': DARK_RED
+    }
 
-
-def get_config() -> DataUploadConfig:
-    """Get global config instance"""
-    global _config
-    if _config is None:
-        _config = DataUploadConfig()
-    return _config
-
-
-def set_config(config: DataUploadConfig):
-    """Set global config instance"""
-    global _config
-    _config = config
+def get_css_variables():
+    """Return CSS variables string for Thermo Fisher styling"""
+    return f"""
+    :root {{
+        --primary-red: {PRIMARY_RED};
+        --dark-red: {DARK_RED};
+        --primary-gray: {PRIMARY_GRAY};
+        --light-gray: {LIGHT_GRAY};
+        --navy: {NAVY};
+        --orange: {ORANGE};
+        --green: {GREEN};
+        --sky: {SKY};
+    }}
+    """
