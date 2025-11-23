@@ -4,22 +4,33 @@ from components.header import render_header
 render_header()
 st.title("Data Quality Assessment")
 
-if not st.session_state.get('protein_uploaded'):
-    st.warning("⚠️ No data loaded")
+protein_uploaded = st.session_state.get('protein_uploaded', False)
+peptide_uploaded = st.session_state.get('peptide_uploaded', False)
+
+if not protein_uploaded:
+    st.warning("⚠️ No data loaded. Please upload protein data first.")
     if st.button("Go to Protein Upload"):
         st.switch_page("pages/1_📊_Protein_Upload.py")
+    st.stop()
+
+st.success(f"✓ Protein data loaded: {st.session_state.protein_data.n_proteins:,} proteins")
+if peptide_uploaded:
+    st.success(f"✓ Peptide data loaded: {st.session_state.peptide_data.n_rows:,} peptides")
 else:
-    protein_data = st.session_state.protein_data
-    st.success(f"✓ Protein data: {protein_data.n_proteins:,} proteins")
-    
-    st.markdown("---")
-    st.info("📋 Quality metrics module under development")
-    
-    st.markdown('''
-    ### Planned Features
-    - Missing value analysis
-    - CV% calculations
-    - Intensity distributions
-    - PCA / clustering
-    - Correlation heatmaps
-    ''')
+    st.info("ℹ️ Peptide data not loaded (optional)")
+
+st.markdown("---")
+st.info("📋 This module is under development.")
+
+st.markdown("""
+### Planned Features
+- Missing value analysis
+- Coefficient of Variation (CV%) per condition
+- Intensity distribution plots
+- PCA / sample clustering
+- Correlation heatmaps between replicates
+
+---
+
+*Navigate to other pages using the sidebar.*
+""")
