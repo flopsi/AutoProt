@@ -275,29 +275,20 @@ elif st.session_state.upload_stage == 'summary':
     st.markdown("### Protein Distribution by Species")
     
     # Calculate counts for all three categories
-    total_species_counts = protein_data.get_species_counts()
+    # After calculating species counts, create summary DataFrame
+    from utils.data_summary import create_species_condition_summary
 
-    a_data = protein_data.get_condition_data('A')
-    a_detected_indices = a_data.dropna(how='all').index
-    species_a_counts = {sp: sum(1 for idx in a_detected_indices if protein_data.species_map.get(idx) == sp)
-                       for sp in ['human', 'ecoli', 'yeast']}
+    summary_df = create_species_condition_summary(protein_data)
+    st.bar_chart(
+        summary_df["Total"],
+        x="Number of Proteins",
+        y=["Species"],
+        color=["#FF0000", "#0000FF","#0000FF"]
+    )
 
-    b_data = protein_data.get_condition_data('B')
-    b_detected_indices = b_data.dropna(how='all').index
-    species_b_counts = {sp: sum(1 for idx in b_detected_indices if protein_data.species_map.get(idx) == sp)
-                       for sp in ['human', 'ecoli', 'yeast']}
-
-    # Create three-column layout with bordered containers
-    fig1 = create_species_bar_chart(total_species_counts, "Total Proteins by Species")
-    fig2 = create_species_bar_chart(species_a_counts, "Condition A Proteins")
-    fig3 = create_species_bar_chart(species_b_counts, "Condition B Proteins")
     
-    chart_col1, chart_col2, chart_col3 = st.columns(3)
 
-    with chart_col1:
-        st.header("Total Proteins")
-        st.image(fig1)
-        
+
 
 
     st.markdown("---")
