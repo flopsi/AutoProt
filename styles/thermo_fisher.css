@@ -1,0 +1,39 @@
+@import url('https://fonts.googleapis.com/css2?family=Arial:wght@400;500;600&display=swap');
+
+:root {
+    --primary-red: #E71316;
+    --primary-gray: #54585A;
+    --light-gray: #E2E3E4;
+    --navy: #262262;
+    --sky: #9BD3DD;
+    --orange: #EA7600;
+}
+
+html, body, [class*="css"] {
+    font-family: 'Arial', sans-serif;
+    color: var(--primary-gray);
+}
+
+h1, h2, h3, h4, h5, h6 {
+    color: var(--primary-gray);
+    font-weight: 600;
+}
+
+.stButton > button {
+    background-color: var(--primary-red);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 0.5rem 1rem;
+    font-weight: 500;
+}
+
+.stButton > button:hover {
+    background-color: #C01014;
+}
+
+[data-testid="stFileUploader"] {
+    border: 2px dashed var(--light-gray);
+    border-radius: 8px;
+    padding: 2rem;
+}
