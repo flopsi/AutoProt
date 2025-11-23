@@ -113,15 +113,15 @@ elif st.session_state.upload_stage == 'annotate':
         help="Look for columns with _HUMAN, _ECOLI, or _YEAST suffixes"
     )
     
-    sample_values = df[selected_species_col].head(3).tolist()
-    st.caption(f"Sample values: {sample_values}")
+sample_values = df[selected_species_col].head(3).tolist()
+st.caption(f"Sample values: {sample_values}")
     
     # Require explicit confirmation
-    species_confirmed = st.checkbox(
-        f"✓ Confirm that **{selected_species_col}** is the correct species column",
-        value=False,
-        help="Check this box to confirm the species column selection"
-    )
+ species_confirmed = st.checkbox(
+    f"✓ Confirm that **{selected_species_col}** is the correct species column",
+    value=False,
+    help="Check this box to confirm the species column selection"
+ )
 
 if not species_confirmed:
     st.warning("⚠️ Please confirm the species column before proceeding")
