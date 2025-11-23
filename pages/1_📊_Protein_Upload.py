@@ -287,20 +287,23 @@ elif st.session_state.upload_stage == 'summary':
     species_b_counts = {sp: sum(1 for idx in b_detected_indices if protein_data.species_map.get(idx) == sp)
                        for sp in ['human', 'ecoli', 'yeast']}
 
-    # Create three-column layout with individual charts
+    # Create three-column layout with bordered containers
     chart_col1, chart_col2, chart_col3 = st.columns(3)
 
     with chart_col1:
-        fig1 = create_species_bar_chart(total_species_counts, "Total Proteins by Species")
-        st.plotly_chart(fig1, use_container_width=True)
+        with st.container(border=True):
+            fig1 = create_species_bar_chart(total_species_counts, "Total Proteins by Species")
+            st.plotly_chart(fig1, use_container_width=True)
 
     with chart_col2:
-        fig2 = create_species_bar_chart(species_a_counts, "Condition A Proteins")
-        st.plotly_chart(fig2, use_container_width=True)
+        with st.container(border=True):
+            fig2 = create_species_bar_chart(species_a_counts, "Condition A Proteins")
+            st.plotly_chart(fig2, use_container_width=True)
 
     with chart_col3:
-        fig3 = create_species_bar_chart(species_b_counts, "Condition B Proteins")
-        st.plotly_chart(fig3, use_container_width=True)
+        with st.container(border=True):
+            fig3 = create_species_bar_chart(species_b_counts, "Condition B Proteins")
+            st.plotly_chart(fig3, use_container_width=True)
 
     st.markdown("---")
     st.markdown("### Next Steps")
@@ -324,3 +327,4 @@ if st.button("🔄 Start Over", use_container_width=True):
             del st.session_state[key]
     st.session_state.upload_stage = 'upload'
     st.rerun()
+
