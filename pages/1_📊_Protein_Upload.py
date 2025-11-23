@@ -116,7 +116,7 @@ elif st.session_state.upload_stage == 'annotate':
     sample_values = df[selected_species_col].head(3).tolist()
     st.caption(f"Sample values: {sample_values}")
 
-    # ========== NEW: CHECKBOX TABLE FOR COLUMN SELECTION ==========
+    # ========== CHECKBOX TABLE FOR COLUMN SELECTION ==========
     st.markdown("### Select Quantitative Sample Columns")
     st.info("✓ Check the boxes for columns containing sample intensity values. Leave metadata columns unchecked.")
     
@@ -194,7 +194,7 @@ elif st.session_state.upload_stage == 'conditions':
     df = st.session_state.protein_df
     filename = st.session_state.protein_filename
     selected_species_col = st.session_state.selected_species_col
-    selected_quant_cols = st.session_state.selected_quant_cols  # Use user-selected columns
+    selected_quant_cols = st.session_state.selected_quant_cols
 
     st.markdown(f"## Condition Assignment (A vs B)")
     st.info(f"File: **{filename}** | Selected {len(selected_quant_cols)} sample columns")
@@ -300,11 +300,11 @@ elif st.session_state.upload_stage == 'summary':
         if st.button("✓ Go to Data Quality", type="secondary", use_container_width=True):
             st.switch_page("pages/3_✓_Data_Quality.py")
 
-# Reset button
+# Reset button (always visible)
 st.markdown("---")
 if st.button("🔄 Start Over", use_container_width=True):
     for key in ['upload_stage', 'protein_df', 'auto_species_col', 'auto_condition_mapping',
-                'selected_species_col', 'selected_workflow', 'auto_navigate_timer', 'selected_quant_cols']:
+                'selected_species_col', 'selected_workflow', 'selected_quant_cols']:
         if key in st.session_state:
             del st.session_state[key]
     st.session_state.upload_stage = 'upload'
