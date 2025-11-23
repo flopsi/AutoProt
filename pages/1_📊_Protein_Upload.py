@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 
 from components.header import render_header
-from components.charts import create_combined_species_chart
+from components.charts import create_species_bar_chart
 from components.condition_selector import render_condition_selector
 from utils.file_handlers import load_data_file
 from utils.species_detector import auto_detect_species_column, extract_species_map, extract_protein_groups
@@ -251,7 +251,7 @@ elif st.session_state.upload_stage == 'conditions':
             st.session_state.upload_stage = 'summary'
             st.rerun()
 
-# ========== STAGE 4: SUMMARY & COMBINED CHART ==========
+# ========== STAGE 4: SUMMARY & THREE-COLUMN CHARTS ==========
 elif st.session_state.upload_stage == 'summary':
     protein_data = st.session_state.protein_data
     filename = st.session_state.protein_filename
@@ -287,14 +287,20 @@ elif st.session_state.upload_stage == 'summary':
     species_b_counts = {sp: sum(1 for idx in b_detected_indices if protein_data.species_map.get(idx) == sp)
                        for sp in ['human', 'ecoli', 'yeast']}
 
-    # Create combined chart with three bars
-with st.container():
-    st.write("This is inside the container")
+    # Create three-column layout with individual charts
+    chart_col1, chart_col2, chart_col3 = st.columns(3)
 
-    # You can call any Streamlit command, including custom components:
-    st.bar_chart(np.random.randn(50, 3))
+    with chart_col1:
+        fig1 = create_species_bar_chart(total_species_counts, "Total Proteins by Species")
+        st.plotly_chart(fig1, use_container_width=True)
 
-st.write("This is outside the container")
+    with chart_col2:
+        fig2 = create_species_bar_chart(species_a_counts, "Condition A Proteins")
+        st.plotly_chart(fig2, use_container_width=True)
+
+    with chart_col3:
+        fig3 = create_species_bar_chart(species_b_counts, "Condition B Proteins")
+        st.plotly_chart(fig3, use_container_width=True)
 
     st.markdown("---")
     st.markdown("### Next Steps")
