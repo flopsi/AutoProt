@@ -1,6 +1,6 @@
 """
 Thermo Fisher Proteomics App - Module 1: Data Import
-UPDATED: Theme-aware design, step-by-step process, pre-load column selection
+UPDATED: Name trimming active, metadata selection, left-to-right checkboxes
 """
 import streamlit as st
 import pandas as pd
@@ -248,11 +248,11 @@ if 'peptide_preview_df' not in st.session_state:
     st.session_state.peptide_preview_df = None
 
 # ============================================================================
-# REUSABLE UPLOAD BLOCK FUNCTION (UPDATED WITH STEP-BY-STEP)
+# REUSABLE UPLOAD BLOCK FUNCTION (UPDATED)
 # ============================================================================
 def upload_annotation_block(kind, id_keys, col):
     """
-    Step-by-step upload with column selection BEFORE full load
+    Step-by-step upload with column selection and annotation
     
     Args:
         kind: "protein" or "peptide"
@@ -302,191 +302,235 @@ def upload_annotation_block(kind, id_keys, col):
         num_cols = get_numeric_columns(preview_df)
         meta_cols = get_metadata_columns(preview_df, num_cols)
         
+        # Auto-trim ALL column names
+        trimmed_quant = trim_column_names(num_cols)
+        trimmed_meta = trim_column_names(meta_cols)
+        
         st.markdown("---")
         
-        # STEP 2: Column Selection (BEFORE full load)
+        # STEP 2: Column Selection and Annotation
         st.markdown(f"""
         <div class="step-header">
           <span class="step-indicator">2</span>
-          <span>Select Columns to Keep</span>
+          <span>Select and Annotate Columns</span>
         </div>
         """, unsafe_allow_html=True)
         
-        st.caption(f"📊 Detected **{len(num_cols)}** quantitative columns")
+        st.caption(f"📊 Detected **{len(num_cols)}** quantitative and **{len(meta_cols)}** metadata columns")
         
-        # Auto-trim for display
-        trimmed_names = trim_column_names(num_cols)
+        # Get defaults for auto-selection
+        default_species_cols = get_default_species_mapping_cols(preview_df)
+        default_group_cols = get_default_group_col(preview_df, meta_cols)
+        default_peptide_cols = get_default_peptide_id_col(preview_df, meta_cols) if kind == "peptide" else []
         
-        # Interactive column selection with checkboxes
-        st.markdown("**Select quantitative columns to include in analysis:**")
+        # Build annotation dataframe
+        if kind == "protein":
+            # Protein: Include | Trimmed Name | Protein Group | Species Mapping | Control | Treatment
+            annotation_data = []
+            
+            # Metadata columns first
+            for col in meta_cols:
+                is_protein_group = col in (default_group_cols or [])
+                is_species = col in (default_species_cols or [])
+                annotation_data.append({
+                    'Include': True,
+                    'Trimmed Name': trimmed_meta[col],
+                    'Original Name': col,
+                    'Protein Group': is_protein_group,
+                    'Species Mapping': is_species,
+                    'Control': False,
+                    'Treatment': False
+                })
+            
+            # Quantitative columns
+            for idx, col in enumerate(num_cols):
+                # Auto-split: first half control, second half treatment
+                is_control = idx < len(num_cols) // 2
+                is_treatment = not is_control
+                annotation_data.append({
+                    'Include': True,
+                    'Trimmed Name': trimmed_quant[col],
+                    'Original Name': col,
+                    'Protein Group': False,
+                    'Species Mapping': False,
+                    'Control': is_control,
+                    'Treatment': is_treatment
+                })
+            
+            col_order = ['Include', 'Trimmed Name', 'Protein Group', 'Species Mapping', 'Control', 'Treatment']
+            
+        else:  # peptide
+            # Peptide: Include | Trimmed Name | Protein Group | Species Mapping | Peptide | Control | Treatment
+            annotation_data = []
+            
+            # Metadata columns first
+            for col in meta_cols:
+                is_protein_group = col in (default_group_cols or [])
+                is_species = col in (default_species_cols or [])
+                is_peptide = col in (default_peptide_cols or [])
+                annotation_data.append({
+                    'Include': True,
+                    'Trimmed Name': trimmed_meta[col],
+                    'Original Name': col,
+                    'Protein Group': is_protein_group,
+                    'Species Mapping': is_species,
+                    'Peptide': is_peptide,
+                    'Control': False,
+                    'Treatment': False
+                })
+            
+            # Quantitative columns
+            for idx, col in enumerate(num_cols):
+                is_control = idx < len(num_cols) // 2
+                is_treatment = not is_control
+                annotation_data.append({
+                    'Include': True,
+                    'Trimmed Name': trimmed_quant[col],
+                    'Original Name': col,
+                    'Protein Group': False,
+                    'Species Mapping': False,
+                    'Peptide': False,
+                    'Control': is_control,
+                    'Treatment': is_treatment
+                })
+            
+            col_order = ['Include', 'Trimmed Name', 'Protein Group', 'Species Mapping', 'Peptide', 'Control', 'Treatment']
         
-        # Create selection dataframe
-        col_selection_df = pd.DataFrame({
-            'Include': [True] * len(num_cols),
-            'Trimmed Name': [trimmed_names[col] for col in num_cols],
-            'Original Name': num_cols
-        })
+        annotation_df = pd.DataFrame(annotation_data)[col_order + ['Original Name']]
+        
+        st.markdown("**Select columns and assign roles:**")
+        st.caption("ℹ️ Uncheck 'Include' to drop a column. Check boxes to assign roles. Control/Treatment are mutually exclusive for quantitative columns.")
+        
+        # Configure column display
+        if kind == "protein":
+            column_config = {
+                'Include': st.column_config.CheckboxColumn('Include', help='Uncheck to exclude', default=True),
+                'Trimmed Name': st.column_config.TextColumn('Trimmed Name', help='Cleaned name', width='medium'),
+                'Protein Group': st.column_config.CheckboxColumn('Protein Group', help='Use for grouping', default=False),
+                'Species Mapping': st.column_config.CheckboxColumn('Species Mapping', help='Use for species', default=False),
+                'Control': st.column_config.CheckboxColumn('Control', help='Control sample', default=False),
+                'Treatment': st.column_config.CheckboxColumn('Treatment', help='Treatment sample', default=False),
+                'Original Name': st.column_config.TextColumn('Original Name', help='Original column name', width='small')
+            }
+        else:
+            column_config = {
+                'Include': st.column_config.CheckboxColumn('Include', help='Uncheck to exclude', default=True),
+                'Trimmed Name': st.column_config.TextColumn('Trimmed Name', help='Cleaned name', width='medium'),
+                'Protein Group': st.column_config.CheckboxColumn('Protein Group', help='Use for grouping', default=False),
+                'Species Mapping': st.column_config.CheckboxColumn('Species Mapping', help='Use for species', default=False),
+                'Peptide': st.column_config.CheckboxColumn('Peptide', help='Peptide ID', default=False),
+                'Control': st.column_config.CheckboxColumn('Control', help='Control sample', default=False),
+                'Treatment': st.column_config.CheckboxColumn('Treatment', help='Treatment sample', default=False),
+                'Original Name': st.column_config.TextColumn('Original Name', help='Original column name', width='small')
+            }
         
         edited_df = st.data_editor(
-            col_selection_df,
+            annotation_df,
             hide_index=True,
             use_container_width=True,
-            disabled=['Trimmed Name', 'Original Name'],
-            column_config={
-                'Include': st.column_config.CheckboxColumn(
-                    'Include',
-                    help='Uncheck to exclude column',
-                    default=True
-                ),
-                'Trimmed Name': st.column_config.TextColumn(
-                    'Trimmed Name',
-                    help='Cleaned column name'
-                ),
-                'Original Name': st.column_config.TextColumn(
-                    'Original Name',
-                    help='Original column name from file'
-                )
-            },
-            key=f"col_select_{kind}"
+            column_config=column_config,
+            key=f"col_annotate_{kind}"
         )
         
-        # Get selected columns
-        selected_mask = edited_df['Include'].values
-        quant_cols_sel = [col for col, include in zip(num_cols, selected_mask) if include]
-        dropped_count = len(num_cols) - len(quant_cols_sel)
+        # Validate selections
+        included_rows = edited_df[edited_df['Include']]
         
-        if dropped_count > 0:
-            st.warning(f"⚠️ {dropped_count} column(s) will be excluded from analysis")
-        
-        if len(quant_cols_sel) == 0:
-            st.error("❌ You must select at least one quantitative column")
+        if len(included_rows) == 0:
+            st.error("❌ You must include at least one column")
             return
         
-        st.success(f"✓ {len(quant_cols_sel)} columns selected")
+        # Extract selections
+        protein_group_cols = included_rows[included_rows['Protein Group']]['Original Name'].tolist()
+        species_cols = included_rows[included_rows['Species Mapping']]['Original Name'].tolist()
+        
+        if kind == "peptide":
+            peptide_cols = included_rows[included_rows['Peptide']]['Original Name'].tolist()
+        
+        control_cols = included_rows[included_rows['Control']]['Original Name'].tolist()
+        treatment_cols = included_rows[included_rows['Treatment']]['Original Name'].tolist()
+        
+        # Validation messages
+        warnings = []
+        if len(protein_group_cols) == 0:
+            warnings.append("⚠️ No Protein Group column selected")
+        if len(species_cols) == 0:
+            warnings.append("⚠️ No Species Mapping column selected")
+        if kind == "peptide" and len(peptide_cols) == 0:
+            warnings.append("⚠️ No Peptide column selected")
+        if len(control_cols) == 0 and len(treatment_cols) == 0:
+            warnings.append("⚠️ No Control or Treatment samples selected")
+        
+        for warn in warnings:
+            st.warning(warn)
+        
+        # Show summary
+        dropped_count = len(annotation_df) - len(included_rows)
+        if dropped_count > 0:
+            st.info(f"ℹ️ {dropped_count} column(s) will be excluded")
+        
+        st.success(f"✓ {len(included_rows)} columns selected | {len(control_cols)} Control | {len(treatment_cols)} Treatment")
         
         # Button to load full dataset
         if st.button(f"Load Full Dataset ({kind})", key=f"load_full_{kind}"):
-            # Now read the FULL file with only selected columns
-            user_file.seek(0)  # Reset file pointer
+            if len(warnings) > 0:
+                st.error("❌ Please fix warnings before loading")
+                return
             
-            # Read with selected columns only
-            cols_to_read = quant_cols_sel + meta_cols
+            # Read FULL file with only selected columns
+            user_file.seek(0)
+            cols_to_read = included_rows['Original Name'].tolist()
             full_df = pd.read_csv(user_file, sep=sep, usecols=cols_to_read)
             
-            st.session_state[preview_key] = full_df
+            # Apply trimmed names to dataframe
+            rename_map = dict(zip(included_rows['Original Name'], included_rows['Trimmed Name']))
+            full_df = full_df.rename(columns=rename_map)
+            
+            st.session_state[preview_key] = {
+                'df': full_df,
+                'protein_group_col': rename_map.get(protein_group_cols[0]) if protein_group_cols else None,
+                'species_col': rename_map.get(species_cols[0]) if species_cols else None,
+                'peptide_col': rename_map.get(peptide_cols[0]) if kind == "peptide" and peptide_cols else None,
+                'control_cols': [rename_map.get(c) for c in control_cols],
+                'treatment_cols': [rename_map.get(c) for c in treatment_cols],
+                'original_to_trimmed': rename_map
+            }
             st.success(f"✓ Full dataset loaded: **{len(full_df):,} rows**")
+            st.rerun()
         
         # Continue if full dataset is loaded
         if st.session_state.get(preview_key) is None:
             st.markdown("""
             <div class="status-warning">
               <strong>⏸️ Waiting</strong><br>
-              Click "Load Full Dataset" to continue with selected columns.
+              Click "Load Full Dataset" to continue.
             </div>
             """, unsafe_allow_html=True)
             return
         
-        df = st.session_state[preview_key]
+        # Extract loaded data
+        loaded_data = st.session_state[preview_key]
+        df = loaded_data['df']
         
-        st.markdown("---")
+        # Build condition mapping
+        condition_map = {}
+        for col in loaded_data['control_cols']:
+            condition_map[col] = 'Control'
+        for col in loaded_data['treatment_cols']:
+            condition_map[col] = 'Treatment'
         
-        # STEP 3: Species mapping column
-        st.markdown(f"""
-        <div class="step-header">
-          <span class="step-indicator">3</span>
-          <span>Select Species Mapping Column</span>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        mapping_options = get_default_species_mapping_cols(df) or meta_cols
-        mapping_sel = st.selectbox(
-            "Species column",
-            mapping_options,
-            key=id_keys['spec_map']
-        )
-        
-        # STEP 4: Protein group column
-        st.markdown(f"""
-        <div class="step-header">
-          <span class="step-indicator">4</span>
-          <span>Select Protein Group Column</span>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        group_col_default = get_default_group_col(df, meta_cols)
-        group_col_sel = st.selectbox(
-            "Protein group",
-            group_col_default if group_col_default else meta_cols,
-            key=id_keys['group_col']
-        )
-        
-        # STEP 5: Peptide-specific
-        peptid_sel = None
-        if kind == "peptide":
-            st.markdown(f"""
-            <div class="step-header">
-              <span class="step-indicator">5</span>
-              <span>Select Peptide Identifier Column</span>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            peptid_default = get_default_peptide_id_col(df, meta_cols)
-            peptid_sel = st.selectbox(
-                "Peptide/Precursor ID",
-                peptid_default if peptid_default else meta_cols,
-                key=id_keys.get('peptid_col')
-            )
-        
-        st.markdown("---")
-        
-        # STEP 6: Assign Control/Treatment
-        step_num = "6" if kind == "peptide" else "5"
-        st.markdown(f"""
-        <div class="step-header">
-          <span class="step-indicator">{step_num}</span>
-          <span>Assign Control/Treatment Conditions</span>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        mode = st.radio(
-            "Assignment mode",
-            ["Auto-split", "All Control", "All Treatment", "Manual"],
-            horizontal=True,
-            key=id_keys['mode']
-        )
-        
-        # Build annotation
-        annot = []
-        if mode == "Auto-split":
-            annot = ["Control" if i < len(quant_cols_sel)//2 else "Treatment"
-                    for i in range(len(quant_cols_sel))]
-        elif mode == "All Control":
-            annot = ["Control"] * len(quant_cols_sel)
-        elif mode == "All Treatment":
-            annot = ["Treatment"] * len(quant_cols_sel)
-        else:  # Manual
-            st.write("**Assign each column:**")
-            for q in quant_cols_sel:
-                trimmed = trimmed_names[q]
-                annot.append(st.selectbox(
-                    f"{trimmed}",
-                    options=["Control", "Treatment"],
-                    key=f"man_assign_{kind}_{q}"
-                ))
-        
-        # Store result
+        # Store final result
         result = {
             'data': df,
-            'quant_cols': quant_cols_sel,
-            'quant_cols_trimmed': {col: trimmed_names[col] for col in quant_cols_sel},
-            'meta_cols': meta_cols,
-            'species_col': mapping_sel,
-            'group_col': group_col_sel,
-            'condition': dict(zip(quant_cols_sel, annot))
+            'quant_cols': loaded_data['control_cols'] + loaded_data['treatment_cols'],
+            'quant_cols_trimmed': {col: col for col in (loaded_data['control_cols'] + loaded_data['treatment_cols'])},  # Already trimmed
+            'meta_cols': [c for c in df.columns if c not in condition_map],
+            'species_col': loaded_data['species_col'],
+            'group_col': loaded_data['protein_group_col'],
+            'condition': condition_map
         }
         
         if kind == "peptide":
-            result['peptide_id_col'] = peptid_sel
+            result['peptide_id_col'] = loaded_data['peptide_col']
         
         st.session_state[session_key] = result
         
@@ -494,14 +538,14 @@ def upload_annotation_block(kind, id_keys, col):
         st.markdown(f"""
         <div class="status-success">
           <strong>✓ Complete!</strong> {kind.capitalize()}-level data ready for analysis.<br>
-          <small>{len(quant_cols_sel)} columns selected, {dropped_count} columns excluded.</small>
+          <small>{len(result['quant_cols'])} quantitative columns | {len(result['meta_cols'])} metadata columns</small>
         </div>
         """, unsafe_allow_html=True)
 
 # ============================================================================
 # MAIN: TWO-COLUMN UPLOAD INTERFACE
 # ============================================================================
-st.info("📝 **Instructions:** Follow the step-by-step process to upload and configure your data.")
+st.info("📝 **Instructions:** Follow the step-by-step process to upload and configure your data. Column names will be automatically trimmed.")
 
 st.markdown("---")
 
@@ -557,13 +601,16 @@ if st.session_state.get('protein_upload') or st.session_state.get('peptide_uploa
             with met3:
                 st.metric("Metadata Columns", len(prot_data['meta_cols']))
             
+            # Column assignments
+            st.markdown("**Column Assignments:**")
+            st.write(f"🔹 **Protein Group:** {prot_data['group_col']}")
+            st.write(f"🔹 **Species Mapping:** {prot_data['species_col']}")
+            
             # Condition breakdown
             st.markdown("**Sample Assignments:**")
-            trimmed = prot_data.get('quant_cols_trimmed', {})
-            for orig_col, condition in prot_data['condition'].items():
-                display_name = trimmed.get(orig_col, orig_col)
+            for col, condition in prot_data['condition'].items():
                 emoji = "🟦" if condition == "Control" else "🟥"
-                st.write(f"{emoji} **{display_name}** → {condition}")
+                st.write(f"{emoji} **{col}** → {condition}")
             
             conditions = prot_data['condition']
             n_control = sum(1 for v in conditions.values() if v == "Control")
@@ -587,13 +634,17 @@ if st.session_state.get('protein_upload') or st.session_state.get('peptide_uploa
             with met3:
                 st.metric("Metadata Columns", len(pept_data['meta_cols']))
             
+            # Column assignments
+            st.markdown("**Column Assignments:**")
+            st.write(f"🔹 **Protein Group:** {pept_data['group_col']}")
+            st.write(f"🔹 **Species Mapping:** {pept_data['species_col']}")
+            st.write(f"🔹 **Peptide ID:** {pept_data.get('peptide_id_col', 'N/A')}")
+            
             # Condition breakdown
             st.markdown("**Sample Assignments:**")
-            trimmed = pept_data.get('quant_cols_trimmed', {})
-            for orig_col, condition in pept_data['condition'].items():
-                display_name = trimmed.get(orig_col, orig_col)
+            for col, condition in pept_data['condition'].items():
                 emoji = "🟦" if condition == "Control" else "🟥"
-                st.write(f"{emoji} **{display_name}** → {condition}")
+                st.write(f"{emoji} **{col}** → {condition}")
             
             conditions = pept_data['condition']
             n_control = sum(1 for v in conditions.values() if v == "Control")
