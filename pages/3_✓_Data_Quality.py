@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 from components.header import render_header
 from config.colors import ThermoFisherColors
 
@@ -17,116 +20,336 @@ if not protein_uploaded:
         st.switch_page("pages/1_📊_Protein_Upload.py")
     st.stop()
 
-st.markdown("---")
-st.markdown("### Intensity Distribution Analysis")
-
 # Data selection tabs
 data_tab1, data_tab2 = st.tabs(["Protein Data (default)", "Peptide Data"])
 
 with data_tab1:
-    # Use protein data
     current_data = st.session_state.protein_data
     data_type = "Protein"
-    st.success(f"✓ Analyzing protein data: {current_data.n_proteins:,} proteins")
-    
-    # Get condition data
-    condition_mapping = current_data.condition_mapping
-    quant_data = current_data.quant_data
-    
-    # Create figure
-    fig = go.Figure()
-    
-    # Add boxplot for each sample
-    for col in quant_data.columns:
-        condition = condition_mapping.get(col, col)
-        condition_letter = condition[0]
-        
-        # Get log10 values
-        values = quant_data[col].dropna()
-        log10_values = np.log10(values[values > 0])
-        
-        # Color based on condition
-        color = '#E71316' if condition_letter == 'A' else '#9BD3DD'
-        
-        fig.add_trace(go.Box(
-            y=log10_values,
-            name=condition,
-            marker_color=color,
-            boxmean='sd',
-            hovertemplate='<b>%{fullData.name}</b><br>Log₁₀ Intensity: %{y:.2f}<extra></extra>'
-        ))
-    
-    # Update layout
-    fig.update_layout(
-        title=dict(
-            text=f'{data_type} Intensity Distribution by Sample',
-            font=dict(size=16, color=ThermoFisherColors.PRIMARY_GRAY, family='Arial', weight=600)
-        ),
-        yaxis_title='Log₁₀ Intensity',
-        showlegend=False,
-        height=500,
-        plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)',
-        font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
-        xaxis=dict(tickangle=-45, showgrid=False),
-        yaxis=dict(gridcolor='rgba(0,0,0,0.1)', showgrid=True, zeroline=False)
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
 
 with data_tab2:
     if peptide_uploaded:
-        # Use peptide data
         current_data = st.session_state.peptide_data
         data_type = "Peptide"
-        st.success(f"✓ Analyzing peptide data: {current_data.n_rows:,} peptides")
-        
-        # Get condition data
-        condition_mapping = current_data.condition_mapping
-        quant_data = current_data.quant_data
-        
-        # Create figure
-        fig = go.Figure()
-        
-        # Add boxplot for each sample
-        for col in quant_data.columns:
-            condition = condition_mapping.get(col, col)
-            condition_letter = condition[0]
-            
-            # Get log10 values
-            values = quant_data[col].dropna()
-            log10_values = np.log10(values[values > 0])
-            
-            # Color based on condition
-            color = '#E71316' if condition_letter == 'A' else '#9BD3DD'
-            
-            fig.add_trace(go.Box(
-                y=log10_values,
-                name=condition,
-                marker_color=color,
-                boxmean='sd',
-                hovertemplate='<b>%{fullData.name}</b><br>Log₁₀ Intensity: %{y:.2f}<extra></extra>'
-            ))
-        
-        # Update layout
-        fig.update_layout(
-            title=dict(
-                text=f'{data_type} Intensity Distribution by Sample',
-                font=dict(size=16, color=ThermoFisherColors.PRIMARY_GRAY, family='Arial', weight=600)
-            ),
-            yaxis_title='Log₁₀ Intensity',
-            showlegend=False,
-            height=500,
-            plot_bgcolor='rgba(0,0,0,0)',
-            paper_bgcolor='rgba(0,0,0,0)',
-            font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
-            xaxis=dict(tickangle=-45, showgrid=False),
-            yaxis=dict(gridcolor='rgba(0,0,0,0.1)', showgrid=True, zeroline=False)
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("ℹ️ Peptide data not loaded. Upload peptide data to enable this view.")
+        st.stop()
+
+# Get data
+condition_mapping = current_data.condition_mapping
+quant_data = current_data.quant_data
+species_map = current_data.species_map
+
+# ============================================================
+# 1. SPECIES DISTRIBUTION STACKED BAR CHART
+# ============================================================
+
+st.markdown("---")
+st.markdown("### 1. Species Distribution")
+
+# Calculate counts
+total_species_counts = current_data.get_species_counts()
+
+a_data = current_data.get_condition_data('A')
+a_detected_indices = a_data.dropna(how='all').index
+species_a_counts = {sp: sum(1 for idx in a_detected_indices if species_map.get(idx) == sp)
+                   for sp in ['human', 'ecoli', 'yeast']}
+
+b_data = current_data.get_condition_data('B')
+b_detected_indices = b_data.dropna(how='all').index
+species_b_counts = {sp: sum(1 for idx in b_detected_indices if species_map.get(idx) == sp)
+                   for sp in ['human', 'ecoli', 'yeast']}
+
+# Create stacked bar chart
+species_order = ['human', 'ecoli', 'yeast']
+categories = ['Total', 'Condition A', 'Condition B']
+
+fig_species = go.Figure()
+
+for species in species_order:
+    counts = [
+        total_species_counts.get(species, 0),
+        species_a_counts[species],
+        species_b_counts[species]
+    ]
+    
+    fig_species.add_trace(go.Bar(
+        name=species.capitalize(),
+        x=categories,
+        y=counts,
+        marker_color=ThermoFisherColors.SPECIES_COLORS[species],
+        text=counts,
+        textposition='inside',
+        textfont=dict(color='white', size=12)
+    ))
+
+fig_species.update_layout(
+    title=f'Total {data_type}s Identified: {sum(total_species_counts.values()):,}',
+    barmode='stack',
+    showlegend=True,
+    legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5),
+    height=400,
+    plot_bgcolor='rgba(0,0,0,0)',
+    paper_bgcolor='rgba(0,0,0,0)',
+    font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
+    xaxis=dict(showgrid=False),
+    yaxis=dict(title=f'{data_type} Count', gridcolor='rgba(0,0,0,0.1)')
+)
+
+st.plotly_chart(fig_species, use_container_width=True)
+
+# ============================================================
+# 2. MISSING VALUE HEATMAP
+# ============================================================
+
+st.markdown("---")
+st.markdown("### 2. Missing Value Pattern")
+
+# Create binary matrix (1 = present, 0 = missing)
+binary_matrix = (~quant_data.isna()).astype(int)
+
+# Rename columns to conditions
+renamed_cols = [condition_mapping.get(col, col) for col in binary_matrix.columns]
+
+fig_heatmap = go.Figure(data=go.Heatmap(
+    z=binary_matrix.T.values,
+    x=list(range(len(binary_matrix))),
+    y=renamed_cols,
+    colorscale=[[0, 'white'], [1, ThermoFisherColors.PRIMARY_RED]],
+    showscale=False,
+    hovertemplate='Sample: %{y}<br>Protein: %{x}<br>Status: %{z}<extra></extra>'
+))
+
+fig_heatmap.update_layout(
+    title='Data Completeness Heatmap',
+    height=400,
+    plot_bgcolor='rgba(0,0,0,0)',
+    paper_bgcolor='rgba(0,0,0,0)',
+    font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
+    xaxis=dict(title=f'{data_type} Index', showgrid=False),
+    yaxis=dict(title='Sample', showgrid=False)
+)
+
+st.plotly_chart(fig_heatmap, use_container_width=True)
+
+# ============================================================
+# 3. INTENSITY DISTRIBUTION BOXPLOTS
+# ============================================================
+
+st.markdown("---")
+st.markdown("### 3. Intensity Distribution")
+
+fig_box = go.Figure()
+
+for col in quant_data.columns:
+    condition = condition_mapping.get(col, col)
+    condition_letter = condition[0]
+    
+    values = quant_data[col].dropna()
+    log10_values = np.log10(values[values > 0])
+    
+    color = '#E71316' if condition_letter == 'A' else '#9BD3DD'
+    
+    fig_box.add_trace(go.Box(
+        y=log10_values,
+        name=condition,
+        marker_color=color,
+        boxmean='sd',
+        hovertemplate='<b>%{fullData.name}</b><br>Log₁₀ Intensity: %{y:.2f}<extra></extra>'
+    ))
+
+fig_box.update_layout(
+    title=f'{data_type} Intensity Distribution by Sample',
+    yaxis_title='Log₁₀ Intensity',
+    showlegend=False,
+    height=500,
+    plot_bgcolor='rgba(0,0,0,0)',
+    paper_bgcolor='rgba(0,0,0,0)',
+    font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
+    xaxis=dict(tickangle=-45, showgrid=False),
+    yaxis=dict(gridcolor='rgba(0,0,0,0.1)', showgrid=True, zeroline=False)
+)
+
+st.plotly_chart(fig_box, use_container_width=True)
+
+# ============================================================
+# 4. PCA ANALYSIS
+# ============================================================
+
+st.markdown("---")
+st.markdown("### 4. Principal Component Analysis")
+
+# PCA options
+pca_col1, pca_col2 = st.columns([1, 3])
+with pca_col1:
+    pca_scope = st.radio(
+        "PCA on:",
+        options=["All Features", "Human Only"],
+        help="Perform PCA on all proteins/peptides or only human"
+    )
+
+# Filter data based on selection
+if pca_scope == "Human Only":
+    human_indices = [idx for idx, sp in species_map.items() if sp == 'human']
+    pca_data = quant_data.loc[human_indices].dropna()
+else:
+    pca_data = quant_data.dropna()
+
+# Perform PCA
+pca_data_filled = pca_data.fillna(0)
+pca_data_log = np.log10(pca_data_filled.replace(0, np.nan).fillna(pca_data_filled[pca_data_filled > 0].min().min()))
+
+scaler = StandardScaler()
+scaled_data = scaler.fit_transform(pca_data_log.T)
+
+pca = PCA(n_components=2)
+pca_result = pca.fit_transform(scaled_data)
+
+# Create PCA plot
+sample_names = [condition_mapping.get(col, col) for col in pca_data.columns]
+colors_pca = ['#E71316' if name[0] == 'A' else '#9BD3DD' for name in sample_names]
+
+fig_pca = go.Figure()
+
+for i, (name, color) in enumerate(zip(sample_names, colors_pca)):
+    fig_pca.add_trace(go.Scatter(
+        x=[pca_result[i, 0]],
+        y=[pca_result[i, 1]],
+        mode='markers+text',
+        marker=dict(size=12, color=color),
+        text=[name],
+        textposition='top center',
+        name=name,
+        showlegend=False,
+        hovertemplate=f'<b>{name}</b><br>PC1: %{{x:.2f}}<br>PC2: %{{y:.2f}}<extra></extra>'
+    ))
+
+fig_pca.update_layout(
+    title=f'PCA - {pca_scope} ({len(pca_data):,} features)',
+    xaxis_title=f'PC1 ({pca.explained_variance_ratio_[0]*100:.1f}%)',
+    yaxis_title=f'PC2 ({pca.explained_variance_ratio_[1]*100:.1f}%)',
+    height=500,
+    plot_bgcolor='rgba(0,0,0,0)',
+    paper_bgcolor='rgba(0,0,0,0)',
+    font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
+    xaxis=dict(gridcolor='rgba(0,0,0,0.1)', zeroline=True, zerolinecolor='rgba(0,0,0,0.2)'),
+    yaxis=dict(gridcolor='rgba(0,0,0,0.1)', zeroline=True, zerolinecolor='rgba(0,0,0,0.2)')
+)
+
+st.plotly_chart(fig_pca, use_container_width=True)
+
+# ============================================================
+# 5. CV% DISTRIBUTION
+# ============================================================
+
+st.markdown("---")
+st.markdown("### 5. Coefficient of Variation (CV%)")
+
+# Calculate CV% per condition
+def calculate_cv(data):
+    mean = data.mean(axis=1)
+    std = data.std(axis=1)
+    cv = (std / mean * 100).replace([np.inf, -np.inf], np.nan).dropna()
+    return cv
+
+cv_a = calculate_cv(a_data)
+cv_b = calculate_cv(b_data)
+
+fig_cv = go.Figure()
+
+fig_cv.add_trace(go.Box(
+    y=cv_a,
+    name='Condition A',
+    marker_color='#E71316',
+    boxmean='sd'
+))
+
+fig_cv.add_trace(go.Box(
+    y=cv_b,
+    name='Condition B',
+    marker_color='#9BD3DD',
+    boxmean='sd'
+))
+
+fig_cv.update_layout(
+    title='CV% Distribution by Condition',
+    yaxis_title='CV%',
+    height=400,
+    plot_bgcolor='rgba(0,0,0,0)',
+    paper_bgcolor='rgba(0,0,0,0)',
+    font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
+    xaxis=dict(showgrid=False),
+    yaxis=dict(gridcolor='rgba(0,0,0,0.1)')
+)
+
+st.plotly_chart(fig_cv, use_container_width=True)
+
+# ============================================================
+# 6. CV THRESHOLDS PER REPLICATE (3x2 PANEL)
+# ============================================================
+
+st.markdown("---")
+st.markdown("### 6. Identification Quality by Sample")
+
+# Get all samples
+all_samples = sorted(condition_mapping.items(), key=lambda x: x[1])
+
+# Create 3x2 subplot grid
+fig_cv_panel = make_subplots(
+    rows=2, cols=3,
+    subplot_titles=[condition_mapping[col] for col, _ in all_samples[:6]],
+    vertical_spacing=0.15,
+    horizontal_spacing=0.1
+)
+
+for idx, (col, condition) in enumerate(all_samples[:6]):
+    row = idx // 3 + 1
+    col_num = idx % 3 + 1
+    
+    # Get condition data for CV calculation
+    if condition[0] == 'A':
+        condition_data = a_data
+    else:
+        condition_data = b_data
+    
+    # Calculate CV for proteins detected in this sample
+    sample_data = quant_data[col].dropna()
+    sample_indices = sample_data.index
+    
+    # Filter condition data for these proteins
+    cv_data = condition_data.loc[sample_indices]
+    cv_values = calculate_cv(cv_data)
+    
+    # Count identifications
+    total_ids = len(sample_indices)
+    cv_below_20 = (cv_values < 20).sum()
+    cv_below_10 = (cv_values < 10).sum()
+    
+    # Add bar chart
+    fig_cv_panel.add_trace(
+        go.Bar(
+            x=['Total IDs', 'CV<20%', 'CV<10%'],
+            y=[total_ids, cv_below_20, cv_below_10],
+            marker_color=ThermoFisherColors.PRIMARY_RED if condition[0] == 'A' else ThermoFisherColors.SKY,
+            text=[total_ids, cv_below_20, cv_below_10],
+            textposition='outside',
+            showlegend=False
+        ),
+        row=row, col=col_num
+    )
+
+fig_cv_panel.update_layout(
+    title_text='Identification Count and CV% Quality Metrics',
+    height=600,
+    plot_bgcolor='rgba(0,0,0,0)',
+    paper_bgcolor='rgba(0,0,0,0)',
+    font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY)
+)
+
+fig_cv_panel.update_xaxes(showgrid=False)
+fig_cv_panel.update_yaxes(gridcolor='rgba(0,0,0,0.1)')
+
+st.plotly_chart(fig_cv_panel, use_container_width=True)
 
 # ============================================================
 # NAVIGATION
