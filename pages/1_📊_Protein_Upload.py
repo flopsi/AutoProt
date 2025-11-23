@@ -260,34 +260,6 @@ elif st.session_state.upload_stage == 'summary':
     st.success("✓ Data processed successfully!")
 
 
-    st.metric("Proteins", f"{protein_data.n_proteins:,}")
-    # After the metrics section, add:
-    st.markdown("---")
-    st.markdown("### Interactive Analysis")
-    
-    from components.altair_charts import create_interactive_protein_analysis
-    
-    # Create tabs for different views
-    tab1, tab2 = st.tabs(["Streamlit theme", "Altair native theme"])
-    
-    with tab1:
-        chart = create_interactive_protein_analysis(protein_data)
-        st.altair_chart(chart, theme="streamlit", use_container_width=True)
-    
-    with tab2:
-        chart = create_interactive_protein_analysis(protein_data)
-        st.altair_chart(chart, theme=None, use_container_width=True)
-    
-    st.info("""
-    **How to use:**
-    - **Top panel**: Brush/drag to select a condition range
-    - **Bottom panel**: Click on species legend to filter
-    - **Interactive**: Both selections filter the data dynamically
-    """)
-    
-
-
-
     st.markdown("---")
     st.markdown("### Next Steps")
 
