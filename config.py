@@ -44,66 +44,45 @@ PROTEIN_COLUMN_PATTERNS = [
 # ============================================================
 # COLUMN DETECTION
 # ============================================================
-def detect_column_types(df):
-    """
-    Automatically detect metadata vs quantitative columns.
-    
-    Rules:
-    1. Non-numerical (object/string) → metadata
-    2. Numerical → quantitative
-    
-    Returns:
-        tuple: (metadata_cols, quant_cols)
-    """
-    metadata_cols = []
-    quant_cols = []
-    
+# Helper to detect all unique numeric columns:
+def get_numeric_columns(df):
+    """Return list of columns with all- or mostly-numeric types."""
+    numerics = []
     for col in df.columns:
-        # Try to convert to numeric
-        numeric_test = pd.to_numeric(df[col], errors='coerce')
-        
-        # If all values are NaN after conversion, it's metadata
-        if numeric_test.isna().all():
-            metadata_cols.append(col)
-        else:
-            quant_cols.append(col)
-    
-    return metadata_cols, quant_cols
+        try:
+            # If at least 90% can be converted to numbers, consider numeric.
+            vals = pd.to_numeric(df[col], errors='coerce')
+            pct_numeric = vals.notna().mean()
+            if pct_numeric > 0.9:
+                numerics.append(col)
+        except Exception:
+            continue
+    return numerics
 
-def detect_data_level(df, metadata_cols):
-    """
-    Detect if data contains peptide-level or protein-level information.
-    
-    Returns:
-        str: 'peptide', 'protein', 'both', or 'unknown'
-    """
-    has_peptide = False
-    has_protein = False
-    
-    # Check all columns (case-insensitive)
-    all_cols_lower = [col.lower() for col in df.columns]
-    
-    # Check for peptide patterns
-    for pattern in PEPTIDE_COLUMN_PATTERNS:
-        if any(re.search(pattern, col, re.IGNORECASE) for col in all_cols_lower):
-            has_peptide = True
-            break
-    
-    # Check for protein patterns
-    for pattern in PROTEIN_COLUMN_PATTERNS:
-        if any(re.search(pattern, col, re.IGNORECASE) for col in all_cols_lower):
-            has_protein = True
-            break
-    
-    if has_peptide and has_protein:
-        return 'both'
-    elif has_peptide:
-        return 'peptide'
-    elif has_protein:
-        return 'protein'
-    else:
-        return 'unknown'
+def get_metadata_columns(df, numeric_cols):
+    """Return all non-numeric columns."""
+    return [c for c in df.columns if c not in numeric_cols]
 
+def get_default_species_mapping_cols(df):
+    """Return all likely species-mapping metadata columns."""
+    candidates = [
+        "PG.ProteinNames", "First.Protein.Description", "Protein.Name", "Protein.Names",
+        "Gene.Name", "Gene.Symbol", "Description"
+    ]
+    return [col for col in df.columns if any(x.lower() in col.lower() for x in candidates)]
+
+def get_default_group_col(df):
+    for col in df.columns:
+        if "protein.group" in col.lower():
+            return col
+    return None
+
+def get_default_peptide_id_col(df):
+    for col in df.columns:
+        for pat in ["precursor", "peptide"]:
+            if pat in col.lower():
+                return col
+    return None
 # ============================================================
 # NAME TRIMMING
 # ============================================================
