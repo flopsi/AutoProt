@@ -283,7 +283,8 @@ with data_tab1:
                 color='Condition',
                 box=True,           # Show box plot inside       
                 hover_data=['CV%'],
-                color_discrete_map={'A': '#E71316', 'B': '#9BD3DD'}  # Custom colors
+                color_discrete_map={'A': '#E71316', 'B': '#9BD3DD'},
+                opacity =0.6        # Custom colors
             )
             
             fig_cv.update_layout(
