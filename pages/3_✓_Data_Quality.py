@@ -256,4 +256,36 @@ with data_tab1:
         else:
             st.warning("⚠️ No data available for PCA after filtering.")
         
-                
+# ============================================================
+# NAVIGATION
+# ============================================================
+
+st.markdown("---")
+st.markdown("### Navigation")
+
+nav_col1, nav_col2, nav_col3 = st.columns(3)
+
+with nav_col1:
+    if st.button("← View Results", use_container_width=True):
+        st.session_state.upload_stage = 'summary'
+        st.switch_page("pages/1_📊_Protein_Upload.py")
+
+with nav_col2:
+    if st.button("Upload Peptide Data", use_container_width=True):
+        st.switch_page("pages/2_🔬_Peptide_Upload.py")
+
+with nav_col3:
+    if st.button("🔄 Start Over", type="primary", use_container_width=True):
+        # Clear all session state keys
+        keys_to_delete = list(st.session_state.keys())
+        for key in keys_to_delete:
+            del st.session_state[key]
+        
+        # Explicitly reset upload flags
+        st.session_state.protein_uploaded = False
+        st.session_state.peptide_uploaded = False
+        st.session_state.upload_stage = 'upload'
+        
+        # Redirect to protein upload page
+        st.switch_page("pages/1_📊_Protein_Upload.py")
+               
