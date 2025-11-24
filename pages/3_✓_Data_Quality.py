@@ -264,7 +264,7 @@ with data_tab1:
         
         # Create DataFrame for Plotly Express
         cv_df = pd.DataFrame({
-            'CV%': list(cv_a) + list(cv_b),
+            'CV%': list(cv_a<150) + list(cv_b),
             'Condition': ['A'] * len(cv_a) + ['B'] * len(cv_b)
         })
         
@@ -277,7 +277,7 @@ with data_tab1:
             x='Condition', 
             color='Condition',
             box=True,           # Show box plot inside
-            points='all',       # Show all data points
+            points='None',       # Show all data points
             hover_data=['CV%'],
             color_discrete_map={'A': '#E71316', 'B': '#9BD3DD'}  # Custom colors
         )
