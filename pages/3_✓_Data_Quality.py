@@ -317,27 +317,56 @@ with data_tab2:
         current_data = st.session_state.peptide_data
         data_type = "Peptide"
         
-        condition_mapping = current_data.condition_mapping
+        # Get the raw data
         quant_data = current_data.quant_data
         species_map = current_data.species_map
         
-        # Get actual peptide columns that exist in the data
+        # CRITICAL FIX: Use the original protein condition_mapping to map peptide columns
+        protein_condition_mapping = st.session_state.protein_data.condition_mapping if st.session_state.get('protein_uploaded', False) else {}
+        
+        # Map peptide columns to conditions based on sample pattern matching
+        peptide_condition_mapping = {}
         peptide_cols = quant_data.columns.tolist()
         
-        # Create condition mapping for peptide columns
-        peptide_condition_mapping = {}
         for col in peptide_cols:
+            # Extract sample identifier from peptide column name
+            # Example: "[1] 20240419_MP1_50SPD_IO25_LFQ_250pg_Y05-E45_01.raw.PG.MS1Quantity"
+            # We want to match based on the run number pattern (01, 02, 03 for A; 04, 05, 06 for B typically)
+            
             matched = False
-            for prot_col, condition in condition_mapping.items():
-                if any(part in col for part in prot_col.split('_')[:3]):
+            
+            # Try to match with protein columns
+            for prot_col, condition in protein_condition_mapping.items():
+                # Extract common parts (without file extension and quantity suffix)
+                prot_base = prot_col.split('.')[0] if '.' in prot_col else prot_col
+                pep_base = col.split('.')[0] if '.' in col else col
+                
+                # If bases are similar, use same condition
+                if prot_base in col or any(part in col for part in prot_base.split('_')[:5]):
                     peptide_condition_mapping[col] = condition
                     matched = True
                     break
+            
+            # Fallback: assign based on column index
             if not matched:
                 idx = peptide_cols.index(col)
-                peptide_condition_mapping[col] = f"A{idx+1}" if idx < 3 else f"B{idx-2}"
+                # Assume first half is A, second half is B
+                if idx < len(peptide_cols) // 2:
+                    peptide_condition_mapping[col] = f"A{idx + 1}"
+                else:
+                    peptide_condition_mapping[col] = f"B{idx - len(peptide_cols) // 2 + 1}"
         
         condition_mapping = peptide_condition_mapping
+        
+        # Extract condition data manually
+        a_cols = [col for col, cond in condition_mapping.items() if cond.startswith('A')]
+        b_cols = [col for col, cond in condition_mapping.items() if cond.startswith('B')]
+        
+        a_data = quant_data[a_cols]
+        b_data = quant_data[b_cols]
+        
+        # Debug info
+        st.info(f"📊 Peptide Data: {len(a_cols)} samples in Condition A, {len(b_cols)} samples in Condition B")
         
         # ============================================================
         # 1. PEPTIDE RANK PLOT
@@ -345,12 +374,6 @@ with data_tab2:
         
         st.markdown("---")
         st.markdown("### 1. Peptide Rank Plot")
-        
-        a_cols = [col for col, cond in condition_mapping.items() if cond.startswith('A')]
-        b_cols = [col for col, cond in condition_mapping.items() if cond.startswith('B')]
-        
-        a_data = quant_data[a_cols]
-        b_data = quant_data[b_cols]
         
         rank_col1, rank_col2 = st.columns(2)
         
@@ -492,7 +515,7 @@ with data_tab2:
         st.plotly_chart(fig_box, use_container_width=True)
         
         # ============================================================
-        # 4. PCA ANALYSIS - FIXED TO CHECK SPECIES MAP
+        # 4. PCA ANALYSIS
         # ============================================================
         
         st.markdown("---")
@@ -611,6 +634,7 @@ with data_tab2:
     
     else:
         st.info("ℹ️ Peptide data not loaded. Upload peptide data to enable this view.")
+
 
 # ============================================================
 # NAVIGATION
