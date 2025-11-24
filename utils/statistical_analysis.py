@@ -1,20 +1,7 @@
-"""
-Statistical analysis functions for proteomics data.
-"""
-
-import pandas as pd
-import numpy as np
-
-try:
-    import limma_py
-    LIMMA_AVAILABLE = True
-except ImportError:
-    LIMMA_AVAILABLE = False
-
-
 def limma_by_species(a_data, b_data, species_map):
     """
-    Perform limma differential expression analysis separately for each species.
+    Perform differential expression analysis per species.
+    Uses limma without eBayes to avoid unequal df issues.
     
     Args:
         a_data: DataFrame for Condition A (samples as columns)
@@ -22,10 +9,14 @@ def limma_by_species(a_data, b_data, species_map):
         species_map: Dict mapping protein IDs to species
     
     Returns:
-        DataFrame with columns: protein_id, species, logFC, AveExpr, t, P.Value, adj.P.Val
+        DataFrame with columns: logFC, AveExpr, t, P.Value, adj.P.Val, species
     """
-    if not LIMMA_AVAILABLE:
+    try:
+        import limma_py
+    except ImportError:
         raise ImportError("limma_py is not installed. Install with: pip install limma_py")
+    
+    from scipy.stats import t as t_dist
     
     results_list = []
     
@@ -53,7 +44,7 @@ def limma_by_species(a_data, b_data, species_map):
             continue
         
         # Fill remaining NAs with row mean
-        expr_clean = expr_clean.fillna(expr_clean.mean(axis=1), axis=0)
+        expr_clean = expr_clean.T.fillna(expr_clean.mean(axis=1)).T
         
         # Create design matrix
         n_a = species_a.shape[1]
@@ -62,16 +53,57 @@ def limma_by_species(a_data, b_data, species_map):
         design_df = pd.get_dummies(group, drop_first=False)[['A', 'B']]
         design = design_df.astype(int)
         
-        # Run limma
+        # Run limma WITHOUT eBayes
         fit = limma_py.lmFit(expr_clean, design)
         contrasts = limma_py.make_contrasts('A - B', levels=design)
         fit = limma_py.contrasts_fit(fit, contrasts)
-        fit = limma_py.eBayes(fit)
         
-        # Get results
-        results = limma_py.toptable(fit, number=len(expr_clean))
-        results['species'] = species
-        results_list.append(results)
+        # Manually extract results without eBayes
+        logFC = fit['coefficients'].iloc[:, 0]
+        
+        # Calculate average expression
+        aveExpr = expr_clean.mean(axis=1)
+        
+        # Calculate standard error and t-statistic manually
+        residuals = fit['residuals']
+        df_residual = n_a + n_b - 2
+        
+        # Calculate sigma (residual standard deviation)
+        sigma = np.sqrt(np.sum(residuals**2, axis=1) / df_residual)
+        
+        # Standard error of the coefficient
+        # For contrast A - B with equal group sizes: SE = sigma * sqrt(1/n_a + 1/n_b)
+        se = sigma * np.sqrt(1/n_a + 1/n_b)
+        
+        # t-statistic
+        t_stat = logFC / se
+        
+        # p-value (two-tailed)
+        p_value = 2 * (1 - t_dist.cdf(np.abs(t_stat), df_residual))
+        
+        # Create results dataframe
+        species_results = pd.DataFrame({
+            'logFC': logFC,
+            'AveExpr': aveExpr,
+            't': t_stat,
+            'P.Value': p_value,
+            'species': species
+        })
+        
+        # Multiple testing correction (Benjamini-Hochberg)
+        p_vals = species_results['P.Value'].values
+        n = len(p_vals)
+        
+        # Sort and rank
+        sort_idx = np.argsort(p_vals)
+        ranks = np.empty(n, dtype=int)
+        ranks[sort_idx] = np.arange(1, n + 1)
+        
+        # BH correction
+        adj_p = np.minimum(1.0, p_vals * n / ranks)
+        species_results['adj.P.Val'] = adj_p
+        
+        results_list.append(species_results)
     
     # Combine all species results
     if results_list:
