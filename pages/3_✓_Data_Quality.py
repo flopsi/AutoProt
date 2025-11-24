@@ -341,14 +341,25 @@ with data_tab1:
             cv_below_20 = (cv_values < 20).sum()
             cv_below_10 = (cv_values < 10).sum()
             
-
-            
+            # Add shaded background for 20% threshold (0.8 opacity)
             fig_cv_panel.add_shape(
                 type="rect",
                 x0=-0.5, x1=2.5,
-                y0=0, y1=total_ids * 0.1,
-                fillcolor="rgba(0,128,0,0.2)",
+                y0=0, y1=total_ids,
+                fillcolor="rgba(144, 238, 144, 0.8)",  # Light green with 0.8 opacity
                 line=dict(width=0),
+                layer="below",
+                row=row, col=col_num
+            )
+            
+            # Add shaded background for 10% threshold (0.5 opacity)
+            fig_cv_panel.add_shape(
+                type="rect",
+                x0=-0.5, x1=2.5,
+                y0=0, y1=total_ids,
+                fillcolor="rgba(60, 179, 113, 0.5)",  # Medium green with 0.5 opacity
+                line=dict(width=0),
+                layer="below",
                 row=row, col=col_num
             )
             
@@ -359,7 +370,7 @@ with data_tab1:
                     y=[total_ids, cv_below_20, cv_below_10],
                     marker_color='#E71316' if condition[0] == 'A' else '#9BD3DD',
                     text=[total_ids, cv_below_20, cv_below_10],
-                    textposition='inside',
+                    textposition='outside',
                     showlegend=False
                 ),
                 row=row, col=col_num
@@ -379,24 +390,6 @@ with data_tab1:
         
         st.plotly_chart(fig_cv_panel, use_container_width=True)
         
-    else:
-        st.info("ℹ️ Protein data not loaded. Upload protein data to enable this view.")
-
-with data_tab2:
-    if peptide_uploaded:
-        current_data = st.session_state.peptide_data
-        data_type = "Peptide"
-        
-        # EXACT SAME PLOTS AS PROTEIN TAB (copy all 6 plot sections)
-        condition_mapping = current_data.condition_mapping
-        quant_data = current_data.quant_data
-        species_map = current_data.species_map
-        
-        st.info(f"✓ Analyzing peptide data: {current_data.n_rows:,} peptides")
-        st.markdown("*Same visualizations as protein tab, using peptide-level data*")
-        
-    else:
-        st.info("ℹ️ Peptide data not loaded. Upload peptide data to enable this view.")
 
 # ============================================================
 # NAVIGATION
