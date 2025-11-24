@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from scipy.stats import gaussian_kde
 from components.header import render_header
 from config.colors import ThermoFisherColors
 from utils.quality_plots import prepare_condition_data
@@ -18,13 +19,12 @@ if not protein_uploaded and not peptide_uploaded:
         st.switch_page("pages/1_📊_Protein_Upload.py")
     st.stop()
 
-# Species colors (matching R script)
+# Species colors matching R script exactly
 SPECIES_COLORS = {
-    'human': '#199d76',      # Green
-    'ecoli': '#7570b2',      # Purple
-    'yeast': '#d85f02',      # Orange
-    'celegans': '#8B0000',   # Dark red
-    'other': '#7B7B7B'       # Gray
+    'human': '#199d76',      # colorhuman
+    'ecoli': '#7570b2',      # colorecoli  
+    'yeast': '#d85f02',      # coloryeast
+    'celegans': '#8B0000'    # colorcelegans
 }
 
 # Data selection tabs
@@ -46,10 +46,10 @@ with data_tab1:
         # Prepare condition data
         a_data, b_data = prepare_condition_data(quant_data, condition_mapping)
         
-        # Calculate log2 fold-change for each protein
+        # Calculate log2 fold-change: log2(A/B) = log2(A) - log2(B)
         a_mean = a_data.mean(axis=1)
         b_mean = b_data.mean(axis=1)
-        log2fc = a_mean - b_mean  # Assuming data is already log2-transformed
+        log2fc = a_mean - b_mean
         
         # Create dataframe with species annotation
         fc_data = pd.DataFrame({
@@ -58,28 +58,36 @@ with data_tab1:
         }).dropna()
         
         # ============================================================
-        # LOG2 FOLD-CHANGE DENSITY PLOT BY SPECIES
+        # DENSITY PLOT (matching R f.p.density exactly)
         # ============================================================
         
         st.markdown("---")
-        st.markdown("### Log₂ Fold-Change Distribution by Species")
+        st.markdown("### Log₂ Fold-Change Distribution")
         
-        fig_density = go.Figure()
+        fig = go.Figure()
         
-        # Plot density for each species
-        for species in ['human', 'ecoli', 'yeast', 'celegans']:
-            species_data = fc_data[fc_data['species'] == species]['log2fc']
+        # Plot density curve for each species (matching R geom_density)
+        for species in ['human', 'yeast', 'ecoli', 'celegans']:
+            species_fc = fc_data[fc_data['species'] == species]['log2fc'].values
             
-            if len(species_data) > 0:
-                fig_density.add_trace(go.Histogram(
-                    x=species_data,
+            if len(species_fc) > 10:  # Need enough points for KDE
+                # Calculate KDE (kernel density estimation)
+                kde = gaussian_kde(species_fc)
+                x_range = np.linspace(species_fc.min(), species_fc.max(), 200)
+                density = kde(x_range)
+                
+                # Add density curve
+                fig.add_trace(go.Scatter(
+                    x=x_range,
+                    y=density,
+                    mode='lines',
                     name=species.capitalize(),
-                    histnorm='probability density',
-                    nbinsx=40,
-                    marker=dict(
+                    line=dict(
                         color=SPECIES_COLORS[species],
-                        line=dict(color=SPECIES_COLORS[species], width=0.5)
+                        width=2
                     ),
+                    fill='tozeroy',
+                    fillcolor=SPECIES_COLORS[species],
                     opacity=0.6,
                     hovertemplate=(
                         f'<b>{species.capitalize()}</b><br>' +
@@ -88,65 +96,70 @@ with data_tab1:
                     )
                 ))
                 
-                # Add median line for each species
-                median_fc = species_data.median()
-                fig_density.add_vline(
+                # Add median line (matching R geom_vline)
+                median_fc = np.median(species_fc)
+                fig.add_vline(
                     x=median_fc,
                     line_dash="dash",
                     line_color=SPECIES_COLORS[species],
                     line_width=1.5,
-                    opacity=0.7,
-                    annotation=dict(
-                        text=f"{species[:1].upper()}: {median_fc:.2f}",
-                        yanchor="top",
-                        font=dict(size=10, color=SPECIES_COLORS[species])
-                    )
+                    opacity=0.9
                 )
         
-        # Add zero reference line
-        fig_density.add_vline(
-            x=0,
-            line_dash="solid",
-            line_color='rgba(0,0,0,0.3)',
-            line_width=1
-        )
-        
-        fig_density.update_layout(
-            title=f'{data_type} Log₂ Fold-Change Distribution (A - B) by Species',
-            xaxis_title='Log₂ Fold-Change (A - B)',
+        # Styling to match R ggplot theme
+        fig.update_layout(
+            title='',
+            xaxis_title='Log₂(A/B)',
             yaxis_title='Density',
             height=500,
-            plot_bgcolor='rgba(0,0,0,0)',
-            paper_bgcolor='rgba(0,0,0,0)',
-            font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
-            xaxis=dict(gridcolor='rgba(0,0,0,0.1)', zeroline=True, zerolinecolor='rgba(0,0,0,0.3)'),
-            yaxis=dict(gridcolor='rgba(0,0,0,0.1)'),
-            barmode='overlay',
+            plot_bgcolor='white',
+            paper_bgcolor='white',
+            font=dict(family="Arial, sans-serif", color='black', size=11),
+            xaxis=dict(
+                showgrid=False,
+                zeroline=True,
+                zerolinecolor='rgba(0,0,0,0.3)',
+                zerolinewidth=1,
+                range=[-3.5, 3.5],  # FCmin to FCmax from R
+                tickmode='linear',
+                tick0=-3,
+                dtick=1
+            ),
+            yaxis=dict(
+                showgrid=False,
+                zeroline=False,
+                range=[0, 7],  # Matching R limits
+                tickmode='linear',
+                tick0=0,
+                dtick=1
+            ),
             legend=dict(
                 orientation='h',
                 yanchor='bottom',
                 y=1.02,
                 xanchor='center',
-                x=0.5
-            )
+                x=0.5,
+                bgcolor='rgba(255,255,255,0.8)'
+            ),
+            margin=dict(l=60, r=20, t=40, b=50)
         )
         
-        st.plotly_chart(fig_density, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True)
         
         # Statistics table by species
         st.markdown("#### Statistics by Species")
         
         stats_data = []
-        for species in ['human', 'ecoli', 'yeast', 'celegans']:
+        for species in ['human', 'yeast', 'ecoli', 'celegans']:
             species_fc = fc_data[fc_data['species'] == species]['log2fc']
             
             if len(species_fc) > 0:
                 stats_data.append({
                     'Species': species.capitalize(),
                     'Count': len(species_fc),
-                    'Median Log₂ FC': f"{species_fc.median():.2f}",
-                    'Mean Log₂ FC': f"{species_fc.mean():.2f}",
-                    'Std Dev': f"{species_fc.std():.2f}"
+                    'Median': f"{species_fc.median():.2f}",
+                    'Q1': f"{species_fc.quantile(0.25):.2f}",
+                    'Q3': f"{species_fc.quantile(0.75):.2f}"
                 })
         
         if stats_data:
@@ -162,119 +175,7 @@ with data_tab1:
 
 with data_tab2:
     if peptide_uploaded:
-        current_data = st.session_state.peptide_data
-        data_type = "Peptide"
-        
-        quant_data = current_data.quant_data
-        condition_mapping = current_data.condition_mapping
-        species_map = current_data.species_map
-        
-        # Prepare condition data
-        a_data, b_data = prepare_condition_data(quant_data, condition_mapping)
-        
-        # Calculate log2 fold-change
-        a_mean = a_data.mean(axis=1)
-        b_mean = b_data.mean(axis=1)
-        log2fc = a_mean - b_mean
-        
-        # Create dataframe with species annotation
-        fc_data = pd.DataFrame({
-            'log2fc': log2fc,
-            'species': [species_map.get(idx, 'other') for idx in log2fc.index]
-        }).dropna()
-        
-        # ============================================================
-        # LOG2 FOLD-CHANGE DENSITY PLOT BY SPECIES
-        # ============================================================
-        
-        st.markdown("---")
-        st.markdown("### Log₂ Fold-Change Distribution by Species")
-        
-        fig_density = go.Figure()
-        
-        for species in ['human', 'ecoli', 'yeast', 'celegans']:
-            species_data = fc_data[fc_data['species'] == species]['log2fc']
-            
-            if len(species_data) > 0:
-                fig_density.add_trace(go.Histogram(
-                    x=species_data,
-                    name=species.capitalize(),
-                    histnorm='probability density',
-                    nbinsx=40,
-                    marker=dict(
-                        color=SPECIES_COLORS[species],
-                        line=dict(color=SPECIES_COLORS[species], width=0.5)
-                    ),
-                    opacity=0.6,
-                    hovertemplate=(
-                        f'<b>{species.capitalize()}</b><br>' +
-                        'Log₂ FC: %{x:.2f}<br>' +
-                        'Density: %{y:.3f}<extra></extra>'
-                    )
-                ))
-                
-                median_fc = species_data.median()
-                fig_density.add_vline(
-                    x=median_fc,
-                    line_dash="dash",
-                    line_color=SPECIES_COLORS[species],
-                    line_width=1.5,
-                    opacity=0.7,
-                    annotation=dict(
-                        text=f"{species[:1].upper()}: {median_fc:.2f}",
-                        yanchor="top",
-                        font=dict(size=10, color=SPECIES_COLORS[species])
-                    )
-                )
-        
-        fig_density.add_vline(
-            x=0,
-            line_dash="solid",
-            line_color='rgba(0,0,0,0.3)',
-            line_width=1
-        )
-        
-        fig_density.update_layout(
-            title=f'{data_type} Log₂ Fold-Change Distribution (A - B) by Species',
-            xaxis_title='Log₂ Fold-Change (A - B)',
-            yaxis_title='Density',
-            height=500,
-            plot_bgcolor='rgba(0,0,0,0)',
-            paper_bgcolor='rgba(0,0,0,0)',
-            font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
-            xaxis=dict(gridcolor='rgba(0,0,0,0.1)', zeroline=True, zerolinecolor='rgba(0,0,0,0.3)'),
-            yaxis=dict(gridcolor='rgba(0,0,0,0.1)'),
-            barmode='overlay',
-            legend=dict(
-                orientation='h',
-                yanchor='bottom',
-                y=1.02,
-                xanchor='center',
-                x=0.5
-            )
-        )
-        
-        st.plotly_chart(fig_density, use_container_width=True)
-        
-        st.markdown("#### Statistics by Species")
-        
-        stats_data = []
-        for species in ['human', 'ecoli', 'yeast', 'celegans']:
-            species_fc = fc_data[fc_data['species'] == species]['log2fc']
-            
-            if len(species_fc) > 0:
-                stats_data.append({
-                    'Species': species.capitalize(),
-                    'Count': len(species_fc),
-                    'Median Log₂ FC': f"{species_fc.median():.2f}",
-                    'Mean Log₂ FC': f"{species_fc.mean():.2f}",
-                    'Std Dev': f"{species_fc.std():.2f}"
-                })
-        
-        if stats_data:
-            stats_df = pd.DataFrame(stats_data)
-            st.dataframe(stats_df, hide_index=True, use_container_width=True)
-    
+        st.info("🔬 Peptide differential expression analysis available after protein analysis.")
     else:
         st.info("ℹ️ Peptide data not loaded. Upload peptide data to enable this analysis.")
 
