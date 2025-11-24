@@ -308,6 +308,29 @@ with data_tab2:
         quant_data = current_data.quant_data
         species_map = current_data.species_map
         
+        # Get actual peptide columns that exist in the data
+        peptide_cols = quant_data.columns.tolist()
+        
+        # Create condition mapping for peptide columns
+        # Map peptide columns to conditions A/B based on protein mapping pattern
+        peptide_condition_mapping = {}
+        for col in peptide_cols:
+            # Try to match to existing condition mapping by finding similar pattern
+            matched = False
+            for prot_col, condition in condition_mapping.items():
+                # If column name contains similar pattern, use same condition
+                if any(part in col for part in prot_col.split('_')[:3]):
+                    peptide_condition_mapping[col] = condition
+                    matched = True
+                    break
+            if not matched:
+                # Default assignment if no match found
+                idx = peptide_cols.index(col)
+                peptide_condition_mapping[col] = f"A{idx+1}" if idx < 3 else f"B{idx-2}"
+        
+        # Override condition_mapping for peptide tab
+        condition_mapping = peptide_condition_mapping
+        
         # ============================================================
         # 1. PEPTIDE RANK PLOT (Two Separate Plots)
         # ============================================================
@@ -315,9 +338,12 @@ with data_tab2:
         st.markdown("---")
         st.markdown("### 1. Peptide Rank Plot")
         
-        # Calculate mean intensities for Condition A and B
-        a_data = current_data.get_condition_data('A')
-        b_data = current_data.get_condition_data('B')
+        # Get condition data using peptide columns
+        a_cols = [col for col, cond in condition_mapping.items() if cond.startswith('A')]
+        b_cols = [col for col, cond in condition_mapping.items() if cond.startswith('B')]
+        
+        a_data = quant_data[a_cols]
+        b_data = quant_data[b_cols]
         
         # Two column layout for side-by-side plots
         rank_col1, rank_col2 = st.columns(2)
@@ -387,23 +413,25 @@ with data_tab2:
         st.markdown("---")
         st.markdown("### 2. Intensity Heatmap")
         
-        # Prepare data
-        base = 0
-        peptide_indices = list(range(len(quant_data)))  # Peptide index based on upload order
-        z = np.log2(quant_data.T.replace(0, np.nan).values)  # Log2 intensity, rows = samples
-        programmers = [condition_mapping.get(col, col) for col in quant_data.columns]  # A1, A2, A3, B1, B2, B3...
+        peptide_indices = list(range(len(quant_data)))
+        z = np.log2(quant_data.T.replace(0, np.nan).values)
+        programmers = [condition_mapping.get(col, col) for col in quant_data.columns]
         
-        # Create custom colorscale: white (missing/low) -> sky (medium) -> red (high)
         fig_heatmap = go.Figure(data=go.Heatmap(
             z=z,
             x=peptide_indices,
             y=programmers,
             colorscale=[
-                [0, 'black'],          # Missing/lowest
-                [0.3, '#9BD3DD'],      # Sky (low-medium)
-                [0.5, '#66b8c7'],      # Medium sky-blue
-                [0.7, '#ff9999'],      # Light red
-                [1, '#E71316']] ))
+                [0, 'black'],
+                [0.3, '#9BD3DD'],
+                [0.5, '#66b8c7'],
+                [0.7, '#ff9999'],
+                [1, '#E71316']
+            ],
+            colorbar=dict(title='Log₂<br>Intensity', titleside='right'),
+            hovertemplate='Sample: %{y}<br>Peptide: %{x}<br>Log₂ Intensity: %{z:.2f}<extra></extra>'
+        ))
+        
         fig_heatmap.update_layout(
             title=dict(text='Intensity Heatmap (Black=Missing, Sky=Low, Red=High)'),
             xaxis=dict(title=f'{data_type} Index'),
@@ -412,8 +440,8 @@ with data_tab2:
             plot_bgcolor='rgba(0,0,0,0)',
             paper_bgcolor='rgba(0,0,0,0)',
             font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY)
-        )        
-       
+        )
+        
         st.plotly_chart(fig_heatmap, use_container_width=True)
         
         # ============================================================
@@ -528,17 +556,12 @@ with data_tab2:
             cv = (std / mean * 100).replace([np.inf, -np.inf], np.nan).dropna()
             return cv
         
-        cv_a = calculate_cv(a_data)
-        cv_b = calculate_cv(b_data)
+        cv_a = calculate_cv(a_data).clip(upper=100)
+        cv_b = calculate_cv(b_data).clip(upper=100)
         
-        # Cap CV values at 100%
-        cv_a_capped = cv_a.clip(upper=100)
-        cv_b_capped = cv_b.clip(upper=100)
-        
-        # Create DataFrame for Plotly Express
         cv_df = pd.DataFrame({
-            'CV%': list(cv_a_capped) + list(cv_b_capped),
-            'Condition': ['A'] * len(cv_a_capped) + ['B'] * len(cv_b_capped)
+            'CV%': list(cv_a) + list(cv_b),
+            'Condition': ['A'] * len(cv_a) + ['B'] * len(cv_b)
         })
         
         fig_cv = px.violin(
@@ -569,6 +592,7 @@ with data_tab2:
     
     else:
         st.info("ℹ️ Peptide data not loaded. Upload peptide data to enable this view.")
+
 
 # ============================================================
 # NAVIGATION
