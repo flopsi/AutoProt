@@ -105,39 +105,92 @@ with data_tab1:
             st.plotly_chart(fig_rank_b, use_container_width=True)
         
         # ============================================================
-        # 2. MISSING VALUE HEATMAP
+        # 2. MISSING VALUE HEATMAP (Intensity-based with Condition Colors)
         # ============================================================
         
         st.markdown("---")
         st.markdown("### 2. Missing Value Pattern")
         
-        # Create binary matrix (1 = present, 0 = missing)
-        binary_matrix = (~quant_data.isna()).astype(int)
+        # Use raw intensity values (not binary)
+        intensity_matrix = quant_data.copy()
         
-        # Rename columns to conditions
-        renamed_cols = [condition_mapping.get(col, col) for col in binary_matrix.columns]
+        # Log-transform for better visualization
+        log_intensity = np.log10(intensity_matrix.replace(0, np.nan))
         
-        fig_heatmap = go.Figure(data=go.Heatmap(
-            z=binary_matrix.T.values,
-            x=list(range(len(binary_matrix))),
-            y=renamed_cols,
-            colorscale=[[0, 'white'], [1, ThermoFisherColors.PRIMARY_RED]],
-            showscale=False,
-            hovertemplate='Sample: %{y}<br>Protein: %{x}<br>Status: %{z}<extra></extra>'
-        ))
+        # Separate by condition and create two heatmaps
+        a_cols = [col for col in quant_data.columns if condition_mapping.get(col, col)[0] == 'A']
+        b_cols = [col for col in quant_data.columns if condition_mapping.get(col, col)[0] == 'B']
+        
+        fig_heatmap = go.Figure()
+        
+        # Add Condition A heatmap (Red gradient)
+        if len(a_cols) > 0:
+            a_data = log_intensity[a_cols].T
+            a_labels = [condition_mapping.get(col, col) for col in a_cols]
+            
+            fig_heatmap.add_trace(go.Heatmap(
+                z=a_data.values,
+                y=a_labels,
+                x=list(range(len(a_data.columns))),
+                colorscale=[
+                    [0, 'black'],           # Missing/Low
+                    [0.3, '#4a0000'],       # Dark red
+                    [0.5, '#8b0000'],       # Medium dark red
+                    [0.7, '#E71316'],       # Primary red
+                    [1, '#ff6666']          # Light red
+                ],
+                showscale=True,
+                colorbar=dict(
+                    title='Log₁₀<br>Intensity',
+                    x=1.02,
+                    len=0.4,
+                    y=0.75
+                ),
+                hovertemplate='Sample: %{y}<br>Protein: %{x}<br>Log₁₀ Intensity: %{z:.2f}<extra></extra>',
+                name='Condition A'
+            ))
+        
+        # Add Condition B heatmap (Sky/Blue gradient)
+        if len(b_cols) > 0:
+            b_data = log_intensity[b_cols].T
+            b_labels = [condition_mapping.get(col, col) for col in b_cols]
+            
+            fig_heatmap.add_trace(go.Heatmap(
+                z=b_data.values,
+                y=b_labels,
+                x=list(range(len(b_data.columns))),
+                colorscale=[
+                    [0, 'black'],           # Missing/Low
+                    [0.3, '#1a4d5c'],       # Dark blue
+                    [0.5, '#3d7a8a'],       # Medium blue
+                    [0.7, '#9BD3DD'],       # Sky blue
+                    [1, '#d4f1f7']          # Light sky
+                ],
+                showscale=True,
+                colorbar=dict(
+                    title='Log₁₀<br>Intensity',
+                    x=1.02,
+                    len=0.4,
+                    y=0.25
+                ),
+                hovertemplate='Sample: %{y}<br>Protein: %{x}<br>Log₁₀ Intensity: %{z:.2f}<extra></extra>',
+                name='Condition B'
+            ))
         
         fig_heatmap.update_layout(
-            title='Data Completeness Heatmap',
+            title='Intensity Heatmap (Red=A, Sky=B, Black=Missing)',
             height=400,
             plot_bgcolor='rgba(0,0,0,0)',
             paper_bgcolor='rgba(0,0,0,0)',
             font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
             xaxis=dict(title=f'{data_type} Index', showgrid=False),
-            yaxis=dict(title='Sample', showgrid=False)
+            yaxis=dict(title='Sample', showgrid=False, tickangle=0),
+            showlegend=False
         )
         
         st.plotly_chart(fig_heatmap, use_container_width=True)
-                
+        
+                        
         # ============================================================
         # 3. INTENSITY DISTRIBUTION BOXPLOTS
         # ============================================================
