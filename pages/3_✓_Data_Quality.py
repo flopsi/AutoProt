@@ -104,36 +104,39 @@ with data_tab1:
             
             st.plotly_chart(fig_rank_b, use_container_width=True)
         
-            # ============================================================
-            # 2. MISSING VALUE HEATMAP
-            # ============================================================
-            
-            st.markdown("---")
-            st.markdown("### 2. Missing Value Pattern")
-            
-            binary_matrix = (~quant_data.isna()).astype(int)
-            renamed_cols = [condition_mapping.get(col, col) for col in binary_matrix.columns]
-            
-            fig_heatmap = go.Figure(data=go.Heatmap(
-                z=binary_matrix.T.values,
-                x=list(range(len(binary_matrix))),
-                y=renamed_cols,
-                colorscale=[[0, 'white'], [1, ThermoFisherColors.PRIMARY_RED]],
-                showscale=False,
-                hovertemplate='Sample: %{y}<br>Protein: %{x}<br>Status: %{z}<extra></extra>'
-            ))
-            
-            fig_heatmap.update_layout(
-                title='Data Completeness Heatmap',
-                height=400,
-                plot_bgcolor='rgba(0,0,0,0)',
-                paper_bgcolor='rgba(0,0,0,0)',
-                font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
-                xaxis=dict(title=f'{data_type} Index', showgrid=False),
-                yaxis=dict(title='Sample', showgrid=False)
-            )
-            
-            st.plotly_chart(fig_heatmap, use_container_width=True)
+        # ============================================================
+        # 2. MISSING VALUE HEATMAP
+        # ============================================================
+        
+        st.markdown("---")
+        st.markdown("### 2. Missing Value Pattern")
+        
+        # Create binary matrix (1 = present, 0 = missing)
+        binary_matrix = (~quant_data.isna()).astype(int)
+        
+        # Rename columns to conditions
+        renamed_cols = [condition_mapping.get(col, col) for col in binary_matrix.columns]
+        
+        fig_heatmap = go.Figure(data=go.Heatmap(
+            z=binary_matrix.T.values,
+            x=list(range(len(binary_matrix))),
+            y=renamed_cols,
+            colorscale=[[0, 'white'], [1, ThermoFisherColors.PRIMARY_RED]],
+            showscale=False,
+            hovertemplate='Sample: %{y}<br>Protein: %{x}<br>Status: %{z}<extra></extra>'
+        ))
+        
+        fig_heatmap.update_layout(
+            title='Data Completeness Heatmap',
+            height=400,
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
+            xaxis=dict(title=f'{data_type} Index', showgrid=False),
+            yaxis=dict(title='Sample', showgrid=False)
+        )
+        
+        st.plotly_chart(fig_heatmap, use_container_width=True)
         # ============================================================
         # 3. INTENSITY DISTRIBUTION BOXPLOTS
         # ============================================================
