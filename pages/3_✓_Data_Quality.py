@@ -258,7 +258,7 @@ with data_tab1:
             return cv
         
         df = px.data.calculate_cv(st.session_state.protein_data)
-        fig = px.violin(df, y="tip", x="smoker", color="sex", box=True, points="all",hover_data=df.columns
+        fig = px.violin(df, y="tip", x="smoker", color="sex", box=True, points="all",hover_data=df.columns)
         
 
         
