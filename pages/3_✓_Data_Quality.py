@@ -128,7 +128,15 @@ with data_tab1:
                 [0.5, '#66b8c7'],      # Medium sky-blue
                 [0.7, '#ff9999'],      # Light red
                 [1, '#E71316']] ))
-                
+        fig_heatmap.update_layout(
+            title=dict(text='Intensity Heatmap (White=Missing, Sky=Low, Red=High)'),
+            xaxis=dict(title=f'{data_type} Index'),
+            yaxis=dict(title='Sample', tickangle=0),
+            height=400,
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY)
+        )        
        
         st.plotly_chart(fig_heatmap, use_container_width=True)
 
