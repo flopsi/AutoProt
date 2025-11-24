@@ -1,0 +1,345 @@
+"""
+Statistical analysis functions for proteomics data.
+Uses limma_py package for differential expression analysis.
+"""
+
+import pandas as pd
+import numpy as np
+from scipy import stats
+import warnings
+
+try:
+    import limma_py
+    LIMMA_AVAILABLE = True
+except ImportError:
+    LIMMA_AVAILABLE = False
+    warnings.warn("limma_py not installed. Install with: pip install limma_py")
+
+
+def calculate_cv(data):
+    """
+    Calculate coefficient of variation for each row (feature).
+    
+    Args:
+        data: DataFrame with samples as columns
+    
+    Returns:
+        Series: CV% values for each feature
+    """
+    mean = data.mean(axis=1)
+    std = data.std(axis=1)
+    cv = (std / mean * 100).replace([np.inf, -np.inf], np.nan).dropna()
+    return cv
+
+
+def calculate_fold_change(a_data, b_data, log_scale=True):
+    """
+    Calculate fold-change between two conditions.
+    
+    Args:
+        a_data: DataFrame for Condition A
+        b_data: DataFrame for Condition B
+        log_scale: If True, return log2 fold-change
+    
+    Returns:
+        Series: Fold-change values (A/B)
+    """
+    a_mean = a_data.mean(axis=1)
+    b_mean = b_data.mean(axis=1)
+    
+    if log_scale:
+        fc = a_mean - b_mean  # Already log2-transformed data
+    else:
+        fc = np.exp2(a_mean - b_mean)
+    
+    return fc
+
+
+def prepare_limma_inputs(a_data, b_data):
+    """
+    Prepare data for limma analysis.
+    
+    Args:
+        a_data: DataFrame for Condition A (samples as columns)
+        b_data: DataFrame for Condition B (samples as columns)
+    
+    Returns:
+        tuple: (expression_matrix, design_matrix, contrast_matrix)
+    """
+    # Combine data
+    expr_matrix = pd.concat([a_data, b_data], axis=1)
+    
+    # Create group labels
+    n_a = a_data.shape[1]
+    n_b = b_data.shape[1]
+    group = np.array(['A'] * n_a + ['B'] * n_b)
+    
+    # Create design matrix using one-hot encoding
+    design_df = pd.get_dummies(group, drop_first=False)[['A', 'B']]
+    design = design_df.astype(int)
+    
+    return expr_matrix, design, group
+
+
+def limma_differential_expression(a_data, b_data, use_moderation=True):
+    """
+    Perform differential expression analysis using limma_py.
+    
+    Args:
+        a_data: DataFrame for Condition A (samples as columns)
+        b_data: DataFrame for Condition B (samples as columns)
+        use_moderation: If True, use empirical Bayes moderation
+    
+    Returns:
+        DataFrame with columns: logFC, AveExpr, t, P.Value, adj.P.Val, B
+    """
+    if not LIMMA_AVAILABLE:
+        raise ImportError("limma_py is not installed. Install with: pip install limma_py")
+    
+    # Prepare inputs
+    expr_matrix, design, group = prepare_limma_inputs(a_data, b_data)
+    
+    # Remove rows with too many missing values
+    min_samples = min(2, min(a_data.shape[1], b_data.shape[1]))
+    valid_rows = (expr_matrix.notna().sum(axis=1) >= min_samples)
+    expr_matrix_clean = expr_matrix[valid_rows]
+    
+    if len(expr_matrix_clean) == 0:
+        raise ValueError("No valid proteins/peptides after filtering missing values")
+    
+    # Perform linear model fitting
+    fit = limma_py.lmFit(expr_matrix_clean, design)
+    
+    # Set up contrast: A - B
+    contrasts = limma_py.make_contrasts('A - B', levels=design)
+    
+    # Perform contrast analysis
+    fit = limma_py.contrasts_fit(fit, contrasts)
+    
+    # Apply empirical Bayes moderation if requested
+    if use_moderation:
+        fit = limma_py.eBayes(fit)
+    
+    # Extract results
+    results = limma_py.toptable(fit, number=len(expr_matrix_clean))
+    
+    # Ensure all original proteins are in results (add back filtered ones)
+    full_results = pd.DataFrame(index=expr_matrix.index)
+    full_results = full_results.join(results, how='left')
+    
+    return full_results
+
+
+def perform_ttest(a_data, b_data, equal_var=False):
+    """
+    Perform independent t-test for each protein/peptide.
+    Alternative to limma for simple comparisons.
+    
+    Args:
+        a_data: DataFrame for Condition A
+        b_data: DataFrame for Condition B
+        equal_var: If True, perform standard t-test; if False, Welch's t-test
+    
+    Returns:
+        DataFrame with columns: statistic, pvalue, df
+    """
+    results = []
+    
+    for idx in a_data.index:
+        a_values = a_data.loc[idx].dropna().values
+        b_values = b_data.loc[idx].dropna().values
+        
+        if len(a_values) >= 2 and len(b_values) >= 2:
+            statistic, pvalue = stats.ttest_ind(a_values, b_values, equal_var=equal_var, nan_policy='omit')
+            df = len(a_values) + len(b_values) - 2
+            results.append({
+                'protein_id': idx,
+                'statistic': statistic,
+                'pvalue': pvalue,
+                'df': df
+            })
+        else:
+            results.append({
+                'protein_id': idx,
+                'statistic': np.nan,
+                'pvalue': np.nan,
+                'df': np.nan
+            })
+    
+    return pd.DataFrame(results).set_index('protein_id')
+
+
+def volcano_plot_data(results_df, fc_threshold=1.0, pval_threshold=0.05):
+    """
+    Prepare data for volcano plot with significance classification.
+    
+    Args:
+        results_df: DataFrame from limma_differential_expression
+        fc_threshold: Log2 fold-change threshold for significance
+        pval_threshold: Adjusted p-value threshold
+    
+    Returns:
+        DataFrame with classification column
+    """
+    plot_data = results_df.copy()
+    
+    # Classify points
+    plot_data['significant'] = 'Not Significant'
+    
+    # Upregulated (A > B)
+    up_mask = (plot_data['logFC'] > fc_threshold) & (plot_data['adj.P.Val'] < pval_threshold)
+    plot_data.loc[up_mask, 'significant'] = 'Upregulated in A'
+    
+    # Downregulated (A < B)
+    down_mask = (plot_data['logFC'] < -fc_threshold) & (plot_data['adj.P.Val'] < pval_threshold)
+    plot_data.loc[down_mask, 'significant'] = 'Upregulated in B'
+    
+    # Add -log10(p-value) for plotting
+    plot_data['neg_log10_pval'] = -np.log10(plot_data['adj.P.Val'].replace(0, 1e-300))
+    
+    return plot_data
+
+
+def top_differential_proteins(results_df, n=20, sort_by='adj.P.Val'):
+    """
+    Get top differentially expressed proteins.
+    
+    Args:
+        results_df: DataFrame from limma_differential_expression
+        n: Number of top proteins to return
+        sort_by: Column to sort by ('P.Value', 'adj.P.Val', 'B', or 'logFC')
+    
+    Returns:
+        DataFrame of top proteins
+    """
+    if sort_by in ['P.Value', 'adj.P.Val']:
+        # Sort by p-value (ascending)
+        sorted_df = results_df.dropna(subset=[sort_by]).sort_values(sort_by, ascending=True)
+    elif sort_by == 'B':
+        # Sort by B-statistic (descending)
+        sorted_df = results_df.dropna(subset=[sort_by]).sort_values(sort_by, ascending=False)
+    elif sort_by == 'logFC':
+        # Sort by absolute fold-change (descending)
+        sorted_df = results_df.dropna(subset=[sort_by]).copy()
+        sorted_df['abs_logFC'] = sorted_df['logFC'].abs()
+        sorted_df = sorted_df.sort_values('abs_logFC', ascending=False)
+    else:
+        raise ValueError(f"Invalid sort_by value: {sort_by}")
+    
+    return sorted_df.head(n)
+
+
+def calculate_accuracy_metrics(results_df, species_map, expected_fc_map):
+    """
+    Calculate accuracy metrics comparing measured vs expected fold-changes.
+    Useful for spike-in control analysis.
+    
+    Args:
+        results_df: DataFrame from limma_differential_expression
+        species_map: Dict mapping protein IDs to species
+        expected_fc_map: Dict mapping species to expected log2 fold-changes
+    
+    Returns:
+        DataFrame with accuracy metrics per species
+    """
+    accuracy_data = []
+    
+    for species, expected_fc in expected_fc_map.items():
+        # Get proteins for this species
+        species_proteins = [idx for idx, sp in species_map.items() if sp == species and idx in results_df.index]
+        species_results = results_df.loc[species_proteins].dropna(subset=['logFC'])
+        
+        if len(species_results) > 0:
+            measured_fc = species_results['logFC'].values
+            
+            # Calculate metrics
+            mae = np.mean(np.abs(measured_fc - expected_fc))
+            rmse = np.sqrt(np.mean((measured_fc - expected_fc)**2))
+            median_error = np.median(np.abs(measured_fc - expected_fc))
+            bias = np.mean(measured_fc - expected_fc)
+            
+            # Pearson correlation
+            if len(measured_fc) > 2:
+                correlation = np.corrcoef([expected_fc] * len(measured_fc), measured_fc)[0, 1]
+            else:
+                correlation = np.nan
+            
+            accuracy_data.append({
+                'species': species,
+                'n_proteins': len(species_results),
+                'expected_fc': expected_fc,
+                'median_measured_fc': np.median(measured_fc),
+                'mean_measured_fc': np.mean(measured_fc),
+                'std_measured_fc': np.std(measured_fc),
+                'mae': mae,
+                'rmse': rmse,
+                'median_error': median_error,
+                'bias': bias,
+                'correlation': correlation
+            })
+    
+    return pd.DataFrame(accuracy_data)
+
+
+def summarize_de_results(results_df, fc_threshold=1.0, pval_threshold=0.05):
+    """
+    Summarize differential expression results.
+    
+    Args:
+        results_df: DataFrame from limma_differential_expression
+        fc_threshold: Log2 fold-change threshold
+        pval_threshold: Adjusted p-value threshold
+    
+    Returns:
+        dict: Summary statistics
+    """
+    valid_results = results_df.dropna(subset=['logFC', 'adj.P.Val'])
+    
+    upregulated = ((valid_results['logFC'] > fc_threshold) & 
+                   (valid_results['adj.P.Val'] < pval_threshold)).sum()
+    
+    downregulated = ((valid_results['logFC'] < -fc_threshold) & 
+                     (valid_results['adj.P.Val'] < pval_threshold)).sum()
+    
+    total_significant = upregulated + downregulated
+    
+    return {
+        'total_proteins': len(results_df),
+        'proteins_tested': len(valid_results),
+        'significant_total': total_significant,
+        'upregulated_in_A': upregulated,
+        'upregulated_in_B': downregulated,
+        'fc_threshold': fc_threshold,
+        'pval_threshold': pval_threshold,
+        'median_logFC': valid_results['logFC'].median(),
+        'median_pval': valid_results['adj.P.Val'].median()
+    }
+
+
+def sample_size_estimation(effect_size, alpha=0.05, power=0.8):
+    """
+    Estimate required sample size for desired power.
+    
+    Args:
+        effect_size: Expected effect size (Cohen's d or log2 fold-change)
+        alpha: Significance level
+        power: Desired statistical power
+    
+    Returns:
+        dict: Estimated sample size per group
+    """
+    from scipy.stats import norm
+    
+    z_alpha = norm.ppf(1 - alpha/2)
+    z_beta = norm.ppf(power)
+    
+    n = 2 * ((z_alpha + z_beta) / effect_size)**2
+    
+    return {
+        'n_per_group': int(np.ceil(n)),
+        'n_total': int(np.ceil(n)) * 2,
+        'effect_size': effect_size,
+        'alpha': alpha,
+        'power': power,
+        'note': 'This is an approximation. Actual requirements may vary with data distribution.'
+    }
