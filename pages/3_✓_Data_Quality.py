@@ -105,66 +105,47 @@ with data_tab1:
             st.plotly_chart(fig_rank_b, use_container_width=True)
         
         # ============================================================
-        # 2. MISSING VALUE HEATMAP (Condition-based coloring)
+        # 2. MISSING VALUE HEATMAP
         # ============================================================
         
         st.markdown("---")
         st.markdown("### 2. Missing Value Pattern")
         
-        # Create binary matrix
+        # Create binary matrix and color by condition
         binary_matrix = (~quant_data.isna()).astype(int)
         
-        # Create separate matrices for A and B
-        z_matrix = []
-        y_labels = []
-        
-        for col in quant_data.columns:
-            condition = condition_mapping.get(col, col)
-            y_labels.append(condition)
-            z_matrix.append(binary_matrix[col].values)
-        
-        z_matrix = np.array(z_matrix)
-        
-        # Create figure with two overlapping heatmaps
+        # Create custom heatmap with condition colors
         fig_heatmap = go.Figure()
         
-        # First, add white background for all missing values
-        fig_heatmap.add_trace(go.Heatmap(
-            z=z_matrix,
-            y=y_labels,
-            x=list(range(len(binary_matrix))),
-            colorscale=[[0, 'white'], [1, 'white']],
-            showscale=False,
-            hoverinfo='skip'
-        ))
-        
-        # Add present values with condition-specific colors
-        for idx, col in enumerate(quant_data.columns):
+        for col in binary_matrix.columns:
             condition = condition_mapping.get(col, col)
             condition_letter = condition[0]
             color = '#E71316' if condition_letter == 'A' else '#9BD3DD'
             
-            # Get indices where values are present
-            present_indices = np.where(binary_matrix[col] == 1)[0]
+            # Get presence/absence for this column
+            values = binary_matrix[col].values
             
-            if len(present_indices) > 0:
-                fig_heatmap.add_trace(go.Scatter(
-                    x=present_indices,
-                    y=[condition] * len(present_indices),
-                    mode='markers',
-                    marker=dict(color=color, size=3, symbol='square'),
-                    showlegend=False,
-                    hovertemplate=f'{condition}<br>Protein: %{{x}}<br>Present<extra></extra>'
-                ))
+            fig_heatmap.add_trace(go.Scatter(
+                x=[condition] * len(values),
+                y=list(range(len(values))),
+                mode='markers',
+                marker=dict(
+                    color=[color if v == 1 else 'white' for v in values],
+                    size=3,
+                    line=dict(width=0.5, color='rgba(0,0,0,0.1)')
+                ),
+                showlegend=False,
+                hovertemplate=f'{condition}<br>Protein: %{{y}}<br>Present: %{{marker.color}}<extra></extra>'
+            ))
         
         fig_heatmap.update_layout(
-            title='Data Completeness (Red=A present, Sky=B present, White=Absent)',
+            title='Data Completeness Pattern',
             height=400,
             plot_bgcolor='rgba(0,0,0,0)',
             paper_bgcolor='rgba(0,0,0,0)',
             font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
-            xaxis=dict(title=f'{data_type} Index', showgrid=False),
-            yaxis=dict(title='Sample', showgrid=False, tickangle=0, autorange='reversed')
+            xaxis=dict(title='Sample', tickangle=-45, showgrid=False),
+            yaxis=dict(title=f'{data_type} Index', showgrid=False)
         )
         
         st.plotly_chart(fig_heatmap, use_container_width=True)
