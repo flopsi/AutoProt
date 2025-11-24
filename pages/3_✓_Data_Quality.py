@@ -307,90 +307,65 @@ with data_tab1:
             
             st.plotly_chart(fig_cv, use_container_width=True)
 
-        # ============================================================
-        # 6. CV THRESHOLDS PER REPLICATE (3x2 WITH SHADING)
-        # ============================================================
-        
-        st.markdown("---")
-        st.markdown("### 6. Identification Quality by Sample")
-        
-        all_samples = sorted(condition_mapping.items(), key=lambda x: x[1])
-        
-        fig_cv_panel = make_subplots(
-            rows=2, cols=3,
-            subplot_titles=[condition_mapping[col] for col, _ in all_samples[:6]],
-            vertical_spacing=0.15,
-            horizontal_spacing=0.1
-        )
-        
-        for idx, (col, condition) in enumerate(all_samples[:6]):
-            row = idx // 3 + 1
-            col_num = idx % 3 + 1
+            # ============================================================
+            # 6. CV SUMMARY TABLE BY SAMPLE
+            # ============================================================
             
-            if condition[0] == 'A':
-                condition_data = a_data
-            else:
-                condition_data = b_data
+            st.markdown("---")
+            st.markdown("### 6. CV Quality Metrics by Sample")
             
-            sample_data = quant_data[col].dropna()
-            sample_indices = sample_data.index
+            all_samples = sorted(condition_mapping.items(), key=lambda x: x[1])
             
-            cv_data = condition_data.loc[sample_indices]
-            cv_values = calculate_cv(cv_data)
+            # Prepare data for table
+            table_data = []
             
-            total_ids = len(sample_indices)
-            cv_below_20 = (cv_values < 20).sum()
-            cv_below_10 = (cv_values < 10).sum()
+            for col, condition in all_samples:
+                if condition[0] == 'A':
+                    condition_data = a_data
+                else:
+                    condition_data = b_data
+                
+                sample_data = quant_data[col].dropna()
+                sample_indices = sample_data.index
+                
+                cv_data = condition_data.loc[sample_indices]
+                cv_values = calculate_cv(cv_data)
+                
+                total_ids = len(sample_indices)
+                cv_below_20 = (cv_values < 20).sum()
+                cv_below_10 = (cv_values < 10).sum()
+                mean_cv = cv_values.mean()
+                median_cv = cv_values.median()
+                
+                table_data.append({
+                    'Sample': condition,
+                    'Condition': condition[0],
+                    'Total IDs': total_ids,
+                    'CV<20%': cv_below_20,
+                    'CV<10%': cv_below_10,
+                    'Mean CV%': mean_cv,
+                    'Median CV%': median_cv
+                })
             
-            # Add shaded background for 20% threshold (0.8 opacity)
-            fig_cv_panel.add_shape(
-                type="rect",
-                x0=-0.5, x1=2.5,
-                y0=0, y1=total_ids,
-                fillcolor="rgba(144, 238, 144, 0.8)",  # Light green with 0.8 opacity
-                line=dict(width=0),
-                layer="below",
-                row=row, col=col_num
-            )
+            cv_summary_df = pd.DataFrame(table_data)
             
-            # Add shaded background for 10% threshold (0.5 opacity)
-            fig_cv_panel.add_shape(
-                type="rect",
-                x0=-0.5, x1=2.5,
-                y0=0, y1=total_ids,
-                fillcolor="rgba(60, 179, 113, 0.5)",  # Medium green with 0.5 opacity
-                line=dict(width=0),
-                layer="below",
-                row=row, col=col_num
-            )
-            
-            # Add bars
-            fig_cv_panel.add_trace(
-                go.Bar(
-                    x=['Total IDs', 'CV<20%', 'CV<10%'],
-                    y=[total_ids, cv_below_20, cv_below_10],
-                    marker_color='#E71316' if condition[0] == 'A' else '#9BD3DD',
-                    text=[total_ids, cv_below_20, cv_below_10],
-                    textposition='outside',
-                    showlegend=False
+            # Display styled table
+            st.dataframe(
+                cv_summary_df.style.format({
+                    'Total IDs': '{:,.0f}',
+                    'CV<20%': '{:,.0f}',
+                    'CV<10%': '{:,.0f}',
+                    'Mean CV%': '{:.2f}',
+                    'Median CV%': '{:.2f}'
+                }).background_gradient(
+                    subset=['Mean CV%', 'Median CV%'],
+                    cmap='RdYlGn_r',  # Red (high) to Green (low)
+                    vmin=0,
+                    vmax=50
                 ),
-                row=row, col=col_num
+                hide_index=True,
+                use_container_width=True
             )
-        
-        fig_cv_panel.update_layout(
-            title_text='Identification Count and CV% Quality Metrics',
-            height=600,
-            plot_bgcolor='rgba(0,0,0,0)',
-            paper_bgcolor='rgba(0,0,0,0)',
-            font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
-            showlegend=False
-        )
-        
-        fig_cv_panel.update_xaxes(showgrid=False, tickangle=-45)
-        fig_cv_panel.update_yaxes(gridcolor='rgba(0,0,0,0.1)')
-        
-        st.plotly_chart(fig_cv_panel, use_container_width=True)
-        
 
 
 # ============================================================
