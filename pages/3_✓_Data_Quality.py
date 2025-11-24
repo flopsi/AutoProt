@@ -194,7 +194,7 @@ with data_tab1:
         
         pca_col1, pca_col2 = st.columns([1, 3])
         with pca_col1:
-            pca_scope = st.radio("PCA on:", ["All Features", "Human Only"], key='pca_protein')
+            pca_scope = st.radio("PCA on:", ["All Features", "Human Only"], key='pca_peptide')
         
         if pca_scope == "Human Only":
             human_indices = [idx for idx, sp in species_map.items() if sp == 'human']
