@@ -186,7 +186,7 @@ with data_tab1:
         st.plotly_chart(fig_box, use_container_width=True)
         
         # ============================================================
-        # 4. PCA ANALYSIS
+        # 4. PCA ANALYSIS - FIXED TO CHECK SPECIES MAP
         # ============================================================
         
         st.markdown("---")
@@ -196,9 +196,19 @@ with data_tab1:
         with pca_col1:
             pca_scope = st.radio("PCA on:", ["All Features", "Human Only"], key='pca_protein')
         
+        # Check if species_map has human proteins
+        human_count = sum(1 for sp in species_map.values() if sp == 'human')
+        
         if pca_scope == "Human Only":
-            human_indices = [idx for idx, sp in species_map.items() if sp == 'human']
-            pca_data = quant_data.loc[human_indices].dropna()
+            if human_count == 0:
+                st.warning(f"⚠️ No human proteins found in species map. Showing all {len(quant_data)} features instead.")
+                pca_data = quant_data.dropna()
+            else:
+                human_indices = [idx for idx, sp in species_map.items() if sp == 'human']
+                pca_data = quant_data.loc[human_indices].dropna()
+                if len(pca_data) == 0:
+                    st.warning("⚠️ All human proteins have missing values. Showing all features instead.")
+                    pca_data = quant_data.dropna()
         else:
             pca_data = quant_data.dropna()
         
@@ -243,3 +253,6 @@ with data_tab1:
             )
             
             st.plotly_chart(fig_pca, use_container_width=True)
+        else:
+            st.warning("⚠️ No data available for PCA after filtering.")
+        
