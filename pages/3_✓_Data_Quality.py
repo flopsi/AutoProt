@@ -122,8 +122,13 @@ with data_tab1:
             z=z,
             x=protein_indices,
             y=programmers,
-            colorscale="Viridis"))
-        
+            colorscale=  colorscale=[
+                [0, 'white'],          # Missing/lowest
+                [0.3, '#9BD3DD'],      # Sky (low-medium)
+                [0.5, '#66b8c7'],      # Medium sky-blue
+                [0.7, '#ff9999'],      # Light red
+                [1, '#E71316']] ))
+                
        
         st.plotly_chart(fig_heatmap, use_container_width=True)
 
