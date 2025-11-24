@@ -281,8 +281,7 @@ with data_tab1:
                 y='CV%', 
                 x='Condition', 
                 color='Condition',
-                box=True,           # Show box plot inside
-                points= "FALSE",       # Show all data points
+                box=True,           # Show box plot inside       
                 hover_data=['CV%'],
                 color_discrete_map={'A': '#E71316', 'B': '#9BD3DD'}  # Custom colors
             )
@@ -295,7 +294,8 @@ with data_tab1:
                 plot_bgcolor='rgba(0,0,0,0)',
                 paper_bgcolor='rgba(0,0,0,0)',
                 font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
-                showlegend=False
+                showlegend=False,
+                yaxis_zeroline=False
             )
             
             fig_cv.update_xaxes(showgrid=False)
