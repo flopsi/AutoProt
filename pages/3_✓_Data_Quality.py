@@ -105,48 +105,49 @@ with data_tab1:
             st.plotly_chart(fig_rank_b, use_container_width=True)
         
         # ============================================================
-        # 2. MISSING VALUE HEATMAP (Intensity-based)
+        # 2. INTENSITY HEATMAP
         # ============================================================
         
         st.markdown("---")
         st.markdown("### 2. Intensity Heatmap")
         
-        # Use raw intensity values and log-transform
-        log_intensity = np.log10(quant_data.replace(0, np.nan))
-        
-        # Prepare data with condition labels
-        y_labels = [condition_mapping.get(col, col) for col in quant_data.columns]
+        # Prepare data
+        base = 0
+        protein_indices = list(range(len(quant_data)))  # Protein index based on upload order
+        z = np.log2(quant_data.T.replace(0, np.nan).values)  # Log2 intensity, rows = samples
+        programmers = [condition_mapping.get(col, col) for col in quant_data.columns]  # A1, A2, A3, B1, B2, B3...
         
         # Create custom colorscale: white (missing/low) -> sky (medium) -> red (high)
         fig_heatmap = go.Figure(data=go.Heatmap(
-            z=log_intensity.T.values,
-            x=list(range(len(log_intensity))),
-            y=y_labels,
+            z=z,
+            x=protein_indices,
+            y=programmers,
             colorscale=[
                 [0, 'white'],          # Missing/lowest
                 [0.3, '#9BD3DD'],      # Sky (low-medium)
-                [0.5, '#66b8c7'],      # Medium sky
+                [0.5, '#66b8c7'],      # Medium sky-blue
                 [0.7, '#ff9999'],      # Light red
                 [1, '#E71316']         # Red (high)
             ],
             colorbar=dict(
-                title='Log₁₀<br>Intensity',
+                title='Log₂<br>Intensity',
                 titleside='right'
             ),
-            hovertemplate='Sample: %{y}<br>Protein: %{x}<br>Log₁₀ Intensity: %{z:.2f}<extra></extra>'
+            hovertemplate='Sample: %{y}<br>Protein: %{x}<br>Log₂ Intensity: %{z:.2f}<extra></extra>'
         ))
         
         fig_heatmap.update_layout(
-            title='Intensity Heatmap (White=Missing, Sky=Low, Red=High)',
+            title=dict(text='Intensity Heatmap (White=Missing, Sky=Low, Red=High)'),
+            xaxis=dict(title=f'{data_type} Index'),
+            yaxis=dict(title='Sample', tickangle=0),
             height=400,
             plot_bgcolor='rgba(0,0,0,0)',
             paper_bgcolor='rgba(0,0,0,0)',
-            font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
-            xaxis=dict(title=f'{data_type} Index', showgrid=False),
-            yaxis=dict(title='Sample', showgrid=False, tickangle=0)
+            font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY)
         )
         
         st.plotly_chart(fig_heatmap, use_container_width=True)
+
 
         
                         
