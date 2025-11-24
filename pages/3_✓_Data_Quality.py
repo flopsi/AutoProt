@@ -114,65 +114,61 @@ with data_tab1:
         # Create binary matrix
         binary_matrix = (~quant_data.isna()).astype(int)
         
-        # Prepare z-data and colors
-        z_data = []
+        # Create separate matrices for A and B
+        z_matrix = []
         y_labels = []
-        customdata = []
         
         for col in quant_data.columns:
             condition = condition_mapping.get(col, col)
-            condition_letter = condition[0]
-            
-            # Get presence/absence values (1 = present, 0 = absent)
-            col_values = binary_matrix[col].values
-            z_data.append(col_values)
             y_labels.append(condition)
-            
-            # Create color array: white for 0 (absent), red/sky for 1 (present)
-            colors = []
-            for val in col_values:
-                if val == 1:  # Present
-                    colors.append('#E71316' if condition_letter == 'A' else '#9BD3DD')
-                else:  # Absent
-                    colors.append('white')
-            
-            customdata.append(colors)
+            z_matrix.append(binary_matrix[col].values)
         
-        # Transpose for proper orientation
-        z_data_t = list(zip(*z_data))
-        customdata_t = list(zip(*customdata))
+        z_matrix = np.array(z_matrix)
         
-        # Create heatmap with custom colors
+        # Create figure with two overlapping heatmaps
         fig_heatmap = go.Figure()
         
-        for protein_idx in range(len(z_data_t)):
-            for sample_idx, (value, color) in enumerate(zip(z_data_t[protein_idx], customdata_t[protein_idx])):
+        # First, add white background for all missing values
+        fig_heatmap.add_trace(go.Heatmap(
+            z=z_matrix,
+            y=y_labels,
+            x=list(range(len(binary_matrix))),
+            colorscale=[[0, 'white'], [1, 'white']],
+            showscale=False,
+            hoverinfo='skip'
+        ))
+        
+        # Add present values with condition-specific colors
+        for idx, col in enumerate(quant_data.columns):
+            condition = condition_mapping.get(col, col)
+            condition_letter = condition[0]
+            color = '#E71316' if condition_letter == 'A' else '#9BD3DD'
+            
+            # Get indices where values are present
+            present_indices = np.where(binary_matrix[col] == 1)[0]
+            
+            if len(present_indices) > 0:
                 fig_heatmap.add_trace(go.Scatter(
-                    x=[protein_idx],
-                    y=[y_labels[sample_idx]],
+                    x=present_indices,
+                    y=[condition] * len(present_indices),
                     mode='markers',
-                    marker=dict(
-                        color=color,
-                        size=4,
-                        symbol='square',
-                        line=dict(width=0)
-                    ),
+                    marker=dict(color=color, size=3, symbol='square'),
                     showlegend=False,
-                    hovertemplate=f'Sample: {y_labels[sample_idx]}<br>Protein: {protein_idx}<br>Status: {"Present" if value == 1 else "Absent"}<extra></extra>'
+                    hovertemplate=f'{condition}<br>Protein: %{{x}}<br>Present<extra></extra>'
                 ))
         
         fig_heatmap.update_layout(
-            title='Data Completeness Pattern (Red=A present, Sky=B present, White=Absent)',
+            title='Data Completeness (Red=A present, Sky=B present, White=Absent)',
             height=400,
             plot_bgcolor='rgba(0,0,0,0)',
             paper_bgcolor='rgba(0,0,0,0)',
             font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
             xaxis=dict(title=f'{data_type} Index', showgrid=False),
-            yaxis=dict(title='Sample', showgrid=False, tickangle=0)
+            yaxis=dict(title='Sample', showgrid=False, tickangle=0, autorange='reversed')
         )
         
         st.plotly_chart(fig_heatmap, use_container_width=True)
-        st.plotly_chart(fig_heatmap, use_container_width=True)
+        
 
         # ============================================================
         # 3. INTENSITY DISTRIBUTION BOXPLOTS
