@@ -6,6 +6,7 @@ from scipy.stats import gaussian_kde
 from components.header import render_header
 from config.colors import ThermoFisherColors
 from utils.quality_plots import prepare_condition_data
+from utils.statistical_analysis import limma_by_species
 
 render_header()
 st.title("Differential Expression Analysis")
@@ -19,12 +20,18 @@ if not protein_uploaded and not peptide_uploaded:
         st.switch_page("pages/1_📊_Protein_Upload.py")
     st.stop()
 
-# Species colors matching R script exactly
+# Species colors matching R script
 SPECIES_COLORS = {
-    'human': '#199d76',      # colorhuman
-    'ecoli': '#7570b2',      # colorecoli  
-    'yeast': '#d85f02',      # coloryeast
-    'celegans': '#8B0000'    # colorcelegans
+    'human': '#199d76',      # Green/teal
+    'yeast': '#d85f02',      # Orange
+    'ecoli': '#7570b2',      # Purple
+}
+
+# Expected fold-changes
+EXPECTED_FC = {
+    'human': 0,
+    'yeast': 1,
+    'ecoli': -2
 }
 
 # Data selection tabs
@@ -46,37 +53,51 @@ with data_tab1:
         # Prepare condition data
         a_data, b_data = prepare_condition_data(quant_data, condition_mapping)
         
-        # Calculate log2 fold-change: log2(A/B) = log2(A) - log2(B)
-        a_mean = a_data.mean(axis=1)
-        b_mean = b_data.mean(axis=1)
-        log2fc = a_mean - b_mean
+        st.markdown("---")
+        st.markdown("### Step 1: Run limma Analysis per Species")
         
-        # Create dataframe with species annotation
-        fc_data = pd.DataFrame({
-            'log2fc': log2fc,
-            'species': [species_map.get(idx, 'other') for idx in log2fc.index]
-        }).dropna()
+        # Run limma button
+        if st.button("🔬 Run limma Analysis", type="primary", use_container_width=True):
+            with st.spinner("Running limma for each species..."):
+                try:
+                    limma_results = limma_by_species(a_data, b_data, species_map)
+                    st.session_state['limma_results'] = limma_results
+                    st.success("✅ Analysis complete!")
+                except Exception as e:
+                    st.error(f"❌ Analysis failed: {str(e)}")
+                    st.stop()
+        
+        # Check if results exist
+        if 'limma_results' not in st.session_state:
+            st.info("👆 Click 'Run limma Analysis' to start")
+            st.stop()
+        
+        limma_results = st.session_state['limma_results']
         
         # ============================================================
-        # DENSITY PLOT (matching R f.p.density exactly)
+        # STEP 2: DENSITY PLOT
         # ============================================================
         
         st.markdown("---")
-        st.markdown("### Log₂ Fold-Change Distribution")
+        st.markdown("### Step 2: Log₂ Fold-Change Distribution")
         
         fig = go.Figure()
         
-        # Plot density curve for each species (matching R geom_density)
-        for species in ['human', 'yeast', 'ecoli', 'celegans']:
-            species_fc = fc_data[fc_data['species'] == species]['log2fc'].values
+        # Plot density curve for each species
+        species_order = ['human', 'yeast', 'ecoli']
+        
+        for species in species_order:
+            species_data = limma_results[limma_results['species'] == species]
             
-            if len(species_fc) > 10:  # Need enough points for KDE
-                # Calculate KDE (kernel density estimation)
-                kde = gaussian_kde(species_fc)
-                x_range = np.linspace(species_fc.min(), species_fc.max(), 200)
+            if len(species_data) > 10:
+                log2fc = species_data['logFC'].values
+                
+                # Calculate KDE
+                kde = gaussian_kde(log2fc, bw_method='scott')
+                x_range = np.linspace(-3, 3, 300)
                 density = kde(x_range)
                 
-                # Add density curve
+                # Add density curve with fill
                 fig.add_trace(go.Scatter(
                     x=x_range,
                     y=density,
@@ -84,82 +105,89 @@ with data_tab1:
                     name=species.capitalize(),
                     line=dict(
                         color=SPECIES_COLORS[species],
-                        width=2
+                        width=0
                     ),
                     fill='tozeroy',
                     fillcolor=SPECIES_COLORS[species],
                     opacity=0.6,
                     hovertemplate=(
                         f'<b>{species.capitalize()}</b><br>' +
-                        'Log₂ FC: %{x:.2f}<br>' +
-                        'Density: %{y:.3f}<extra></extra>'
+                        'Log₂(A/B): %{x:.2f}<br>' +
+                        'Density: %{y:.2f}<extra></extra>'
                     )
                 ))
                 
-                # Add median line (matching R geom_vline)
-                median_fc = np.median(species_fc)
+                # Add expected fold-change line
+                expected = EXPECTED_FC[species]
                 fig.add_vline(
-                    x=median_fc,
+                    x=expected,
                     line_dash="dash",
                     line_color=SPECIES_COLORS[species],
-                    line_width=1.5,
-                    opacity=0.9
+                    line_width=2,
+                    opacity=0.8
                 )
         
-        # Styling to match R ggplot theme
+        # Styling
         fig.update_layout(
-            title='',
             xaxis_title='Log₂(A/B)',
             yaxis_title='Density',
             height=500,
-            plot_bgcolor='white',
-            paper_bgcolor='white',
-            font=dict(family="Arial, sans-serif", color='black', size=11),
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY, size=12),
             xaxis=dict(
                 showgrid=False,
                 zeroline=True,
-                zerolinecolor='rgba(0,0,0,0.3)',
+                zerolinecolor='rgba(0,0,0,0.2)',
                 zerolinewidth=1,
-                range=[-3.5, 3.5],  # FCmin to FCmax from R
+                range=[-3, 3],
                 tickmode='linear',
-                tick0=-3,
                 dtick=1
             ),
             yaxis=dict(
                 showgrid=False,
                 zeroline=False,
-                range=[0, 7],  # Matching R limits
-                tickmode='linear',
-                tick0=0,
-                dtick=1
+                range=[0, None]
             ),
             legend=dict(
                 orientation='h',
-                yanchor='bottom',
-                y=1.02,
-                xanchor='center',
-                x=0.5,
-                bgcolor='rgba(255,255,255,0.8)'
+                yanchor='top',
+                y=0.98,
+                xanchor='right',
+                x=0.98,
+                bgcolor='rgba(255,255,255,0.8)',
+                bordercolor='rgba(0,0,0,0.2)',
+                borderwidth=1
             ),
-            margin=dict(l=60, r=20, t=40, b=50)
+            margin=dict(l=60, r=20, t=40, b=50),
+            showlegend=True
         )
         
         st.plotly_chart(fig, use_container_width=True)
         
-        # Statistics table by species
-        st.markdown("#### Statistics by Species")
+        # Statistics table
+        st.markdown("#### limma Results by Species")
         
         stats_data = []
-        for species in ['human', 'yeast', 'ecoli', 'celegans']:
-            species_fc = fc_data[fc_data['species'] == species]['log2fc']
+        for species in species_order:
+            species_data = limma_results[limma_results['species'] == species]
             
-            if len(species_fc) > 0:
+            if len(species_data) > 0:
+                log2fc = species_data['logFC']
+                expected = EXPECTED_FC[species]
+                measured = log2fc.median()
+                error = abs(measured - expected)
+                
+                # Count significant proteins (adj.P.Val < 0.05)
+                sig_count = (species_data['adj.P.Val'] < 0.05).sum()
+                
                 stats_data.append({
                     'Species': species.capitalize(),
-                    'Count': len(species_fc),
-                    'Median': f"{species_fc.median():.2f}",
-                    'Q1': f"{species_fc.quantile(0.25):.2f}",
-                    'Q3': f"{species_fc.quantile(0.75):.2f}"
+                    'Proteins': len(species_data),
+                    'Significant (FDR<0.05)': sig_count,
+                    'Expected Log₂ FC': f"{expected:.1f}",
+                    'Measured Log₂ FC': f"{measured:.2f}",
+                    'Error': f"{error:.2f}"
                 })
         
         if stats_data:
