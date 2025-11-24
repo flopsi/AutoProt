@@ -307,65 +307,64 @@ with data_tab1:
             
             st.plotly_chart(fig_cv, use_container_width=True)
 
-            # ============================================================
-            # 6. CV SUMMARY TABLE BY SAMPLE
-            # ============================================================
+        # ============================================================
+        # 6. CV SUMMARY TABLE BY SAMPLE
+        # ============================================================
+        
+        st.markdown("---")
+        st.markdown("### 6. CV Quality Metrics by Sample")
+        
+        all_samples = sorted(condition_mapping.items(), key=lambda x: x[1])
+        
+        # Prepare data for table
+        table_data = []
+        
+        for col, condition in all_samples:
+            if condition[0] == 'A':
+                condition_data = a_data
+            else:
+                condition_data = b_data
             
-            st.markdown("---")
-            st.markdown("### 6. CV Quality Metrics by Sample")
+            sample_data = quant_data[col].dropna()
+            sample_indices = sample_data.index
             
-            all_samples = sorted(condition_mapping.items(), key=lambda x: x[1])
+            cv_data = condition_data.loc[sample_indices]
+            cv_values = calculate_cv(cv_data)
             
-            # Prepare data for table
-            table_data = []
+            total_ids = len(sample_indices)
+            cv_below_20 = (cv_values < 20).sum()
+            cv_below_10 = (cv_values < 10).sum()
+            mean_cv = cv_values.mean()
+            median_cv = cv_values.median()
             
-            for col, condition in all_samples:
-                if condition[0] == 'A':
-                    condition_data = a_data
-                else:
-                    condition_data = b_data
-                
-                sample_data = quant_data[col].dropna()
-                sample_indices = sample_data.index
-                
-                cv_data = condition_data.loc[sample_indices]
-                cv_values = calculate_cv(cv_data)
-                
-                total_ids = len(sample_indices)
-                cv_below_20 = (cv_values < 20).sum()
-                cv_below_10 = (cv_values < 10).sum()
-                mean_cv = cv_values.mean()
-                median_cv = cv_values.median()
-                
-                table_data.append({
-                    'Sample': condition,
-                    'Condition': condition[0],
-                    'Total IDs': total_ids,
-                    'CV<20%': cv_below_20,
-                    'CV<10%': cv_below_10,
-                    'Mean CV%': mean_cv,
-                    'Median CV%': median_cv
-                })
-            
-            cv_summary_df = pd.DataFrame(table_data)
-            
-            # Display styled table
-            st.dataframe(
-                cv_summary_df.style.format({
-                    'Total IDs': '{:,.0f}',
-                    'CV<20%': '{:,.0f}',
-                    'CV<10%': '{:,.0f}',
-                    'Mean CV%': '{:.2f}',
-                    'Median CV%': '{:.2f}'
-                }).background_gradient(
-                    subset=['Mean CV%', 'Median CV%'],
-                    cmap='RdYlGn_r',  # Red (high) to Green (low)
-                    vmin=0,
-                    vmax=50
-                ),
-                hide_index=True,
-                use_container_width=True
-            )
+            table_data.append({
+                'Sample': condition,
+                'Condition': condition[0],
+                'Total IDs': total_ids,
+                'CV<20%': cv_below_20,
+                'CV<10%': cv_below_10,
+                'Mean CV%': mean_cv,
+                'Median CV%': median_cv
+            })
+        
+        cv_summary_df = pd.DataFrame(table_data)
+        
+        # Display table with column configuration
+        st.dataframe(
+            cv_summary_df,
+            column_config={
+                'Sample': st.column_config.TextColumn('Sample', width='small'),
+                'Condition': st.column_config.TextColumn('Condition', width='small'),
+                'Total IDs': st.column_config.NumberColumn('Total IDs', format='%d'),
+                'CV<20%': st.column_config.NumberColumn('CV<20%', format='%d'),
+                'CV<10%': st.column_config.NumberColumn('CV<10%', format='%d'),
+                'Mean CV%': st.column_config.NumberColumn('Mean CV%', format='%.2f'),
+                'Median CV%': st.column_config.NumberColumn('Median CV%', format='%.2f')
+            },
+            hide_index=True,
+            use_container_width=True
+        )
+        
 
 # ============================================================
 # NAVIGATION
