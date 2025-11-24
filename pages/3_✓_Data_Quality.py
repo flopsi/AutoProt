@@ -7,6 +7,8 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from components.header import render_header
 from config.colors import ThermoFisherColors
+import plotly.express as px
+
 
 render_header()
 st.title("Data Quality Assessment")
@@ -255,46 +257,12 @@ with data_tab1:
             cv = (std / mean * 100).replace([np.inf, -np.inf], np.nan).dropna()
             return cv
         
-        a_data = current_data.get_condition_data('A')
-        b_data = current_data.get_condition_data('B')
+        df = px.data.calculate_cv(st.session_state.protein_data)
+        fig = px.violin(df, y="tip", x="smoker", color="sex", box=True, points="all",hover_data=df.columns
         
-        cv_a = calculate_cv(a_data)
-        cv_b = calculate_cv(b_data)
+
         
-        fig_cv = go.Figure()
-        
-        fig_cv.add_trace(go.Violin(
-            y=cv_a,
-            name='Condition A',
-            fillcolor='#E71316',
-            line_color='#E71316',
-            opacity=0.6,
-            box_visible=True,
-            meanline_visible=True
-        ))
-        
-        fig_cv.add_trace(go.Violin(
-            y=cv_b,
-            name='Condition B',
-            fillcolor='#9BD3DD',
-            line_color='#9BD3DD',
-            opacity=0.6,
-            box_visible=True,
-            meanline_visible=True
-        ))
-        
-        fig_cv.update_layout(
-            title='CV% Distribution by Condition',
-            yaxis_title='CV%',
-            height=400,
-            plot_bgcolor='rgba(0,0,0,0)',
-            paper_bgcolor='rgba(0,0,0,0)',
-            font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
-            xaxis=dict(showgrid=False),
-            yaxis=dict(gridcolor='rgba(0,0,0,0.1)')
-        )
-        
-        st.plotly_chart(fig_cv, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True)
         
         # ============================================================
         # 6. CV THRESHOLDS PER REPLICATE (3x2 WITH SHADING)
