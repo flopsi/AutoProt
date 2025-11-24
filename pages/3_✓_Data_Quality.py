@@ -194,20 +194,20 @@ with data_tab1:
         
         pca_col1, pca_col2 = st.columns([1, 3])
         with pca_col1:
-            pca_scope = st.radio("PCA on:", ["All Features", "Human Only"], key='pca_protein')
+            pca_scope = st.radio("PCA on:", ["All Features", "Human Only"], key='pca_peptide')
         
-        # Check if species_map has human proteins
-        human_count = sum(1 for sp in species_map.values() if sp == 'human')
+        # Check if species_map has human entries that match peptide indices
+        valid_human_indices = [idx for idx in quant_data.index if idx in species_map and species_map[idx] == 'human']
+        human_count = len(valid_human_indices)
         
         if pca_scope == "Human Only":
             if human_count == 0:
-                st.warning(f"⚠️ No human proteins found in species map. Showing all {len(quant_data)} features instead.")
+                st.warning(f"⚠️ No human peptides found in species map. Showing all {len(quant_data)} features instead.")
                 pca_data = quant_data.dropna()
             else:
-                human_indices = [idx for idx, sp in species_map.items() if sp == 'human']
-                pca_data = quant_data.loc[human_indices].dropna()
+                pca_data = quant_data.loc[valid_human_indices].dropna()
                 if len(pca_data) == 0:
-                    st.warning("⚠️ All human proteins have missing values. Showing all features instead.")
+                    st.warning("⚠️ All human peptides have missing values. Showing all features instead.")
                     pca_data = quant_data.dropna()
         else:
             pca_data = quant_data.dropna()
@@ -256,3 +256,4 @@ with data_tab1:
         else:
             st.warning("⚠️ No data available for PCA after filtering.")
         
+                
