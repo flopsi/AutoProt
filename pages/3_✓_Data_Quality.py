@@ -282,7 +282,7 @@ with data_tab1:
                 x='Condition', 
                 color='Condition',
                 box=True,           # Show box plot inside
-                points='all',       # Show all data points
+                points='None',       # Show all data points
                 hover_data=['CV%'],
                 color_discrete_map={'A': '#E71316', 'B': '#9BD3DD'}  # Custom colors
             )
@@ -301,7 +301,7 @@ with data_tab1:
             fig_cv.update_xaxes(showgrid=False)
             fig_cv.update_yaxes(
                 gridcolor='rgba(0,0,0,0.1)',
-                range=[0, 100]  # Set y-axis max to 100%
+                range=[-10, 100]  # Set y-axis max to 100%
             )
             
             st.plotly_chart(fig_cv, use_container_width=True)
@@ -343,15 +343,7 @@ with data_tab1:
             cv_below_20 = (cv_values < 20).sum()
             cv_below_10 = (cv_values < 10).sum()
             
-            # Add shaded background rectangles for CV thresholds
-            fig_cv_panel.add_shape(
-                type="rect",
-                x0=-0.5, x1=2.5,
-                y0=0, y1=total_ids * 0.2,
-                fillcolor="rgba(0,255,0,0.1)",
-                line=dict(width=0),
-                row=row, col=col_num
-            )
+
             
             fig_cv_panel.add_shape(
                 type="rect",
@@ -369,7 +361,7 @@ with data_tab1:
                     y=[total_ids, cv_below_20, cv_below_10],
                     marker_color='#E71316' if condition[0] == 'A' else '#9BD3DD',
                     text=[total_ids, cv_below_20, cv_below_10],
-                    textposition='outside',
+                    textposition='inside',
                     showlegend=False
                 ),
                 row=row, col=col_num
