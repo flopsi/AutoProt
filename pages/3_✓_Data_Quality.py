@@ -122,7 +122,7 @@ with data_tab1:
             z=z,
             x=protein_indices,
             y=programmers,
-            colorscale=  colorscale=[
+            colorscale=[
                 [0, 'white'],          # Missing/lowest
                 [0.3, '#9BD3DD'],      # Sky (low-medium)
                 [0.5, '#66b8c7'],      # Medium sky-blue
