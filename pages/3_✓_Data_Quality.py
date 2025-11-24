@@ -243,60 +243,69 @@ with data_tab1:
             )
             
             st.plotly_chart(fig_pca, use_container_width=True)
-        # ============================================================
-        # 5. CV% VIOLIN PLOT
-        # ============================================================
-        
-        st.markdown("---")
-        st.markdown("### 5. Coefficient of Variation (CV%)")
-        
-        def calculate_cv(data):
-            mean = data.mean(axis=1)
-            std = data.std(axis=1)
-            cv = (std / mean * 100).replace([np.inf, -np.inf], np.nan).dropna()
-            return cv
-        
-        a_data = current_data.get_condition_data('A')
-        b_data = current_data.get_condition_data('B')
-        
-        cv_a = calculate_cv(a_data)
-        cv_b = calculate_cv(b_data)
-        
-        # Create DataFrame for Plotly Express
-        cv_df = pd.DataFrame({
-            'CV%': list(cv_a<150) + list(cv_b),
-            'Condition': ['A'] * len(cv_a) + ['B'] * len(cv_b)
-        })
-        
-        # Create violin plot with box and points
-        import plotly.express as px
-        
-        fig_cv = px.violin(
-            cv_df, 
-            y='CV%', 
-            x='Condition', 
-            color='Condition',
-            box=True,           # Show box plot inside
-            points='None',       # Show all data points
-            hover_data=['CV%'],
-            color_discrete_map={'A': '#E71316', 'B': '#9BD3DD'}  # Custom colors
-        )
-        
-        fig_cv.update_layout(
-            title='CV% Distribution by Condition',
-            yaxis_title='CV%',
-            xaxis_title='Condition',
-            height=400,
-            plot_bgcolor='rgba(0,0,0,0)',
-            paper_bgcolor='rgba(0,0,0,0)',
-            font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
-            showlegend=False
-        )
-        
-        fig_cv.update_xaxes(showgrid=False)
-        fig_cv.update_yaxes(gridcolor='rgba(0,0,0,0.1)')
-        
-        st.plotly_chart(fig_cv, use_container_width=True)
+            
+            # ============================================================
+            # 5. CV% VIOLIN PLOT
+            # ============================================================
+            
+            st.markdown("---")
+            st.markdown("### 5. Coefficient of Variation (CV%)")
+            
+            def calculate_cv(data):
+                mean = data.mean(axis=1)
+                std = data.std(axis=1)
+                cv = (std / mean * 100).replace([np.inf, -np.inf], np.nan).dropna()
+                return cv
+            
+            a_data = current_data.get_condition_data('A')
+            b_data = current_data.get_condition_data('B')
+            
+            cv_a = calculate_cv(a_data)
+            cv_b = calculate_cv(b_data)
+            
+            # Cap CV values at 100%
+            cv_a_capped = cv_a.clip(upper=100)
+            cv_b_capped = cv_b.clip(upper=100)
+            
+            # Create DataFrame for Plotly Express
+            cv_df = pd.DataFrame({
+                'CV%': list(cv_a_capped) + list(cv_b_capped),
+                'Condition': ['A'] * len(cv_a_capped) + ['B'] * len(cv_b_capped)
+            })
+            
+            # Create violin plot with box and points
+            import plotly.express as px
+            
+            fig_cv = px.violin(
+                cv_df, 
+                y='CV%', 
+                x='Condition', 
+                color='Condition',
+                box=True,           # Show box plot inside
+                points='all',       # Show all data points
+                hover_data=['CV%'],
+                color_discrete_map={'A': '#E71316', 'B': '#9BD3DD'}  # Custom colors
+            )
+            
+            fig_cv.update_layout(
+                title='CV% Distribution by Condition',
+                yaxis_title='CV%',
+                xaxis_title='Condition',
+                height=400,
+                plot_bgcolor='rgba(0,0,0,0)',
+                paper_bgcolor='rgba(0,0,0,0)',
+                font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
+                showlegend=False
+            )
+            
+            fig_cv.update_xaxes(showgrid=False)
+            fig_cv.update_yaxes(
+                gridcolor='rgba(0,0,0,0.1)',
+                range=[0, 100]  # Set y-axis max to 100%
+            )
+            
+            st.plotly_chart(fig_cv, use_container_width=True)
+
 
         
         # ============================================================
