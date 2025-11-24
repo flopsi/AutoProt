@@ -282,7 +282,7 @@ with data_tab1:
                 x='Condition', 
                 color='Condition',
                 box=True,           # Show box plot inside
-                points='all',       # Show all data points
+                points='None',       # Show all data points
                 hover_data=['CV%'],
                 color_discrete_map={'A': '#E71316', 'B': '#9BD3DD'}  # Custom colors
             )
@@ -301,7 +301,7 @@ with data_tab1:
             fig_cv.update_xaxes(showgrid=False)
             fig_cv.update_yaxes(
                 gridcolor='rgba(0,0,0,0.1)',
-                range=[0, 100]  # Set y-axis max to 100%
+                range=[-10, 100]  # Set y-axis max to 100%
             )
             
             st.plotly_chart(fig_cv, use_container_width=True)
