@@ -245,7 +245,7 @@ with data_tab1:
             st.plotly_chart(fig_pca, use_container_width=True)
             
             # ============================================================
-            # 5. CV% VIOLIN PLOT (All Replicates)
+            # 5. CV% VIOLIN PLOT
             # ============================================================
             
             st.markdown("---")
@@ -260,7 +260,6 @@ with data_tab1:
             a_data = current_data.get_condition_data('A')
             b_data = current_data.get_condition_data('B')
             
-            # Calculate CV per condition (for all proteins detected in that condition)
             cv_a = calculate_cv(a_data)
             cv_b = calculate_cv(b_data)
             
@@ -268,69 +267,45 @@ with data_tab1:
             cv_a_capped = cv_a.clip(upper=100)
             cv_b_capped = cv_b.clip(upper=100)
             
-            # Create DataFrame with all replicates shown separately
-            cv_list = []
-            sample_list = []
-            condition_list = []
-            
-            # Add Condition A replicates
-            for _ in range(len(cv_a_capped)):
-                for col in a_data.columns:
-                    sample_name = condition_mapping.get(col, col)
-                    cv_list.append(cv_a_capped.iloc[_] if _ < len(cv_a_capped) else np.nan)
-                    sample_list.append(sample_name)
-                    condition_list.append('A')
-            
-            # Add Condition B replicates
-            for _ in range(len(cv_b_capped)):
-                for col in b_data.columns:
-                    sample_name = condition_mapping.get(col, col)
-                    cv_list.append(cv_b_capped.iloc[_] if _ < len(cv_b_capped) else np.nan)
-                    sample_list.append(sample_name)
-                    condition_list.append('B')
-            
-            # Actually, let's simplify - just use the CV values per condition and replicate them
-            # Better approach: Show CV distribution per sample group
+            # Create DataFrame for Plotly Express
             cv_df = pd.DataFrame({
-                'CV%': list(cv_a_capped) * len(a_data.columns) + list(cv_b_capped) * len(b_data.columns),
-                'Sample': [condition_mapping.get(col, col) for col in a_data.columns for _ in range(len(cv_a_capped))] + 
-                          [condition_mapping.get(col, col) for col in b_data.columns for _ in range(len(cv_b_capped))],
-                'Condition': ['A'] * (len(cv_a_capped) * len(a_data.columns)) + ['B'] * (len(cv_b_capped) * len(b_data.columns))
+                'CV%': list(cv_a_capped) + list(cv_b_capped),
+                'Condition': ['A'] * len(cv_a_capped) + ['B'] * len(cv_b_capped)
             })
             
-            # Create violin plot with all 6 replicates
+            # Create violin plot with box and points
             import plotly.express as px
             
             fig_cv = px.violin(
                 cv_df, 
                 y='CV%', 
-                x='Sample',
+                x='Condition', 
                 color='Condition',
-                box=True,
-                points='all',
+                box=True,           # Show box plot inside
+                points='all',       # Show all data points
                 hover_data=['CV%'],
-                color_discrete_map={'A': '#E71316', 'B': '#9BD3DD'}
+                color_discrete_map={'A': '#E71316', 'B': '#9BD3DD'}  # Custom colors
             )
             
             fig_cv.update_layout(
-                title='CV% Distribution by Sample',
+                title='CV% Distribution by Condition',
                 yaxis_title='CV%',
-                xaxis_title='Sample',
+                xaxis_title='Condition',
                 height=400,
                 plot_bgcolor='rgba(0,0,0,0)',
                 paper_bgcolor='rgba(0,0,0,0)',
                 font=dict(family="Arial, sans-serif", color=ThermoFisherColors.PRIMARY_GRAY),
-                showlegend=True,
-                legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5)
+                showlegend=False
             )
             
-            fig_cv.update_xaxes(showgrid=False, tickangle=-45)
-            fig_cv.update_yaxes(gridcolor='rgba(0,0,0,0.1)', range=[0, 100])
+            fig_cv.update_xaxes(showgrid=False)
+            fig_cv.update_yaxes(
+                gridcolor='rgba(0,0,0,0.1)',
+                range=[0, 100]  # Set y-axis max to 100%
+            )
             
             st.plotly_chart(fig_cv, use_container_width=True)
 
-
-        
         # ============================================================
         # 6. CV THRESHOLDS PER REPLICATE (3x2 WITH SHADING)
         # ============================================================
