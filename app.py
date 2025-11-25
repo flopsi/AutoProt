@@ -242,15 +242,18 @@ with st.container():
         df = df.rename(columns=rename_map)
         st.session_state.df = df
 
-    # Extract assignments
+    # Extract assignments — FIXED: now correctly identifies Cond 2
     cond1_cols = edited[edited["Cond 1"]]["Original Name"].tolist()
-    cond2_cols = [c for c in numeric_cols if c not in cond1_cols]
+    cond2_cols = [c for c in numeric_cols if c not in cond1_cols]  # ← this line was correct
     species_col = edited[edited["Species"]]["Original Name"].tolist()
     protein_col = edited[edited["Protein Group"]]["Original Name"].tolist()
 
     # Final validation
-    if len(cond1_cols) == 0 or len(cond2_cols) == 0:
-        st.error("Both conditions must have at least one replicate")
+    if len(cond1_cols) == 0:
+        st.error("Condition 1 must have at least one replicate")
+        st.stop()
+    if len(cond2_cols) == 0:
+        st.error("Condition 2 must have at least one replicate")
         st.stop()
     if len(species_col) != 1:
         st.error("Exactly one Species column must be selected")
@@ -259,17 +262,27 @@ with st.container():
         st.error("Exactly one Protein Group column must be selected")
         st.stop()
 
-    # Save everything
+    # Save to session state
     st.session_state.cond1_cols = cond1_cols
     st.session_state.cond2_cols = cond2_cols
     st.session_state.species_col = species_col[0]
     st.session_state.protein_col = protein_col[0]
     st.session_state.df = df
 
-    st.success("All settings applied!")
-    st.info(f"Renamed: {len(rename_map)} columns | "
-            f"Cond 1: {len(cond1_cols)} reps | Cond 2: {len(cond2_cols)} reps | "
-            f"Species: `{species_col[0]}` | Protein: `{protein_col[0]}`")
+    # SUCCESS MESSAGE — NOW SHOWS BOTH CONDITIONS
+    st.success("All assignments applied successfully!")
+    
+    colA, colB = st.columns(2)
+    with colA:
+        st.metric("**Condition 1**", f"{len(cond1_cols)} replicates")
+        st.write("Replicates:")
+        st.write(", ".join(cond1_cols))
+    with colB:
+        st.metric("**Condition 2**", f"{len(cond2_cols)} replicates")
+        st.write("Replicates:")
+        st.write(", ".join(cond2_cols))
+
+    st.info(f"**Species column** → `{species_col[0]}` | **Protein Group** → `{protein_col[0]}`")
 
     st.markdown("</div>", unsafe_allow_html=True)
 # ─────────────────────────────────────────────────────────────
