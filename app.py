@@ -121,7 +121,32 @@ if not uploaded_file:
     </div>
     """, unsafe_allow_html=True)
     st.stop()
+# ─────────────────────────────────────────────────────────────
+# Load & Parse
+# ─────────────────────────────────────────────────────────────
+@st.cache_data
+def load_and_parse(file):
+    content = file.getvalue().decode("utf-8", errors="replace")
+    if content.startswith("\ufeff"): content = content[1:]
+    df = pd.read_csv(io.StringIO(content), sep=None, engine="python", dtype=str)
+    
+    intensity_cols = [c for c in df.columns if c not in ["pg", "name"]]
+    for col in intensity_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
+    if "name" in df.columns:
+        split = df["name"].str.split(",", n=1, expand=True)
+        if split.shape[1] == 2:
+            df.insert(1, "Accession", split[0])
+            df.insert(2, "Species", split[1])
+            df = df.drop(columns=["name"])
+
+    return df
+
+df = load_and_parse(uploaded_file)
+st.session_state.df = df
+st.success(f"Data imported — {len(df):,} proteins")
+st.dataframe(df.head(10), use_container_width=True)
 # ─────────────────────────────────────────────────────────────
 # ONE Unified Preview & Assignment Table (replaces all previous tables)
 # ─────────────────────────────────────────────────────────────
