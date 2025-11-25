@@ -8,21 +8,18 @@ import plotly.graph_objects as go
 
 
 from utils.data_generator import generate_mock_proteins
+# ✅ CORRECT - matching the enhanced utils/stats.py
 from utils.stats import (
-    log2_transform,
-    compute_cv,
-    missing_fraction,
-    quartiles,
-    prepare_dataframe_from_proteins
+    check_normality, 
+    log2_transform, 
+    batch_process_proteins
 )
-from utils import stats as stats_utils
-from components.qc_plots import (
-    replicate_boxplots,
-    cv_histogram,
-    pca_scatter,
-    missing_value_heatmap,
-    rank_plot
-)
+from components.qc_plots import render_qc_dashboard
+from components.plots import create_volcano_plot
+from components.tables import render_data_table
+from components.stats import render_stats_cards
+from services.gemini_service import analyze_proteins, chat_with_data
+
 
 # Simple in-file constants
 REPLICATE_GROUPS: Dict[str, List[str]] = {
