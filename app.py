@@ -211,6 +211,7 @@ with st.container():
     st.info(f"**Species** → `{species_col}` | **Protein Group** → `{protein_col}`")
     st.markdown("</div>", unsafe_allow_html=True)
 
+st.success("Data import complete! Ready for **Module 2: Data Quality**")
 # ─────────────────────────────────────────────────────────────
 # NAVIGATION & RESTART CONTROLS (add this block exactly here)
 # ─────────────────────────────────────────────────────────────
