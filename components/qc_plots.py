@@ -559,9 +559,9 @@ def render_qc_dashboard(data: pd.DataFrame, replicate_cols: List[str],
     render_boxplots(data, replicate_cols, condition_names, log_transformed)
     st.markdown("---")
     
-    # 2. CV Analysis
-    render_cv_analysis(data, condition_names)
+    # CV Violin Plot
     st.markdown("---")
+    render_cv_violin(data, all_replicates, condition_names)
     
     # 3. PCA Plot
     render_pca_plot(data, replicate_cols, condition_names)
