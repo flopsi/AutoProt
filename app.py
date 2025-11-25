@@ -421,12 +421,11 @@ def step3_transform_data():
             else:
                 st.info("ℹ️ Distribution improved but still non-normal. This is common for proteomics data.")
     
-    st.markdown("---")
-    
-    if st.session_state.transformed_data is not None:
-        if st.button("➡️ Proceed to QC Analysis", type="primary", use_container_width=True):
-            st.session_state.step = 4
-            st.rerun()
+            st.markdown("---")
+            
+            if st.button("➡️ Proceed to QC Analysis", type="primary", use_container_width=True):
+                st.session_state.step = 4
+                st.rerun()
 
 
 def step4_qc_analysis():
