@@ -136,15 +136,31 @@ df = load_and_parse(uploaded_file)
 st.session_state.df = df
 st.success(f"Data imported — {len(df):,} proteins")
 st.dataframe(df.head(10), use_container_width=True)
-# REPLACE THE ENTIRE "Metadata Columns" block with this one:
-# ─────────────────────────────────────────────────────────────
-# 5. Metadata Assignment – now with checkboxes in the table
+## ─────────────────────────────────────────────────────────────
+# ONE Unified Preview & Assignment Table (replaces all previous tables)
 # ─────────────────────────────────────────────────────────────
 with st.container():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.subheader("Metadata Column Assignment")
+    st.subheader("Data Preview & Column Assignment")
 
-    # Auto-detect candidates
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+
+    # Auto-detect conditions (Yxx-Exx pattern)
+    import re
+    ratio_groups = {}
+    for col in numeric_cols:
+        m = re.search(r'_Y(\d{2})-E(\d{2})_', col)
+        if m:
+            key = f"Y{m.group(1)}-E{m.group(2)}"
+            ratio_groups.setdefault(key, []).append(col)
+
+    if len(ratio_groups) >= 2:
+        sorted_keys = sorted(ratio_groups.keys(), key=lambda x: int(x.split('-')[0][1:]))
+        default_cond1 = ratio_groups[sorted_keys[0]]
+    else:
+        default_cond1 = numeric_cols[:len(numeric_cols)//2]
+
+    # Auto-detect Species & Protein columns
     species_candidates = []
     for col in df.columns:
         if df[col].astype(str).str.upper().fillna("").str.contains("HUMAN|YEAST|ECOLI").any():
@@ -152,57 +168,80 @@ with st.container():
 
     protein_candidates = [c for c in df.columns if "protein" in c.lower()]
 
-    # Default selections
     default_species = "Species" if "Species" in df.columns else (species_candidates[0] if species_candidates else None)
     default_protein = protein_candidates[0] if protein_candidates else df.columns[0]
 
-    # Build preview table for metadata
-    meta_preview = []
+    # Build unified preview table
+    rows = []
     for col in df.columns:
-        meta_preview.append({
-            "Species Column": col == default_species,
-            "Protein Group Column": col == default_protein,
-            "Column Name": col,
-            "Content Preview": " | ".join(df[col].dropna().astype(str).unique()[:4])
+        is_numeric = col in numeric_cols
+        preview = " | ".join(df[col].dropna().astype(str).unique()[:3]) if not is_numeric else "numeric intensity"
+        rows.append({
+            "Cond 1": col in default_cond1 and is_numeric,
+            "Species": col == default_species,
+            "Protein Group": col == default_protein,
+            "Column": col,
+            "Preview": preview,
+            "Type": "Intensity" if is_numeric else "Metadata"
         })
 
-    meta_df = pd.DataFrame(meta_preview)
+    preview_df = pd.DataFrame(rows)
 
-    edited_meta = st.data_editor(
-        meta_df,
+    edited = st.data_editor(
+        preview_df,
         column_config={
-            "Species Column": st.column_config.CheckboxColumn(
-                "Species Column",
-                help="Check exactly one column that contains species (HUMAN/YEAST/ECOLI)"
+            "Cond 1": st.column_config.CheckboxColumn(
+                "Condition 1",
+                help="Check = assign to Condition 1 (others go to Condition 2)",
+                default=False
             ),
-            "Protein Group Column": st.column_config.CheckboxColumn(
-                "Protein Group Column",
-                help="Check exactly one column that contains protein identifiers"
+            "Species": st.column_config.CheckboxColumn(
+                "Species",
+                help="Exactly one column must contain HUMAN/YEAST/ECOLI",
+                default=False
             ),
-            "Column Name": st.column_config.TextColumn("Column Name", disabled=True),
-            "Content Preview": st.column_config.TextColumn("Preview", disabled=True),
+            "Protein Group": st.column_config.CheckboxColumn(
+                "Protein Group",
+                help="Exactly one column = protein identifiers",
+                default=False
+            ),
+            "Column": st.column_config.TextColumn("Column", disabled=True),
+            "Preview": st.column_config.TextColumn("Preview", disabled=True),
+            "Type": st.column_config.TextColumn("Type", disabled=True),
         },
-        disabled=["Column Name", "Content Preview"],
+        disabled=["Column", "Preview", "Type"],
         hide_index=True,
         use_container_width=True,
-        key="meta_editor"
+        key="unified_assignment"
     )
 
-    # Extract final selections
-    selected_species = edited_meta[edited_meta["Species Column"]]["Column Name"].tolist()
-    selected_protein = edited_meta[edited_meta["Protein Group Column"]]["Column Name"].tolist()
+    # Extract selections
+    cond1_cols = edited[edited["Cond 1"]]["Column"].tolist()
+    cond2_cols = [c for c in numeric_cols if c not in cond1_cols]
+    species_cols = edited[edited["Species"]]["Column"].tolist()
+    protein_cols = edited[edited["Protein Group"]]["Column"].tolist()
 
-    if len(selected_species) != 1:
+    # Validation
+    if len(cond1_cols) == 0 or len(cond2_cols) == 0:
+        st.error("Both conditions must have at least one replicate")
+        st.stop()
+    if len(species_cols) != 1:
         st.error("Exactly one Species column must be selected")
         st.stop()
-    if len(selected_protein) != 1:
+    if len(protein_cols) != 1:
         st.error("Exactly one Protein Group column must be selected")
         st.stop()
 
-    st.session_state.species_col = selected_species[0]
-    st.session_state.protein_col = selected_protein[0]
+    # Save to session
+    st.session_state.cond1_cols = cond1_cols
+    st.session_state.cond2_cols = cond2_cols
+    st.session_state.species_col = species_cols[0]
+    st.session_state.protein_col = protein_cols[0]
 
-    st.success(f"**Species** → `{selected_species[0]}` | **Protein Group** → `{selected_protein[0]}`")
+    st.success("All assignments complete!")
+    st.info(f"**Condition 1**: {len(cond1_cols)} reps | **Condition 2**: {len(cond2_cols)} reps | "
+            f"**Species** → `{species_cols[0]}` | **Protein** → `{protein_cols[0]}`")
+
     st.markdown("</div>", unsafe_allow_html=True)
 # ─────────────────────────────────────────────────────────────
 # Ready for next module
