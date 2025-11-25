@@ -142,155 +142,24 @@ def render_boxplots(data: pd.DataFrame, replicate_cols: List[str],
 
 def render_cv_violin(data: pd.DataFrame, replicate_cols: List[str], 
                      condition_names: Dict[str, List[str]]):
-    """
-    Render violin plot showing CV distribution for each condition
-    CV is ALWAYS calculated on original untransformed data
-    OPTIMIZED for large datasets using vectorized operations
-    """
-    st.markdown("### 🎻 Coefficient of Variation (CV) Analysis")
     
-    st.info(
-        "**CV (Coefficient of Variation)** measures reproducibility **within** each condition.\n"
-        "**Important:** CV is ALWAYS calculated on ORIGINAL (untransformed) intensities.\n"
-        "- CV = (Standard Deviation / Mean) × 100%\n"
-        "- Calculated separately for each condition on raw data\n"
-        "- Lower CV = Better reproducibility\n"
-        "- **Excellent:** CV < 20% | **Good:** 20-30% | **Poor:** > 30%"
-    )
-    
-    # Get the original raw data from session state
+    # Get raw data
     if hasattr(st.session_state, 'raw_data_for_cv'):
         raw_data = st.session_state.raw_data_for_cv
     else:
         raw_data = data
-        st.warning("Using current data for CV. For accurate CV, ensure data is not transformed.")
+        st.warning("Using current data for CV - may be transformed!")
     
-    # Vectorized CV calculation - much faster!
-    cv_records = []
+    # DEBUG: Check if data looks log-transformed
+    first_col = list(condition_names.values())[0][0]
+    sample_values = raw_data[first_col].dropna().head(10)
     
-    with st.spinner("Calculating CVs..."):
-        for condition, cols in condition_names.items():
-            if len(cols) < 2:
-                st.warning(f"Condition '{condition}' has fewer than 2 replicates. CV cannot be calculated.")
-                continue
-            
-            # VECTORIZED: Calculate mean and std for all proteins at once
-            condition_data = raw_data[cols]
-            means = condition_data.mean(axis=1)
-            stds = condition_data.std(axis=1)
-            
-            # Calculate CV for all proteins at once
-            cvs = (stds / means) * 100
-            
-            # Filter: only keep valid CVs (mean > 0, CV in reasonable range)
-            valid_mask = (means > 0) & (cvs >= 0) & (cvs <= 200) & (~cvs.isna())
-            valid_cvs = cvs[valid_mask]
-            
-            # Create records for this condition
-            for protein_id, cv_val in valid_cvs.items():
-                cv_records.append({
-                    'Condition': condition,
-                    'CV': cv_val,
-                    'Protein': protein_id
-                })
+    st.write(f"**DEBUG: Sample values from {first_col}:**")
+    st.write(sample_values.values)
     
-    if len(cv_records) == 0:
-        st.warning("Insufficient data to calculate CV")
-        return
-    
-    cv_df = pd.DataFrame(cv_records)
-    
-    # Create violin plot
-    fig = go.Figure()
-    
-    colors = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12']
-    
-    for idx, condition in enumerate(condition_names.keys()):
-        condition_data = cv_df[cv_df['Condition'] == condition]['CV']
-        
-        if len(condition_data) > 0:
-            fig.add_trace(go.Violin(
-                y=condition_data,
-                name=condition,
-                box_visible=True,
-                meanline_visible=True,
-                fillcolor=colors[idx % len(colors)],
-                opacity=0.6,
-                x0=condition
-            ))
-    
-    fig.add_hline(y=20, line_dash="dash", line_color="green", 
-                  annotation_text="Excellent (<20%)", 
-                  annotation_position="right")
-    fig.add_hline(y=30, line_dash="dash", line_color="orange", 
-                  annotation_text="Good (<30%)", 
-                  annotation_position="right")
-    
-    fig.update_layout(
-        title="CV Distribution Per Condition (Raw Intensities)",
-        yaxis_title="Coefficient of Variation (%)",
-        xaxis_title="Condition",
-        showlegend=True,
-        height=500,
-        yaxis=dict(range=[0, min(100, cv_df['CV'].max() * 1.1)])
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Summary statistics PER CONDITION
-    st.markdown("### 📊 CV Summary (Per Condition, Raw Data)")
-    
-    summary_data = []
-    for condition, cols in condition_names.items():
-        condition_cvs = cv_df[cv_df['Condition'] == condition]['CV']
-        
-        if len(condition_cvs) > 0:
-            excellent = (condition_cvs < 20).sum()
-            good = ((condition_cvs >= 20) & (condition_cvs < 30)).sum()
-            poor = (condition_cvs >= 30).sum()
-            
-            summary_data.append({
-                'Condition': condition,
-                'Replicates': len(cols),
-                'Proteins': len(condition_cvs),
-                'Median CV (%)': f"{condition_cvs.median():.1f}",
-                'Mean CV (%)': f"{condition_cvs.mean():.1f}",
-                'Excellent (<20%)': f"{excellent} ({excellent/len(condition_cvs)*100:.1f}%)",
-                'Good (20-30%)': f"{good} ({good/len(condition_cvs)*100:.1f}%)",
-                'Poor (>30%)': f"{poor} ({poor/len(condition_cvs)*100:.1f}%)"
-            })
-    
-    summary_df = pd.DataFrame(summary_data)
-    st.dataframe(summary_df, use_container_width=True, hide_index=True)
-    
-    # Compare conditions
-    st.markdown("### 🔍 Condition Comparison")
-    
-    if len(summary_data) > 1:
-        col1, col2 = st.columns(2)
-        
-        condition_medians = {}
-        for condition in condition_names.keys():
-            condition_cvs = cv_df[cv_df['Condition'] == condition]['CV']
-            if len(condition_cvs) > 0:
-                condition_medians[condition] = condition_cvs.median()
-        
-        if condition_medians:
-            with col1:
-                st.markdown("**Best Reproducibility:**")
-                best_condition = min(condition_medians, key=condition_medians.get)
-                best_cv = condition_medians[best_condition]
-                st.success(f"{best_condition} (Median CV: {best_cv:.1f}%)")
-            
-            with col2:
-                st.markdown("**Needs Improvement:**")
-                worst_condition = max(condition_medians, key=condition_medians.get)
-                worst_cv = condition_medians[worst_condition]
-                
-                if worst_cv > 30:
-                    st.warning(f"{worst_condition} (Median CV: {worst_cv:.1f}%)")
-                else:
-                    st.info(f"{worst_condition} (Median CV: {worst_cv:.1f}%)")
+    if sample_values.max() < 100:
+        st.error("⚠️ WARNING: Data appears to be log-transformed! CV will be incorrect.")
+        st.write("Raw data should have large values (1000s-millions), not small values (1-20).")
 
 
 
