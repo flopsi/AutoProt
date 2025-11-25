@@ -202,15 +202,18 @@ with st.container():
             ),
             "Cond 1": st.column_config.CheckboxColumn(
                 label="Condition 1",
-                help="Check = assign to Condition 1"
+                help="Check = assign to Condition 1",
+                default=True   # ← THIS WAS THE FIX! Must be True
             ),
             "Species": st.column_config.CheckboxColumn(
                 label="Species",
-                help="Exactly one column"
+                help="Exactly one column",
+                default=True
             ),
             "Protein Group": st.column_config.CheckboxColumn(
                 label="Protein Group",
-                help="Exactly one column"
+                help="Exactly one column",
+                default=True
             ),
             "Original Name": st.column_config.TextColumn(
                 label="Original Name",
@@ -230,7 +233,6 @@ with st.container():
         use_container_width=True,
         key="unified_table_final"
     )
-
     # Apply renaming
     rename_map = {}
     for _, row in edited.iterrows():
