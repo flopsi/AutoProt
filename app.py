@@ -124,18 +124,41 @@ if not uploaded_file:
 # ─────────────────────────────────────────────────────────────
 # Load & Parse
 # ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# FIXED: Proper numeric conversion — intensity columns become REAL floats
+# ─────────────────────────────────────────────────────────────
 @st.cache_data
 def load_and_parse(file):
     content = file.getvalue().decode("utf-8", errors="replace")
-    if content.startswith("\ufeff"): content = content[1:]
-    df = pd.read_csv(io.StringIO(content), sep=None, engine="python", dtype=str)
-    
-    return df
+    if content.startswith("\ufeff"):
+        content = content[1:]
 
-df = load_and_parse(uploaded_file)
-st.session_state.df = df
-st.success(f"Data imported — {len(df):,} proteins")
-st.dataframe(df.head(10), use_container_width=True)
+    # Read ONLY header first to detect intensity columns
+    header_df = pd.read_csv(io.StringIO(content), sep=None, engine="python", nrows=0)
+    intensity_cols = [c for c in header_df.columns if c not in ["pg", "name"]]
+
+    # Now read full file, forcing intensity columns to float
+    df = pd.read_csv(
+        io.StringIO(content),
+        sep=None,
+        engine="python",
+        dtype={col: str for col in header_df.columns},  # start safe
+        low_memory=False
+    )
+
+    # FORCE intensity columns to numeric
+    for col in intensity_cols:
+        df[col] = pd.to_numeric(df[col].str.replace(",", ""), errors="coerce")
+
+    # Extract species from 'name' column
+    if "name" in df.columns:
+        split = df["name"].str.split(",", n=1, expand=True)
+        if split.shape[1] == 2:
+            df.insert(1, "Accession", split[0])
+            df.insert(2, "Species", split[1])
+            df = df.drop(columns=["name"])
+
+    return df
 # ─────────────────────────────────────────────────────────────
 # SINGLE UNIFIED TABLE — FULLY WORKING (Streamlit 1.38+)
 # ─────────────────────────────────────────────────────────────
