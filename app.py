@@ -1,8 +1,9 @@
-# app.py — LFQbench Data Import Module (Thermo Fisher Corporate Design)
+# app.py — LFQbench Data Import (Thermo Fisher Corporate Design) — FULLY WORKING
 import streamlit as st
 import pandas as pd
 import numpy as np
 import io
+import re
 
 # ─────────────────────────────────────────────────────────────
 # Page Config
@@ -15,13 +16,13 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────────────────────
-# Full Thermo Fisher CSS (pixel-perfect match to your mockup)
+# Thermo Fisher CSS
 # ─────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
     :root {
         --primary-red: #E71316; --dark-red: #A6192E; --gray: #54585A;
-        --light-gray: #E2E3E4; --navy: #262262; --green: #B5BD00;
+        --light-gray: #E2E3E4;
     }
     html, body, [class*="css"] {font-family: Arial, sans-serif !important;}
     .header {
@@ -67,7 +68,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
-# Header + Navigation
+# Header + Nav
 # ─────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="header">
@@ -82,21 +83,18 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────────────────────
-# Module Header
-# ─────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="module-header">
     <div class="module-icon">Upload</div>
     <div>
         <h2>Module 1: Data Import & Validation</h2>
-        <p>Upload and validate your LFQ intensity matrix</p>
+        <p>Upload your MaxQuant or FragPipe LFQ intensity matrix</p>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
-# 1. File Upload
+# Upload
 # ─────────────────────────────────────────────────────────────
 with st.container():
     st.markdown("""
@@ -125,22 +123,18 @@ if not uploaded_file:
     st.stop()
 
 # ─────────────────────────────────────────────────────────────
-# 2. Load & Parse — Fixed low_memory + species extraction
+# Load & Parse
 # ─────────────────────────────────────────────────────────────
 @st.cache_data
 def load_and_parse(file):
     content = file.getvalue().decode("utf-8", errors="replace")
-    if content.startswith("\ufeff"):
-        content = content[1:]
-    # Fixed: Use dtype=str to avoid low_memory warnings
+    if content.startswith("\ufeff"): content = content[1:]
     df = pd.read_csv(io.StringIO(content), sep=None, engine="python", dtype=str)
     
-    # Convert intensity columns to numeric
     intensity_cols = [c for c in df.columns if c not in ["pg", "name"]]
     for col in intensity_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Extract species from 'name' column
     if "name" in df.columns:
         split = df["name"].str.split(",", n=1, expand=True)
         if split.shape[1] == 2:
@@ -152,194 +146,123 @@ def load_and_parse(file):
 
 df = load_and_parse(uploaded_file)
 st.session_state.df = df
-
-st.success(f"Data imported successfully — {len(df):,} proteins, {len(df.columns)} columns")
+st.success(f"Data imported — {len(df):,} proteins")
 st.dataframe(df.head(10), use_container_width=True)
 
 # ─────────────────────────────────────────────────────────────
-# 3. Column Renaming (optional)
+# Column Renaming (optional)
 # ─────────────────────────────────────────────────────────────
 with st.container():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("Column Renaming (optional)")
-
     rename_dict = {}
     cols = df.columns.tolist()
-    col1, col2 = st.columns(2)
+    c1, c2 = st.columns(2)
     for i, col in enumerate(cols):
-        with (col1 if i % 2 == 0 else col2):
-            new_name = st.text_input(f"`{col}` →", value=col, key=f"rename_{col}")
-            if new_name != col and new_name.strip():
-                rename_dict[col] = new_name.strip()
+        with (c1 if i % 2 == 0 else c2):
+            new = st.text_input(f"`{col}` →", value=col, key=f"r_{col}")
+            if new != col and new.strip():
+                rename_dict[col] = new.strip()
 
     if st.button("Apply Renaming"):
         if rename_dict:
             df = df.rename(columns=rename_dict)
             st.session_state.df = df
-            st.success("Columns renamed successfully")
+            st.success("Renamed")
             st.rerun()
-        else:
-            st.info("No changes made")
-
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
-# 4. SMART Condition Assignment + Replica Preview Table (with checkboxes)
+# Condition Assignment with Working Checkbox Table
 # ─────────────────────────────────────────────────────────────
 with st.container():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("Condition Assignment")
 
-    # All numeric (intensity) columns
     numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
 
-    # ── Auto-detect ratio groups from filename pattern Yxx-Exx ──
-    import re
+    # Auto-detect Yxx-Exx pattern
     ratio_groups = {}
     for col in numeric_cols:
-        match = re.search(r'_Y(\d{2})-E(\d{2})_', col)
-        if match:
-            y = int(match.group(1))
-            e = int(match.group(2))
-            key = f"Y{y:02d}-E{e:02d}"
+        m = re.search(r'_Y(\d{2})-E(\d{2})_', col)
+        if m:
+            key = f"Y{m.group(1)}-E{m.group(2)}"
             ratio_groups.setdefault(key, []).append(col)
 
-    # ── Auto-split into two conditions (lowest yeast % → Cond1, highest → Cond2)
     if len(ratio_groups) >= 2:
         sorted_keys = sorted(ratio_groups.keys(), key=lambda x: int(x.split('-')[0][1:]))
-        cond1_key = sorted_keys[0]
-        cond2_key = sorted_keys[-1]
-        default_cond1 = ratio_groups[cond1_key]
-        default_cond2 = ratio_groups[cond2_key]
+        default_cond1 = ratio_groups[sorted_keys[0]]
     else:
-        # Fallback: even split
-        half = len(numeric_cols) // 2
-        default_cond1 = numeric_cols[:half]
-        default_cond2 = numeric_cols[half:]
+        default_cond1 = numeric_cols[:len(numeric_cols)//2]
 
-    # ── Preview table with pre-selected checkboxes ──
-    st.write("**Select replicates for Condition 1** (all others will automatically go to Condition 2)")
-
+    # Preview table
     preview_data = []
     for col in numeric_cols:
         preview_data.append({
-            "Include in Cond 1": col in default_cond1,
+            "Cond 1": col in default_cond1,
             "Column": col,
-            "Suggested Condition": "Condition 1" if col in default_cond1 else "Condition 2"
+            "Suggested": "Condition 1" if col in default_cond1 else "Condition 2"
         })
 
     preview_df = pd.DataFrame(preview_data)
 
-    # Editable checkbox table
-    edited_df = st.data_editor(
+    edited = st.data_editor(
         preview_df,
         column_config={
-            "Include in Cond 1": st.column_config.CheckboxColumn(
-                "Include in Cond 1",
-                help="Check = assign to Condition 1",
-                default=False
-            ),
-            "Column": st.column_config.TextColumn(
-                "Column",
-                disabled=True
-            ),
-            "Suggested Condition": st.column_config.TextColumn(
-                "Suggested Condition",
-                disabled=True
-            ),
+            "Cond 1": st.column_config.CheckboxColumn("Cond 1", default=False),
+            "Column": st.column_config.TextColumn("Column", disabled=True),
+            "Suggested": st.column_config.TextColumn("Suggested", disabled=True),
         },
-        disabled=["Column", "Suggested Condition"],
+        disabled=["Column", "Suggested"],
         hide_index=True,
         use_container_width=True,
-        num_rows="fixed",
-        key="condition_assignment_table"
+        key="cond_editor"
     )
 
-    # Extract final selection
-    final_cond1 = edited_df[edited_df["Include in Cond 1"]]["Column"].tolist()
-    final_cond2 = [c for c in numeric_cols if c not in final_cond1]
+    cond1_cols = edited[edited["Cond 1"]]["Column"].tolist()
+    cond2_cols = [c for c in numeric_cols if c not in cond1_cols]
 
-    if len(final_cond1) == 0 or len(final_cond2) == 0:
-        st.error("At least one replicate must be assigned to each condition.")
+    if len(cond1_cols) == 0 or len(cond2_cols) == 0:
+        st.error("Both conditions must have at least one replicate")
         st.stop()
 
-    st.session_state.cond1_cols = final_cond1
-    st.session_state.cond2_cols = final_cond2
-
-    st.success(f"Condition 1: {len(final_cond1)} replicates | Condition 2: {len(final_cond2)} replicates")
-
+    st.session_state.cond1_cols = cond1_cols
+    st.session_state.cond2_cols = cond2_cols
+    st.success(f"Condition 1: {len(cond1_cols)} | Condition 2: {len(cond2_cols)}")
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
-# 5. Auto-detect Species and Protein Group columns
+# Species & Protein Column (fixed)
 # ─────────────────────────────────────────────────────────────
 with st.container():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.subheader("Metadata Columns")
+    st.subheader("Metadata")
 
-    # Species column
-    species_candidates = [c for c in df.columns if "HUMAN" in df[c].astype(str).str.upper().any()]
-    if "Species" in df.columns:
-        species_col = "Species"
-    elif species_candidates:
-        species_col = species_candidates[0]
-    else:
-        species_col = st.selectbox("Select Species column (contains HUMAN/YEAST/ECOLI)", df.columns)
+    # Safe species detection
+    species_col = "Species" if "Species" in df.columns else None
+    if not species_col:
+        for col in df.columns:
+            if df[col].astype(str).str.upper().fillna("").str.contains("HUMAN").any():
+                species_col = col
+                break
+    if not species_col:
+        species_col = st.selectbox("Species column", df.columns)
 
-    # Protein Group / Accession column
-    protein_candidates = [c for c in df.columns if "protein" in c.lower()]
-    if protein_candidates:
-        protein_col = protein_candidates[0]
-    else:
-        protein_col = df.columns[0]  # fallback
+    # Protein column
+    protein_col = next((c for c in df.columns if "protein" in c.lower()), df.columns[0])
 
-    st.info(f"**Protein IDs** → `{protein_col}`  |  **Species** → `{species_col}`")
-
+    st.info(f"**Protein IDs** → `{protein_col}` | **Species** → `{species_col}`")
     st.session_state.species_col = species_col
     st.session_state.protein_col = protein_col
-
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
-# 6. Clean Replica Names (auto-trimmed)
+# Ready for next module
 # ─────────────────────────────────────────────────────────────
-with st.container():
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.subheader("Clean Replica Names")
-
-    numeric_cols = st.session_state.cond1_cols + st.session_state.cond2_cols
-
-    clean_names = {}
-    for col in numeric_cols:
-        # Remove .raw and trim to last part
-        clean = col.replace(".raw", "").split("_")[-1]
-        clean_names[col] = f"Rep {clean}"
-
-    st.info("Auto-cleaned names for plots/tables (e.g., '20240419_..._01.raw' → 'Rep 01')")
-
-    if st.checkbox("Use clean names", value=True):
-        st.session_state.clean_names = clean_names
-    else:
-        st.session_state.clean_names = {col: col for col in numeric_cols}
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# ─────────────────────────────────────────────────────────────
-# 7. Ready for Data Quality Module
-# ─────────────────────────────────────────────────────────────
-st.markdown("<div class='card'>", unsafe_allow_html=True)
-st.subheader("Ready for Data Quality Assessment")
-st.info("Data is loaded, validated, and conditions assigned. Next: **Module 2 – Data Quality** (intensity distribution, missing values, CVs, PCA, etc.)")
-st.markdown("**We will design this page together before coding.**")
-st.markdown("</div>", unsafe_allow_html=True)
-
-# ─────────────────────────────────────────────────────────────
-# Footer
-# ─────────────────────────────────────────────────────────────
+st.success("Data import complete! Ready for **Module 2: Data Quality**")
 st.markdown("""
 <div class="footer">
     <strong>Proprietary & Confidential | For Internal Use Only</strong><br>
-    © 2024 Thermo Fisher Scientific Inc. All rights reserved.<br>
-    Contact: proteomics.bioinformatics@thermofisher.com | Version 1.0
+    © 2024 Thermo Fisher Scientific Inc. All rights reserved.
 </div>
 """, unsafe_allow_html=True)
