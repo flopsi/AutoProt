@@ -6,8 +6,7 @@ from typing import List, Dict, Any
 import plotly.express as px
 import plotly.graph_objects as go
 
-# Local imports
-from types import ProteinRaw, ProteinQCProcessed  # Not strictly needed; using dicts/DataFrames is fine
+
 from utils.data_generator import generate_mock_proteins
 from utils.stats import (
     log2_transform,
