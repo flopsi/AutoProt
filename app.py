@@ -210,11 +210,6 @@ with st.container():
 
     st.info(f"**Species** → `{species_col}` | **Protein Group** → `{protein_col}`")
     st.markdown("</div>", unsafe_allow_html=True)
-# ─────────────────────────────────────────────────────────────
-# Ready
-# ─────────────────────────────────────────────────────────────
-st.success("Data import complete! Ready for **Module 2: Data Quality**")
-st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
 # NAVIGATION & RESTART CONTROLS (add this block exactly here)
@@ -236,4 +231,11 @@ with col_restart:
     if st.button("Restart Entire Analysis", type="secondary", help="Clear all data and start over"):
         st.session_state.clear()
         st.rerun()
+
+# ─────────────────────────────────────────────────────────────
+# Ready
+# ─────────────────────────────────────────────────────────────
+st.success("Data import complete! Ready for **Module 2: Data Quality**")
+st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
+
 
