@@ -241,33 +241,7 @@ with col4:
         st.session_state.clear()
         st.rerun()
 
-# FIXED: Truly invisible restart button (only the red bar is visible)
-st.markdown("""
-<div style="position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 9999; cursor: pointer;">
-    <div style="
-        background: #E71316; 
-        color: white; 
-        padding: 14px 36px; 
-        border-radius: 10px; 
-        font-weight: 600; 
-        font-size: 16px;
-        box-shadow: 0 6px 20px rgba(0,0,0,0.3);
-        user-select: none;
-        transition: all 0.2s;
-    " onclick="document.getElementById('invisible_restart').click()">
-        Restart Analysis — Clear All Data
-    </div>
-</div>
 
-<!-- This is the REAL hidden button — completely invisible -->
-<button id="invisible_restart" style="position:fixed; bottom:0; left:0; width:0; height:0; opacity:0; pointer-events:none;" 
-        onclick="this.closest('form').submit()"></button>
-""", unsafe_allow_html=True)
-
-# The actual hidden restart trigger
-if st.button("real_hidden_restart", key="real_hidden_restart"):
-    st.session_state.clear()
-    st.rerun()
 # ─────────────────────────────────────────────────────────────
 # Ready
 # ─────────────────────────────────────────────────────────────
