@@ -1,3 +1,20 @@
+
+"""
+QC Visualization Components for Proteomics Data
+Includes Boxplots, CV Analysis, PCA, Heatmaps, and Rank Plots
+"""
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+from typing import List, Dict  # ← ADD THIS LINE
+from utils.stats import (
+    calculate_cv, calculate_quartiles, perform_pca, 
+    calculate_missing_values, calculate_dynamic_range
+)
 # components/qc_plots.py
 import plotly.express as px
 import plotly.graph_objects as go
