@@ -186,16 +186,16 @@ col1, col2, col3, col4 = st.columns([1.2, 1.2, 1.2, 1.8])
 
 with col1:
     if st.button("Protein Upload", use_container_width=True):
-        st.switch_page("app.py")
+        st.Page("app.py")
 
 with col2:
     if st.button("Peptide Upload", use_container_width=True):
-        st.switch_page("pages/1_Peptide_Data_Import.py")
+        st.Page("pages/1_Peptide_Data_Import.py")
 
 with col3:
     if st.button("Data Quality", type="primary", use_container_width=True):
         if "df" in st.session_state or "df_peptide" in st.session_state:
-            st.switch_page("pages/2_Data_Quality.py")
+            st.Page("pages/2_Data_Quality.py")
         else:
             st.error("Please upload data first")
             st.stop()
