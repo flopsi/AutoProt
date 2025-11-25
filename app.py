@@ -213,58 +213,58 @@ df_edit = pd.DataFrame(rows)
         key="unified_table_fixed"
     )
 
-    # CORRECT column_config syntax for Streamlit 1.38+
-    edited = st.data_editor(
-        df_edit,
-        column_config={
-            "Rename": st.column_config.TextColumn(
-                label="Rename (optional)",
-                help="Leave blank or type new name",
-                required=False
-            ),
-            "Cond 1": st.column_config.CheckboxColumn(
-                label="Condition 1",
-                help="Check = assign to Condition 1",
-                default=True   # ← THIS WAS THE FIX! Must be True
-            ),
-            "Species": st.column_config.CheckboxColumn(
-                label="Species",
-                help="Exactly one column",
-                default=True
-            ),
-            "Protein Group": st.column_config.CheckboxColumn(
-                label="Protein Group",
-                help="Exactly one column",
-                default=True
-            ),
-            "Original Name": st.column_config.TextColumn(
-                label="Original Name",
-                disabled=True
-            ),
-            "Preview": st.column_config.TextColumn(
-                label="Preview",
-                disabled=True
-            ),
-            "Type": st.column_config.TextColumn(
-                label="Type",
-                disabled=True
-            ),
-        },
-        disabled=["Original Name", "Preview", "Type"],
-        hide_index=True,
-        use_container_width=True,
-        key="unified_table_final"
-    )
-    # Apply renaming
-    rename_map = {}
-    for _, row in edited.iterrows():
-        new_name = row["Rename"].strip()
-        if new_name and new_name != row["Original Name"]:
-            rename_map[row["Original Name"]] = new_name
+# CORRECT column_config syntax for Streamlit 1.38+
+edited = st.data_editor(
+    df_edit,
+    column_config={
+        "Rename": st.column_config.TextColumn(
+            label="Rename (optional)",
+            help="Leave blank or type new name",
+            required=False
+        ),
+        "Cond 1": st.column_config.CheckboxColumn(
+            label="Condition 1",
+            help="Check = assign to Condition 1",
+            default=True   # ← THIS WAS THE FIX! Must be True
+        ),
+        "Species": st.column_config.CheckboxColumn(
+            label="Species",
+            help="Exactly one column",
+            default=True
+        ),
+        "Protein Group": st.column_config.CheckboxColumn(
+            label="Protein Group",
+            help="Exactly one column",
+            default=True
+        ),
+        "Original Name": st.column_config.TextColumn(
+            label="Original Name",
+            disabled=True
+        ),
+        "Preview": st.column_config.TextColumn(
+            label="Preview",
+            disabled=True
+        ),
+        "Type": st.column_config.TextColumn(
+            label="Type",
+            disabled=True
+        ),
+    },
+    disabled=["Original Name", "Preview", "Type"],
+    hide_index=True,
+    use_container_width=True,
+    key="unified_table_final"
+)
+# Apply renaming
+rename_map = {}
+for _, row in edited.iterrows():
+    new_name = row["Rename"].strip()
+    if new_name and new_name != row["Original Name"]:
+        rename_map[row["Original Name"]] = new_name
 
-    if rename_map:
-        df = df.rename(columns=rename_map)
-        st.session_state.df = df
+if rename_map:
+    df = df.rename(columns=rename_map)
+    st.session_state.df = df
 
     # Extract assignments — FIXED: now correctly identifies Cond 2
     cond1_cols = edited[edited["Cond 1"]]["Original Name"].tolist()
