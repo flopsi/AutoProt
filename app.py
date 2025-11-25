@@ -175,7 +175,7 @@ with st.container():
     protein_col_default = next((c for c in df.columns if "protein" in c.lower()), df.columns[0])
 
     # Build data
-    # Build data — CORRECT intensity detection
+      # Build data — CORRECT intensity detection
     rows = []
     for col in df.columns:
         is_intensity = pd.api.types.is_numeric_dtype(df[col])
