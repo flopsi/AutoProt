@@ -1,3 +1,39 @@
+def shorten_sample_name(name: str, max_length: int = 25) -> str:
+    """
+    Shorten long sample names intelligently
+    
+    Args:
+        name: Original sample name
+        max_length: Maximum length for display
+        
+    Returns:
+        Shortened name
+    """
+    if len(name) <= max_length:
+        return name
+    
+    # Try to extract meaningful parts from proteomics file names
+    # Pattern: date_instrument_method_sample_replicate.extension
+    
+    # Remove file extension
+    name_no_ext = name.rsplit('.', 1)[0] if '.' in name else name
+    
+    # Split by underscore
+    parts = name_no_ext.split('_')
+    
+    if len(parts) >= 3:
+        # Keep last 2-3 meaningful parts (usually sample + replicate)
+        # Example: "Y05-E45_01" from "20240419_MP1_50SPD_IO25_LFQ_250pg_Y05-E45_01"
+        short_parts = parts[-2:]
+        short_name = '_'.join(short_parts)
+        
+        # If still too long, just truncate
+        if len(short_name) > max_length:
+            return name[:max_length-3] + '...'
+        return short_name
+    else:
+        # Just truncate with ellipsis
+        return name[:max_length-3] + '...'
 """
 QC Visualization Components for Proteomics Data
 Includes Boxplots, CV Analysis, PCA, Heatmaps, and Rank Plots
