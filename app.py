@@ -25,6 +25,36 @@ from components.stats import render_stats_cards
 from services.gemini_service import analyze_proteins, chat_with_data
 
 
+def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Clean DataFrame: strip whitespace from column names and index
+    Convert all numeric columns to float
+    
+    Args:
+        df: Input DataFrame
+        
+    Returns:
+        Cleaned DataFrame
+    """
+    # Strip whitespace from column names
+    df.columns = df.columns.str.strip()
+    
+    # Strip whitespace from index if it's string type
+    if df.index.dtype == 'object':
+        df.index = df.index.str.strip()
+    
+    # Convert all numeric-like columns to float
+    for col in df.columns:
+        # Try to convert to numeric, coerce errors to NaN
+        if df[col].dtype == 'object':
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        # Ensure it's float
+        if pd.api.types.is_numeric_dtype(df[col]):
+            df[col] = df[col].astype(float)
+    
+    return df
+
+
 # Page configuration
 st.set_page_config(
     page_title="ProteoFlow - QC & Analysis",
@@ -213,14 +243,8 @@ def step1_load_and_map():
                 else:
                     df = pd.read_csv(uploaded_file, sep='\t', index_col=0)
                 
-                # ⭐ FORCE CONVERT ALL NUMERIC COLUMNS TO FLOAT
-                for col in df.columns:
-                    # Try to convert to numeric, coerce errors to NaN
-                    if df[col].dtype == 'object':
-                        df[col] = pd.to_numeric(df[col], errors='coerce')
-                    # Ensure it's float
-                    if pd.api.types.is_numeric_dtype(df[col]):
-                        df[col] = df[col].astype(float)
+                # ⭐ CLEAN THE DATAFRAME
+                df = clean_dataframe(df)
                 
                 st.session_state.raw_data = df
                 st.success(f"✅ Loaded {len(df)} proteins with {len(df.columns)} columns")
@@ -243,10 +267,8 @@ def step1_load_and_map():
         if st.button("Load Demo Dataset", use_container_width=True):
             df = generate_mock_proteins(n_proteins=500)
             
-            # ⭐ ENSURE DEMO DATA IS ALSO FLOAT
-            for col in df.columns:
-                if pd.api.types.is_numeric_dtype(df[col]):
-                    df[col] = df[col].astype(float)
+            # ⭐ CLEAN DEMO DATA TOO
+            df = clean_dataframe(df)
             
             st.session_state.raw_data = df
             st.success("✅ Demo dataset loaded!")
@@ -259,7 +281,7 @@ def step1_load_and_map():
         
         df = st.session_state.raw_data
         
-        # ⭐ ONLY SHOW FLOAT/NUMERIC COLUMNS
+        # Only show numeric columns
         available_cols = [col for col in df.columns if pd.api.types.is_numeric_dtype(df[col])]
         
         if len(available_cols) == 0:
