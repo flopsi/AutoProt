@@ -69,7 +69,7 @@ def render_boxplots(data: pd.DataFrame, replicate_cols: List[str],
     short_names = {col: shorten_sample_name(col) for col in replicate_cols}
     
     # Prepare data for plotting
-    plot_data = []
+    plot_data = st.session_state.transformed_data
     for condition, cols in condition_names.items():
         for col in cols:
             values = data[col].dropna()
