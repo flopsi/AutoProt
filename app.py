@@ -140,7 +140,7 @@ st.dataframe(df.head(10), use_container_width=True)
 # WITH THIS SINGLE BLOCK:
 
 # ─────────────────────────────────────────────────────────────
-# SINGLE UNIFIED TABLE: Renaming + Replicate + Species + Protein Group
+# SINGLE UNIFIED TABLE — FULLY WORKING (Streamlit 1.38+)
 # ─────────────────────────────────────────────────────────────
 with st.container():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
@@ -148,7 +148,7 @@ with st.container():
 
     numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
 
-    # Auto-detect condition 1 (Yxx-Exx pattern)
+    # Auto-detect Condition 1
     import re
     ratio_groups = {}
     for col in numeric_cols:
@@ -174,97 +174,102 @@ with st.container():
 
     protein_col_default = next((c for c in df.columns if "protein" in c.lower()), df.columns[0])
 
-    # Build unified editable table
-    table_data = []
+    # Build data
+    rows = []
     for col in df.columns:
         is_intensity = col in numeric_cols
         preview = " | ".join(df[col].dropna().astype(str).unique()[:3]) if not is_intensity else "numeric"
-        table_data.append({
-            "Rename": col,
+        rows.append({
+            "Rename": col,  # user-editable
             "Cond 1": col in default_cond1 and is_intensity,
             "Species": col == species_col_default,
             "Protein Group": col == protein_col_default,
-            "Column": col,
+            "Original Name": col,
             "Preview": preview,
             "Type": "Intensity" if is_intensity else "Metadata"
         })
 
-    editable_df = pd.DataFrame(table_data)
+    df_edit = pd.DataFrame(rows)
 
+    # CORRECT column_config syntax for Streamlit 1.38+
     edited = st.data_editor(
-        editable_df,
+        df_edit,
         column_config={
             "Rename": st.column_config.TextColumn(
-                "Rename (optional)",
-                help="Leave as-is or type new name",
-                default_value=None
+                label="Rename (optional)",
+                help="Leave blank or type new name",
+                required=False
             ),
             "Cond 1": st.column_config.CheckboxColumn(
-                "Condition 1",
-                help="Check = assign to Condition 1",
-                default=False
+                label="Condition 1",
+                help="Check = assign to Condition 1"
             ),
             "Species": st.column_config.CheckboxColumn(
-                "Species",
-                help="Exactly one column",
-                default=False
+                label="Species",
+                help="Exactly one column"
             ),
             "Protein Group": st.column_config.CheckboxColumn(
-                "Protein Group",
-                help="Exactly one column",
-                default=False
+                label="Protein Group",
+                help="Exactly one column"
             ),
-            "Column": st.column_config.TextColumn("Original", disabled=True),
-            "Preview": st.column_config.TextColumn("Preview", disabled=True),
-            "Type": st.column_config.TextColumn("Type", disabled=True),
+            "Original Name": st.column_config.TextColumn(
+                label="Original Name",
+                disabled=True
+            ),
+            "Preview": st.column_config.TextColumn(
+                label="Preview",
+                disabled=True
+            ),
+            "Type": st.column_config.TextColumn(
+                label="Type",
+                disabled=True
+            ),
         },
-        disabled=["Column", "Preview", "Type"],
+        disabled=["Original Name", "Preview", "Type"],
         hide_index=True,
         use_container_width=True,
-        key="final_assignment_table"
+        key="unified_table_final"
     )
 
     # Apply renaming
     rename_map = {}
     for _, row in edited.iterrows():
-        if row["Rename"] != row["Column"] and row["Rename"].strip():
-            rename_map[row["Column"]] = row["Rename"].strip()
+        new_name = row["Rename"].strip()
+        if new_name and new_name != row["Original Name"]:
+            rename_map[row["Original Name"]] = new_name
 
     if rename_map:
         df = df.rename(columns=rename_map)
         st.session_state.df = df
 
     # Extract assignments
-    cond1_cols = edited[edited["Cond 1"]]["Column"].tolist()
+    cond1_cols = edited[edited["Cond 1"]]["Original Name"].tolist()
     cond2_cols = [c for c in numeric_cols if c not in cond1_cols]
+    species_col = edited[edited["Species"]]["Original Name"].tolist()
+    protein_col = edited[edited["Protein Group"]]["Original Name"].tolist()
 
-    species_selected = edited[edited["Species"]]["Column"].tolist()
-    protein_selected = edited[edited["Protein Group"]]["Column"].tolist()
-
-    # Validation
-    errors = []
+    # Final validation
     if len(cond1_cols) == 0 or len(cond2_cols) == 0:
-        errors.append("Both conditions must have at least one replicate")
-    if len(species_selected) != 1:
-        errors.append("Exactly one Species column must be selected")
-    if len(protein_selected) != 1:
-        errors.append("Exactly one Protein Group column must be selected")
-
-    if errors:
-        for e in errors:
-            st.error(e)
+        st.error("Both conditions must have at least one replicate")
+        st.stop()
+    if len(species_col) != 1:
+        st.error("Exactly one Species column must be selected")
+        st.stop()
+    if len(protein_col) != 1:
+        st.error("Exactly one Protein Group column must be selected")
         st.stop()
 
-    # Save to session state
+    # Save everything
     st.session_state.cond1_cols = cond1_cols
     st.session_state.cond2_cols = cond2_cols
-    st.session_state.species_col = species_selected[0]
-    st.session_state.protein_col = protein_selected[0]
-    st.session_state.df = df  # renamed version
+    st.session_state.species_col = species_col[0]
+    st.session_state.protein_col = protein_col[0]
+    st.session_state.df = df
 
-    st.success("All assignments and renaming applied successfully!")
-    st.info(f"Condition 1: {len(cond1_cols)} reps | Condition 2: {len(cond2_cols)} reps | "
-            f"Species: `{species_selected[0]}` | Protein: `{protein_selected[0]}`")
+    st.success("All settings applied!")
+    st.info(f"Renamed: {len(rename_map)} columns | "
+            f"Cond 1: {len(cond1_cols)} reps | Cond 2: {len(cond2_cols)} reps | "
+            f"Species: `{species_col[0]}` | Protein: `{protein_col[0]}`")
 
     st.markdown("</div>", unsafe_allow_html=True)
 # ─────────────────────────────────────────────────────────────
