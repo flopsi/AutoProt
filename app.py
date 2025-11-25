@@ -53,7 +53,10 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = df[col].astype(float)
     
     return df
-
+# After creating clean_df
+st.session_state.raw_data = clean_df.copy()  # Working data (can be transformed)
+st.session_state.raw_data_original = clean_df.copy()  # NEVER MODIFIED - for CV only
+st.session_state.replicate_mapping = condition_mapping
 
 # Page configuration
 st.set_page_config(
