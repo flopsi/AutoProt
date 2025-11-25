@@ -423,9 +423,9 @@ def step3_transform_data():
     
             st.markdown("---")
             
-            if st.button("➡️ Proceed to QC Analysis", type="primary", use_container_width=True):
-                st.session_state.step = 4
-                st.rerun()
+        if st.button("➡️ Proceed to QC Analysis", type="primary", use_container_width=True):
+            st.session_state.step = 4
+            st.rerun()
 
 
 def step4_qc_analysis():
