@@ -2,7 +2,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import re
 import io
 
 # ─────────────────────────────────────────────────────────────
@@ -16,7 +15,7 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────────────────────
-# Full Thermo Fisher CSS (pixel-perfect match)
+# Full Thermo Fisher CSS (pixel-perfect match to your mockup)
 # ─────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
@@ -91,7 +90,7 @@ st.markdown("""
     <div class="module-icon">Upload</div>
     <div>
         <h2>Module 1: Data Import & Validation</h2>
-        <p>Automatic sample name parsing, ratio detection, and condition grouping</p>
+        <p>Upload and validate your LFQ intensity matrix</p>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -108,13 +107,13 @@ with st.container():
                 <strong>Drag and drop your file here</strong>
             </div>
             <div style="font-size:13px; color:#54585A; opacity:0.7;">
-                Supports MaxQuant proteinGroups.txt (or any LFQ matrix with raw file names as columns)
+                Supports .csv, .tsv, .txt • MaxQuant, FragPipe, Spectronaut, DIA-NN
             </div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    uploaded_file = st.file_uploader("", type=["txt","csv","tsv"], label_visibility="collapsed")
+    uploaded_file = st.file_uploader("", type=["csv","tsv","txt"], label_visibility="collapsed")
 
 if not uploaded_file:
     st.markdown("""
@@ -126,115 +125,61 @@ if not uploaded_file:
     st.stop()
 
 # ─────────────────────────────────────────────────────────────
-# 2. Load & Parse + Smart Column Processing
+# 2. Load & Parse — Fixed low_memory + species extraction
 # ─────────────────────────────────────────────────────────────
 @st.cache_data
-def load_and_process(file):
+def load_and_parse(file):
     content = file.getvalue().decode("utf-8", errors="replace")
     if content.startswith("\ufeff"):
         content = content[1:]
-    df = pd.read_csv(io.StringIO(content), sep="\t", engine="python", dtype=str)  # MaxQuant is tab-separated
-
+    # Fixed: Use dtype=str to avoid low_memory warnings
+    df = pd.read_csv(io.StringIO(content), sep=None, engine="python", dtype=str)
+    
     # Convert intensity columns to numeric
-    potential_intensity = [c for c in df.columns if c not in ["pg", "name", "Protein IDs", "Majority protein IDs", "Fasta headers"]]
-    for col in potential_intensity:
+    intensity_cols = [c for c in df.columns if c not in ["pg", "name"]]
+    for col in intensity_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Extract species from 'name' or fallback to common columns
-    species_col = None
+    # Extract species from 'name' column
     if "name" in df.columns:
         split = df["name"].str.split(",", n=1, expand=True)
         if split.shape[1] == 2:
             df.insert(1, "Accession", split[0])
             df.insert(2, "Species", split[1])
             df = df.drop(columns=["name"])
-            species_col = "Species"
-    
-    # === SMART COLUMN PARSING (for raw file names) ===
-    intensity_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
 
-    # Extract ratio key: look for Ydd-Edd pattern
-    ratio_pattern = re.compile(r'Y(\d{2})-E(\d{2})')
-    col_to_ratio = {}
-    col_to_rep = {}
-    short_names = {}
+    return df
 
-    for col in intensity_cols:
-        # Strip .raw if present
-        clean_col = col.replace(".raw", "")
-        match = ratio_pattern.search(clean_col)
-        if match:
-            ratio_key = match.group(0)  # e.g., Y05-E45
-            # Extract replicate number (last _01, _02, etc.)
-            rep = clean_col.split("_")[-1]
-            rep_num = rep.lstrip("0") or "1"  # handle _01 → 1
-            col_to_ratio[col] = ratio_key
-            col_to_rep[col] = rep_num
-            short_names[col] = f"{ratio_key}_{rep_num}"
-        else:
-            # Fallback: no ratio found
-            short_names[col] = col[:15] + ("..." if len(col)>15 else "")
-
-    # Auto-rename columns to short, clean names
-    if len(short_names) == len(intensity_cols):
-        df = df.rename(columns=short_names)
-        intensity_cols = list(short_names.values())
-        st.success("Columns automatically shortened and grouped by mixing ratio")
-
-    # Group by ratio for condition auto-guess
-    ratio_groups = {}
-    for col, ratio in col_to_ratio.items():
-        ratio_groups.setdefault(ratio, []).append(short_names.get(col, col))
-
-    # Sort ratios logically (Y05-E45 first, then Y45-E05)
-    sorted_ratios = sorted(ratio_groups.keys(), key=lambda x: (int(x[1:3]), int(x[5:7])))  # Y05 then Y45
-
-    default_cond1 = ratio_groups.get(sorted_ratios[0], intensity_cols[:len(intensity_cols)//2])
-    default_cond2 = ratio_groups.get(sorted_ratios[1], intensity_cols[len(intensity_cols)//2:]) if len(sorted_ratios)>1 else []
-
-    # Store ratio mapping for later modules
-    st.session_state.ratio_to_cols = ratio_groups
-    st.session_state.ratio_order = sorted_ratios  # for expected log2 later
-
-    return df, intensity_cols, default_cond1, default_cond2, species_col or "Species"
-
-df, intensity_cols, auto_cond1, auto_cond2, species_col = load_and_process(uploaded_file)
+df = load_and_parse(uploaded_file)
 st.session_state.df = df
 
-st.success(f"Data imported — {len(df):,} proteins, {len(intensity_cols)} samples detected")
-if st.session_state.ratio_order:
-    st.info(f"Detected mixing ratios: {', '.join(st.session_state.ratio_order)}")
-
+st.success(f"Data imported successfully — {len(df):,} proteins, {len(df.columns)} columns")
 st.dataframe(df.head(10), use_container_width=True)
 
 # ─────────────────────────────────────────────────────────────
-# 3. Condition Assignment (auto-guessed + editable)
+# 3. Column Renaming (optional)
 # ─────────────────────────────────────────────────────────────
 with st.container():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.subheader("Condition Assignment")
+    st.subheader("Column Renaming (optional)")
 
+    rename_dict = {}
+    cols = df.columns.tolist()
     col1, col2 = st.columns(2)
-    with col1:
-        cond1_cols = st.multiselect(
-            "Condition 1 (auto-detected)",
-            options=intensity_cols,
-            default=auto_cond1
-        )
-    with col2:
-        cond2_cols = st.multiselect(
-            "Condition 2 (auto-detected)",
-            options=intensity_cols,
-            default=auto_cond2
-        )
+    for i, col in enumerate(cols):
+        with (col1 if i % 2 == 0 else col2):
+            new_name = st.text_input(f"`{col}` →", value=col, key=f"rename_{col}")
+            if new_name != col and new_name.strip():
+                rename_dict[col] = new_name.strip()
 
-    if set(cond1_cols) & set(cond2_cols):
-        st.error("Cannot assign the same replicate to both conditions")
-    else:
-        st.session_state.cond1_cols = cond1_cols
-        st.session_state.cond2_cols = cond2_cols
-        if st.session_state.ratio_order:
-            st.success(f"Condition 1 → {st.session_state.ratio_order[0]}\nCondition 2 → {st.session_state.ratio_order[1]}")
+    if st.button("Apply Renaming"):
+        if rename_dict:
+            df = df.rename(columns=rename_dict)
+            st.session_state.df = df
+            st.success("Columns renamed successfully")
+            st.rerun()
+        else:
+            st.info("No changes made")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -313,12 +258,12 @@ with st.container():
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
-# 5. Ready for Data Quality
+# 5. Ready for Data Quality Module
 # ─────────────────────────────────────────────────────────────
 st.markdown("<div class='card'>", unsafe_allow_html=True)
-st.subheader("Ready for Data Quality Module")
-st.success("All samples automatically grouped by mixing ratio. Conditions and species ready.")
-st.info("Next step: **Module 2 – Data Quality** (missing values, CVs, intensity distribution, PCA, etc.)")
+st.subheader("Ready for Data Quality Assessment")
+st.info("Data is loaded, validated, and conditions assigned. Next: **Module 2 – Data Quality** (intensity distribution, missing values, CVs, PCA, etc.)")
+st.markdown("**We will design this page together before coding.**")
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
@@ -328,6 +273,6 @@ st.markdown("""
 <div class="footer">
     <strong>Proprietary & Confidential | For Internal Use Only</strong><br>
     © 2024 Thermo Fisher Scientific Inc. All rights reserved.<br>
-    Contact: proteomics.bioinformatics@thermofisher.com | Version 1.1
+    Contact: proteomics.bioinformatics@thermofisher.com | Version 1.0
 </div>
 """, unsafe_allow_html=True)
