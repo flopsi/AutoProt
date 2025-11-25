@@ -1,72 +1,61 @@
-import pandas as pd
-from utils.analysis import calculate_stats
+"""
+Visualization components for proteomics data
+"""
 
-def render_stats_cards(df: pd.DataFrame):
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+
+
+def create_volcano_plot(df: pd.DataFrame, p_value_threshold: float = 1.3, 
+                       fc_threshold: float = 1.0):
     """
-    Render statistics cards showing protein counts
+    Create an interactive volcano plot
     
     Args:
-        df: DataFrame with processed protein data
+        df: DataFrame with log2FoldChange, negLog10PValue, significance, and gene columns
+        p_value_threshold: Threshold for -log10(p-value)
+        fc_threshold: Threshold for log2 fold change
+        
+    Returns:
+        Plotly figure object
     """
-    stats = calculate_stats(df)
+    if 'significance' not in df.columns:
+        st.error("Data must be processed first (missing 'significance' column)")
+        return None
     
-    col1, col2, col3, col4 = st.columns(4)
+    # Define colors for each category
+    color_map = {
+        'UP': '#e74c3c',      # Red
+        'DOWN': '#3498db',    # Blue
+        'NS': '#95a5a6'       # Gray
+    }
     
-    with col1:
-        st.markdown(f"""
-        <div class='stat-card'>
-            <div style='color: #64748b; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;'>
-                Total Proteins
-            </div>
-            <div style='color: #1e293b; font-size: 2rem; font-weight: bold; margin-top: 0.5rem;'>
-                {stats['total']:,}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+    fig = go.Figure()
     
-    with col2:
-        st.markdown(f"""
-        <div class='stat-card'>
-            <div style='color: #64748b; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;'>
-                Upregulated
-            </div>
-            <div style='color: #dc2626; font-size: 2rem; font-weight: bold; margin-top: 0.5rem;'>
-                {stats['up']:,}
-            </div>
-            <div style='color: #dc2626; font-size: 0.75rem; margin-top: 0.25rem;'>
-                {(stats['up']/stats['total']*100):.1f}% of total
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+    # Plot each significance category
+    for sig_type in ['NS', 'DOWN', 'UP']:
+        subset = df[df['significance'] == sig_type]
+        
+        fig.add_trace(go.Scatter(
+            x=subset['log2FoldChange'],
+            y=subset['negLog10PValue'],
+            mode='markers',
+            name=sig_type,
+            marker=dict(
+                color=color_map[sig_type],
+                size=6,
+                opacity=0.6,
+                line=dict(width=0)
+            ),
+            text=subset.get('gene', subset.index),
+            hovertemplate='<b>%{text}</b><br>' +
+                         'Log2 FC: %{x:.2f}<br>' +
+                         '-Log10 p-value: %{y:.2f}<br>' +
+                         '<extra></extra>'
+        ))
     
-    with col3:
-        st.markdown(f"""
-        <div class='stat-card'>
-            <div style='color: #64748b; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;'>
-                Downregulated
-            </div>
-            <div style='color: #2563eb; font-size: 2rem; font-weight: bold; margin-top: 0.5rem;'>
-                {stats['down']:,}
-            </div>
-            <div style='color: #2563eb; font-size: 0.75rem; margin-top: 0.25rem;'>
-                {(stats['down']/stats['total']*100):.1f}% of total
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col4:
-        st.markdown(f"""
-        <div class='stat-card'>
-            <div style='color: #64748b; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;'>
-                Significant
-            </div>
-            <div style='color: #059669; font-size: 2rem; font-weight: bold; margin-top: 0.5rem;'>
-                {stats['significant']:,}
-            </div>
-            <div style='color: #059669; font-size: 0.75rem; margin-top: 0.25rem;'>
-                {(stats['significant']/stats['total']*100):.1f}% of total
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("<br>", unsafe_allow_html=True)
+    # Add threshold lines
+    fig.add_hline(y=p_value_threshold, line_dash="dash", line_color="gray",
+                 annotation_text=
