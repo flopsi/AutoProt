@@ -139,6 +139,126 @@ def render_boxplots(data: pd.DataFrame, replicate_cols: List[str],
         summary_df = pd.DataFrame(summary_data)
         st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
+def render_cv_violin(data: pd.DataFrame, replicate_cols: List[str], 
+                     condition_names: Dict[str, List[str]]):
+    """
+    Render violin plot showing CV distribution for each condition
+    
+    Args:
+        data: DataFrame with protein intensities
+        replicate_cols: All replicate column names
+        condition_names: Dict mapping condition name to list of column names
+    """
+    st.markdown("### 🎻 Coefficient of Variation (CV) Analysis")
+    
+    st.info("""
+    **CV (Coefficient of Variation)** measures reproducibility across replicates:
+    - CV = (Standard Deviation / Mean) × 100%
+    - Lower CV = Better reproducibility
+    - **Good:** CV < 20% | **Acceptable:** 20-30% | **Poor:** > 30%
+    """)
+    
+    # Calculate CV for each protein within each condition
+    cv_data = []
+    
+    for condition, cols in condition_names.items():
+        # Calculate CV for each protein using only this condition's replicates
+        for idx, row in data.iterrows():
+            values = row[cols].dropna()
+            
+            if len(values) >= 2:  # Need at least 2 values for CV
+                mean_val = values.mean()
+                std_val = values.std()
+                
+                if mean_val != 0:  # Avoid division by zero
+                    cv = (std_val / mean_val) * 100
+                    
+                    # Only include reasonable CV values (filter outliers)
+                    if 0 <= cv <= 200:  # Cap at 200% for visualization
+                        cv_data.append({
+                            'Condition': condition,
+                            'CV': cv,
+                            'Protein': idx
+                        })
+    
+    if len(cv_data) == 0:
+        st.warning("Insufficient data to calculate CV")
+        return
+    
+    cv_df = pd.DataFrame(cv_data)
+    
+    # Create violin plot
+    fig = go.Figure()
+    
+    colors = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12']
+    
+    for idx, condition in enumerate(condition_names.keys()):
+        condition_data = cv_df[cv_df['Condition'] == condition]['CV']
+        
+        fig.add_trace(go.Violin(
+            y=condition_data,
+            name=condition,
+            box_visible=True,
+            meanline_visible=True,
+            fillcolor=colors[idx % len(colors)],
+            opacity=0.6,
+            x0=condition
+        ))
+    
+    # Add reference lines for quality thresholds
+    fig.add_hline(y=20, line_dash="dash", line_color="green", 
+                  annotation_text="Good threshold (20%)", 
+                  annotation_position="right")
+    fig.add_hline(y=30, line_dash="dash", line_color="orange", 
+                  annotation_text="Acceptable threshold (30%)", 
+                  annotation_position="right")
+    
+    fig.update_layout(
+        title="CV Distribution by Condition",
+        yaxis_title="Coefficient of Variation (%)",
+        xaxis_title="Condition",
+        showlegend=True,
+        height=500,
+        yaxis=dict(range=[0, min(100, cv_df['CV'].max() * 1.1)])
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Summary statistics
+    st.markdown("### 📊 CV Summary Statistics")
+    
+    summary_data = []
+    for condition in condition_names.keys():
+        condition_cvs = cv_df[cv_df['Condition'] == condition]['CV']
+        
+        if len(condition_cvs) > 0:
+            # Count proteins in each quality category
+            excellent = (condition_cvs < 20).sum()
+            good = ((condition_cvs >= 20) & (condition_cvs < 30)).sum()
+            poor = (condition_cvs >= 30).sum()
+            
+            summary_data.append({
+                'Condition': condition,
+                'Median CV (%)': f"{condition_cvs.median():.1f}",
+                'Mean CV (%)': f"{condition_cvs.mean():.1f}",
+                'Excellent (<20%)': f"{excellent} ({excellent/len(condition_cvs)*100:.1f}%)",
+                'Good (20-30%)': f"{good} ({good/len(condition_cvs)*100:.1f}%)",
+                'Poor (>30%)': f"{poor} ({poor/len(condition_cvs)*100:.1f}%)",
+                'Total Proteins': len(condition_cvs)
+            })
+    
+    summary_df = pd.DataFrame(summary_data)
+    st.dataframe(summary_df, use_container_width=True, hide_index=True)
+    
+    # Overall quality assessment
+    overall_median = cv_df['CV'].median()
+    
+    if overall_median < 20:
+        st.success(f"✅ **Excellent reproducibility!** Overall median CV: {overall_median:.1f}%")
+    elif overall_median < 30:
+        st.info(f"ℹ️ **Good reproducibility.** Overall median CV: {overall_median:.1f}%")
+    else:
+        st.warning(f"⚠️ **Poor reproducibility.** Overall median CV: {overall_median:.1f}% - Consider reviewing sample preparation.")
 
 def render_cv_analysis(data: pd.DataFrame, condition_names: Dict[str, List[str]]):
     """
