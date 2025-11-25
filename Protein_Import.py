@@ -259,12 +259,12 @@ with col1:
 
 with col2:
     if st.button("Peptide Upload", use_container_width=True):
-        st.Page("pages/1_Peptide_Data_Import.py")
+        st.Page("Peptide_Import.py")
 
 with col3:
     if st.button("Data Quality", type="primary", use_container_width=True):
         if "df" in st.session_state or "df_peptide" in st.session_state:
-            st.Page("pages/2_Data_Quality.py")
+            st.Page("Data_Quality.py")
         else:
             st.error("Please upload data first")
             st.stop()
