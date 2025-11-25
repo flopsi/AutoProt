@@ -183,8 +183,6 @@ with st.container():
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-# In the condition assignment section (replace the old one):
-
 # ─────────────────────────────────────────────────────────────
 # 4. SMART Condition Assignment + Replica Preview Table (with checkboxes)
 # ─────────────────────────────────────────────────────────────
@@ -232,30 +230,30 @@ with st.container():
 
     preview_df = pd.DataFrame(preview_data)
 
+    # Editable checkbox table
     edited_df = st.data_editor(
-            preview_df,
-            column_config={
-                "Include in Cond 1": st.column_config.CheckboxColumn(
-                    "Include in Cond 1",          # ← this is the display label
-                    help="Check = assign to Condition 1",
-                    default_value=True            # ← pre-selects auto-detected replicates
-                ),
-                "Column": st.column_config.TextColumn(
-                    "Column",
-                    disabled=True
-                ),
-                "Suggested Condition": st.column_config.TextColumn(
-                    "Suggested Condition",
-                    disabled=True
-                )
-            },
-            disabled=["Column", "Suggested Condition"],
-            hide_index=True,
-            use_container_width=True,
-            num_rows="fixed",
-            key="condition_assignment_table"   # ← required for stateful editor
+        preview_df,
+        column_config={
+            "Include in Cond 1": st.column_config.CheckboxColumn(
+                "Include in Cond 1",
+                help="Check = assign to Condition 1",
+                default=False
+            ),
+            "Column": st.column_config.TextColumn(
+                "Column",
+                disabled=True
+            ),
+            "Suggested Condition": st.column_config.TextColumn(
+                "Suggested Condition",
+                disabled=True
+            ),
+        },
+        disabled=["Column", "Suggested Condition"],
+        hide_index=True,
+        use_container_width=True,
+        num_rows="fixed",
+        key="condition_assignment_table"
     )
-# ────────────────────────────────────────────────────────────────────────
 
     # Extract final selection
     final_cond1 = edited_df[edited_df["Include in Cond 1"]]["Column"].tolist()
@@ -305,16 +303,35 @@ with st.container():
 # ─────────────────────────────────────────────────────────────
 # 6. Clean Replica Names (auto-trimmed)
 # ─────────────────────────────────────────────────────────────
-clean_names = {}
-for col in numeric_cols:
-    # Remove date + everything before last underscore
-    clean = col.split("_")[-1].replace(".raw", "")
-    clean_names[col] = f"Rep {clean}"
+with st.container():
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.subheader("Clean Replica Names")
 
-if st.checkbox("Use clean replica names in plots/tables", value=True):
-    st.session_state.clean_names = clean_names
-else:
-    st.session_state.clean_names = {col: col for col in numeric_cols}
+    numeric_cols = st.session_state.cond1_cols + st.session_state.cond2_cols
+
+    clean_names = {}
+    for col in numeric_cols:
+        # Remove .raw and trim to last part
+        clean = col.replace(".raw", "").split("_")[-1]
+        clean_names[col] = f"Rep {clean}"
+
+    st.info("Auto-cleaned names for plots/tables (e.g., '20240419_..._01.raw' → 'Rep 01')")
+
+    if st.checkbox("Use clean names", value=True):
+        st.session_state.clean_names = clean_names
+    else:
+        st.session_state.clean_names = {col: col for col in numeric_cols}
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────
+# 7. Ready for Data Quality Module
+# ─────────────────────────────────────────────────────────────
+st.markdown("<div class='card'>", unsafe_allow_html=True)
+st.subheader("Ready for Data Quality Assessment")
+st.info("Data is loaded, validated, and conditions assigned. Next: **Module 2 – Data Quality** (intensity distribution, missing values, CVs, PCA, etc.)")
+st.markdown("**We will design this page together before coding.**")
+st.markdown("</div>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
 # Footer
