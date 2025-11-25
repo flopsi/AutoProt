@@ -175,20 +175,20 @@ with st.container():
     protein_col_default = next((c for c in df.columns if "protein" in c.lower()), df.columns[0])
 
     # Build data
-      # Build data — CORRECT intensity detection
-    rows = []
-    for col in df.columns:
-        is_intensity = pd.api.types.is_numeric_dtype(df[col])
-        preview = " | ".join(df[col].dropna().astype(str).unique()[:3]) if not is_intensity else "numeric"
-        rows.append({
-            "Rename": col,
-            "Cond 1": col in default_cond1 and is_intensity,
-            "Species": col == species_col_default,
-            "Protein Group": col == protein_col_default,
-            "Original Name": col,
-            "Preview": preview,
-            "Type": "Intensity" if is_intensity else "Metadata"
-        })
+    # Build unified table — FIXED: intensity columns correctly marked
+        rows = []
+        for col in df.columns:
+            is_intensity = pd.api.types.is_numeric_dtype(df[col])
+            preview = " | ".join(df[col].dropna().astype(str).unique()[:3]) if not is_intensity else "numeric"
+            rows.append({
+                "Rename": col,
+                "Cond 1": col in default_cond1 and is_intensity,   # ← only intensity columns can be checked
+                "Species": col == species_col_default,
+                "Protein Group": col == protein_col_default,
+                "Original Name": col,
+                "Preview": preview,
+                "Type": "Intensity" if is_intensity else "Metadata"
+            })
 
     df_edit = pd.DataFrame(rows)
 
