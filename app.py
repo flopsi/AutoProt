@@ -30,7 +30,7 @@ def load_data(file):
     # Handle BOM if present
     if content.startswith('\ufeff'):
         content = content[1:]
-    df = pd.read_csv(io.StringIO(content), sep=None, engine='python', low_memory=False)
+    df = pd.read_csv(io.StringIO(content), sep=None, engine='python')
     
     # Convert all potential numeric columns to float, coercing errors
     for col in df.columns:
