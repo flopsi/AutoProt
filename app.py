@@ -104,11 +104,23 @@ st.dataframe(df.head(10), use_container_width=True)
 # ─────────────────────────────────────────────────────────────
 # SINGLE UNIFIED TABLE — 100% WORKING
 # ─────────────────────────────────────────────────────────────
+# ── SINGLE UNIFIED TABLE — FINAL FIXED VERSION ──
 with st.container():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("Column Assignment & Renaming")
 
-    numeric_cols = [c for c in df.columns if is_numeric_dtype(df[c])]
+    # Force intensity columns to float — but keep metadata as object
+    intensity_cols = [c for c in df.columns if c not in ["pg", "name", "Protein.Group", "PG.ProteinNames", "Accession", "Species"]]
+    for col in intensity_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Ensure metadata stays as string
+    metadata_cols = ["Protein.Group", "PG.ProteinNames", "Accession", "Species"]
+    for col in metadata_cols:
+        if col in df.columns:
+            df[col] = df[col].astype("string")
+
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
 
     # Auto-detect Condition 1
     ratio_groups = {}
@@ -118,27 +130,20 @@ with st.container():
             key = f"Y{m.group(1)}-E{m.group(2)}"
             ratio_groups.setdefault(key, []).append(col)
 
-    default_cond1 = []
-    if len(ratio_groups) >= 2:
-        sorted_keys = sorted(ratio_groups.keys(), key=lambda x: int(x.split('-')[0][1:]))
-        default_cond1 = ratio_groups[sorted_keys[0]]
-    elif len(numeric_cols) >= 2:
-        default_cond1 = numeric_cols[:len(numeric_cols)//2]
+    default_cond1 = ratio_groups.get(
+        sorted(ratio_groups.keys(), key=lambda x: int(x.split('-')[0][1:]))[0],
+        numeric_cols[:len(numeric_cols)//2]
+    ) if ratio_groups else numeric_cols[:len(numeric_cols)//2]
 
-    # Auto-detect Species & Protein
-    species_col_default = "Species" if "Species" in df.columns else None
-    if not species_col_default:
-        for col in df.columns:
-            if df[col].astype(str).str.upper().fillna("").str.contains("HUMAN|YEAST|ECOLI").any():
-                species_col_default = col
-                break
-    protein_col_default = next((c for c in df.columns if "protein" in c.lower()), df.columns[0])
+    # Auto-detect Species & Protein Group
+    species_col_default = "Species" if "Species" in df.columns else "PG.ProteinNames"
+    protein_col_default = "Protein.Group" if "Protein.Group" in df.columns else df.columns[0]
 
     # Build table
     rows = []
     for col in df.columns:
-        is_intensity = is_numeric_dtype(df[col])
-        preview = " | ".join(df[col].dropna().astype(str).unique()[:3]) if not is_intensity else "numeric"
+        is_intensity = col in numeric_cols
+        preview = " | ".join(df[col].dropna().astype(str).unique()[:3])
         rows.append({
             "Rename": col,
             "Cond 1": col in default_cond1 and is_intensity,
@@ -165,55 +170,45 @@ with st.container():
         disabled=["Original Name", "Preview", "Type"],
         hide_index=True,
         use_container_width=True,
-        key="final_table"
+        key="final_table_fixed_2024"
     )
 
     # Apply renaming
     rename_map = {}
     for _, row in edited.iterrows():
-        new = row["Rename"].strip()
-        if new and new != row["Original Name"]:
-            rename_map[row["Original Name"]] = new
+        new_name = row["Rename"].strip()
+        if new_name and new_name != row["Original Name"]:
+            rename_map[row["Original Name"]] = new_name
+
     if rename_map:
         df = df.rename(columns=rename_map)
         st.session_state.df = df
 
-    # Extract
+    # Extract assignments
     cond1_cols = edited[edited["Cond 1"]]["Original Name"].tolist()
     cond2_cols = [c for c in numeric_cols if c not in cond1_cols]
-    species_col = edited[edited["Species"]]["Original Name"].tolist()
-    protein_col = edited[edited["Protein Group"]]["Original Name"].tolist()
-
-    # Validate
-    if len(cond1_cols) == 0 or len(cond2_cols) == 0:
-        st.error("Both conditions must have at least one replicate")
-        st.stop()
-    if len(species_col) != 1 or len(protein_col) != 1:
-        st.error("Exactly one Species and one Protein Group column must be selected")
-        st.stop()
+    species_col = edited[edited["Species"]]["Original Name"].tolist()[0]
+    protein_col = edited[edited["Protein Group"]]["Original Name"].tolist()[0]
 
     # Save
     st.session_state.update({
         "cond1_cols": cond1_cols,
         "cond2_cols": cond2_cols,
-        "species_col": species_col[0],
-        "protein_col": protein_col[0],
+        "species_col": species_col,
+        "protein_col": protein_col,
         "df": df
     })
 
-    st.success("All assignments applied successfully!")
-    
+    st.success("All assignments & renaming applied!")
     c1, c2 = st.columns(2)
     with c1:
         st.metric("**Condition 1**", f"{len(cond1_cols)} replicates")
-        st.write("Replicates:")
         st.write(", ".join(cond1_cols))
     with c2:
         st.metric("**Condition 2**", f"{len(cond2_cols)} replicates")
-        st.write("Replicates:")
         st.write(", ".join(cond2_cols))
 
-    st.info(f"**Species column** → `{species_col[0]}` | **Protein Group** → `{protein_col[0]}`")
+    st.info(f"**Species** → `{species_col}` | **Protein Group** → `{protein_col}`")
     st.markdown("</div>", unsafe_allow_html=True)
 # ─────────────────────────────────────────────────────────────
 # Ready
