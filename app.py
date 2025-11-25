@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import re
 import io
 
 # ─────────────────────────────────────────────────────────────
@@ -15,7 +16,7 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────────────────────
-# Full Thermo Fisher CSS (pixel-perfect match to your mockup)
+# Full Thermo Fisher CSS (pixel-perfect match)
 # ─────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
@@ -90,7 +91,7 @@ st.markdown("""
     <div class="module-icon">Upload</div>
     <div>
         <h2>Module 1: Data Import & Validation</h2>
-        <p>Upload and validate your LFQ intensity matrix</p>
+        <p>Automatic sample name parsing, ratio detection, and condition grouping</p>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -107,13 +108,13 @@ with st.container():
                 <strong>Drag and drop your file here</strong>
             </div>
             <div style="font-size:13px; color:#54585A; opacity:0.7;">
-                Supports .csv, .tsv, .txt • MaxQuant, FragPipe, Spectronaut, DIA-NN
+                Supports MaxQuant proteinGroups.txt (or any LFQ matrix with raw file names as columns)
             </div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    uploaded_file = st.file_uploader("", type=["csv","tsv","txt"], label_visibility="collapsed")
+    uploaded_file = st.file_uploader("", type=["txt","csv","tsv"], label_visibility="collapsed")
 
 if not uploaded_file:
     st.markdown("""
@@ -237,15 +238,78 @@ with st.container():
 
     st.markdown("</div>", unsafe_allow_html=True)
 
+# In the condition assignment section (replace the old one):
+
 # ─────────────────────────────────────────────────────────────
-# 4. Species Column Confirmation
+# 4. SMART Auto-Detection of Conditions & Ratios
 # ─────────────────────────────────────────────────────────────
 with st.container():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.subheader("Species Column")
-    species_options = [c for c in df.columns if df[c].dtype == "object" and c in ["Species", "Organism", "Taxonomy"]]
-    selected_species = st.selectbox("Select species column", options=species_options, index=0 if species_options else None)
-    st.session_state.species_col = selected_species
+    st.subheader("Smart Condition Assignment")
+
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+
+    # Auto-detect ratio groups
+    import re
+    ratio_groups = {}
+    for col in numeric_cols:
+        match = re.search(r'_Y(\d{2})-E(\d{2})_', col)
+        if match:
+            yeast_pct = int(match.group(1))
+            ecoli_pct = int(match.group(2))
+            ratio_key = f"Y{yeast_pct:02d}-E{ecoli_pct:02d}"
+            if ratio_key not in ratio_groups:
+                ratio_groups[ratio_key] = {
+                    'columns': [],
+                    'yeast_pct': yeast_pct,
+                    'ecoli_pct': ecoli_pct,
+                    'human_pct': 100 - yeast_pct - ecoli_pct
+                }
+            ratio_groups[ratio_key]['columns'].append(col)
+
+    if len(ratio_groups) >= 2:
+        # Sort by yeast % (low → high)
+        sorted_ratios = sorted(ratio_groups.items(), key=lambda x: x[1]['yeast_pct'])
+        
+        cond1_key, cond1_info = sorted_ratios[0]
+        cond2_key, cond2_info = sorted_ratios[-1]
+        
+        cond1_cols = cond1_info['columns']
+        cond2_cols = cond2_info['columns']
+        
+        # Auto-calculate expected log2 ratios
+        expected_yeast = np.log2(cond2_info['yeast_pct'] / cond1_info['yeast_pct'])
+        expected_ecoli = np.log2(cond2_info['ecoli_pct'] / cond1_info['ecoli_pct'])
+        expected_human = 0.0  # always 1:1
+        
+        st.success(f"✅ **Auto-detected {len(cond1_cols)}:3 design**")
+        st.info(f"Expected log₂ ratios: Yeast={expected_yeast:.2f}, E.coli={expected_ecoli:.2f}, Human={expected_human:.2f}")
+        
+        # Confirmation table
+        st.dataframe(pd.DataFrame({
+            'Ratio': [cond1_key, cond2_key],
+            'Condition': ['**Cond 1** (low yeast)', '**Cond 2** (high yeast)'],
+            'Replicates': [len(cond1_cols), len(cond2_cols)],
+            'Columns': [', '.join(cond1_cols), ', '.join(cond2_cols)]
+        }).style.format({'Replicates': '{:.0f}'}))
+        
+        # Option to override
+        if st.button("Use Auto-Detection"):
+            st.session_state.cond1_cols = cond1_cols
+            st.session_state.cond2_cols = cond2_cols
+            st.session_state.expected_ratios = {
+                'YEAST': expected_yeast,
+                'ECOLI': expected_ecoli, 
+                'HUMAN': expected_human
+            }
+            st.success("Auto-detection confirmed!")
+            
+    else:
+        # Fallback: half-split
+        half = len(numeric_cols) // 2
+        cond1_cols = numeric_cols[:half]
+        cond2_cols = numeric_cols[half:]
+
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
@@ -264,6 +328,6 @@ st.markdown("""
 <div class="footer">
     <strong>Proprietary & Confidential | For Internal Use Only</strong><br>
     © 2024 Thermo Fisher Scientific Inc. All rights reserved.<br>
-    Contact: proteomics.bioinformatics@thermofisher.com | Version 1.0
+    Contact: proteomics.bioinformatics@thermofisher.com | Version 1.1
 </div>
 """, unsafe_allow_html=True)
