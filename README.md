@@ -1,296 +1,183 @@
-summary_visual = """
-╔════════════════════════════════════════════════════════════════════════╗
-║                                                                        ║
-║              🎉 ENHANCED PROTEOMICS APP - COMPLETE 🎉                 ║
-║                                                                        ║
-╚════════════════════════════════════════════════════════════════════════╝
+# ProteoFlow - Intelligent Proteomics Analysis
 
-📦 DELIVERABLES
-═══════════════
+A Streamlit-based web application for analyzing proteomics data with AI-powered insights using Google's Gemini.
 
-1. ✅ utils/stats.py (NEW)
-   - 400+ lines of statistical utilities
-   - 12 core functions for QC and analysis
+## Features
 
-2. ✅ components/qc_plots.py (NEW)
-   - 600+ lines of visualization code
-   - 6 main rendering functions
+- 📤 **Data Upload**: Import CSV/TSV files from MaxQuant or FragPipe
+- 📊 **Interactive Volcano Plot**: Visualize differential protein expression
+- 📋 **Significance Filtering**: Adjustable p-value and fold-change thresholds
+- 🤖 **AI-Powered Analysis**: Generate comprehensive biological reports using Gemini
+- 💬 **Interactive Chat**: Ask questions about your data
+- 📈 **Real-time Statistics**: Track upregulated, downregulated, and significant proteins
 
-3. ✅ app.py (ENHANCED)
-   - Complete rewrite with guided workflow
-   - 5-step user journey
-   - Replicate mapping interface
+## Installation
 
-4. ✅ requirements.txt (UPDATED)
-   - Added scipy and scikit-learn
+### 1. Clone or download this repository
 
-5. ✅ Updated __init__.py files
-   - Proper package exports
+### 2. Install dependencies
 
+```bash
+pip install -r requirements.txt
+```
 
-🎯 KEY FEATURES ADDED
-══════════════════════
+### 3. Set up Gemini API (Optional but recommended)
 
-┌─────────────────────────────────────────────────────┐
-│ RAW DATA PROCESSING                                 │
-├─────────────────────────────────────────────────────┤
-│ ✓ Upload CSV/TSV with replicates                   │
-│ ✓ Interactive replicate mapping to conditions      │
-│ ✓ Support for 2-4 experimental conditions          │
-│ ✓ Demo dataset with realistic replicate structure  │
-└─────────────────────────────────────────────────────┘
+Get your API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
 
-┌─────────────────────────────────────────────────────┐
-│ STATISTICAL ANALYSIS                                │
-├─────────────────────────────────────────────────────┤
-│ ✓ Shapiro-Wilk normality testing                   │
-│ ✓ Skewness & kurtosis calculation                  │
-│ ✓ Log2 transformation with pseudocount             │
-│ ✓ Two-sample t-tests                               │
-│ ✓ Fold change calculation                          │
-│ ✓ Coefficient of variation (CV)                    │
-│ ✓ Principal Component Analysis (PCA)               │
-│ ✓ Batch processing for all proteins                │
-└─────────────────────────────────────────────────────┘
+Set the environment variable:
 
-┌─────────────────────────────────────────────────────┐
-│ QC VISUALIZATIONS                                   │
-├─────────────────────────────────────────────────────┤
-│ 📊 BOXPLOTS                                         │
-│    - Side-by-side for all replicates               │
-│    - Grouped by condition with colors              │
-│    - Summary statistics table                      │
-│                                                     │
-│ 📈 CV ANALYSIS                                      │
-│    - Histograms per condition                      │
-│    - Quality assessment (Excellent/Good/Poor)      │
-│    - Median CV indicators                          │
-│                                                     │
-│ 🎯 PCA PLOT                                         │
-│    - 2D scatter with condition colors              │
-│    - Explained variance percentages                │
-│    - Interpretation guide                          │
-│                                                     │
-│ 🔥 MISSING VALUE HEATMAP                            │
-│    - Binary presence/absence visualization         │
-│    - Sample completeness metrics                   │
-│    - Top 100 proteins displayed                    │
-│                                                     │
-│ 📉 RANK PLOTS                                       │
-│    - Dynamic range visualization                   │
-│    - One line per condition                        │
-│    - Log scale option                              │
-└─────────────────────────────────────────────────────┘
+**Linux/Mac:**
+```bash
+export GEMINI_API_KEY="your-api-key-here"
+```
 
-┌─────────────────────────────────────────────────────┐
-│ GUIDED WORKFLOW (5 STEPS)                           │
-├─────────────────────────────────────────────────────┤
-│ Step 1: 📤 Load Data & Map Replicates              │
-│         → Upload file or demo dataset               │
-│         → Assign columns to conditions              │
-│                                                     │
-│ Step 2: 📊 Check Normality                         │
-│         → Shapiro-Wilk test all samples            │
-│         → Get transformation recommendation         │
-│                                                     │
-│ Step 3: 🔄 Transform Data                          │
-│         → Apply log2 transformation                │
-│         → View before/after comparison             │
-│                                                     │
-│ Step 4: 🔬 QC Analysis                             │
-│         → View complete QC dashboard               │
-│         → All 5 visualizations rendered            │
-│                                                     │
-│ Step 5: 📈 Statistical Analysis                    │
-│         → Automatic t-tests                        │
-│         → Volcano plot with thresholds             │
-│         → Export results (CSV)                     │
-└─────────────────────────────────────────────────────┘
+**Windows (PowerShell):**
+```powershell
+$env:GEMINI_API_KEY="your-api-key-here"
+```
 
+**Or create a `.env` file:**
+```
+GEMINI_API_KEY=your-api-key-here
+```
 
-📈 WORKFLOW COMPARISON
-═══════════════════════
+## Project Structure
 
-BEFORE (V1):                     AFTER (V2):
-─────────────────────            ──────────────────────────────
+```
+proteomics-app/
+├── app.py                      # Main Streamlit application
+├── requirements.txt            # Python dependencies
+├── README.md                   # This file
+├── utils/
+│   ├── __init__.py
+│   ├── data_generator.py       # Mock data generation
+│   └── analysis.py             # Data processing functions
+├── components/
+│   ├── __init__.py
+│   ├── plots.py                # Volcano plot visualization
+│   ├── tables.py               # Data table component
+│   └── stats.py                # Statistics cards
+└── services/
+    ├── __init__.py
+    └── gemini_service.py       # AI integration
 
-Upload → Dashboard              Upload → Map Replicates
-                                       ↓
-                                Check Normality
-                                       ↓
-                                Transform (Optional)
-                                       ↓
-                                QC Dashboard (5 plots)
-                                       ↓
-                                Statistical Analysis (t-tests)
-                                       ↓
-                                Export & Report
+```
 
+## Usage
 
-💾 FILES TO CREATE/UPDATE
-═══════════════════════════
+### 1. Run the application
 
-NEW FILES:
-─────────
-1. utils/stats.py           (create new)
-2. components/qc_plots.py   (create new)
+```bash
+streamlit run app.py
+```
 
-UPDATE FILES:
-────────────
-3. app.py                   (replace completely)
-4. requirements.txt         (add scipy, sklearn)
-5. utils/__init__.py        (add new imports)
-6. components/__init__.py   (add new imports)
+### 2. Upload your data or load demo dataset
 
-KEEP ORIGINAL:
-─────────────
-✓ utils/data_generator.py
-✓ utils/analysis.py
-✓ components/plots.py
-✓ components/tables.py
-✓ components/stats.py
-✓ services/gemini_service.py
+- Click "Load Demo Dataset" to explore with sample data
+- Or upload your own CSV/TSV file with columns: Gene, Fold Change, P-value
 
+### 3. Explore the dashboard
 
-🚀 INSTALLATION STEPS
-═══════════════════════
+- Adjust significance thresholds using the sidebar sliders
+- Click on points in the volcano plot to view protein details
+- View the sorted table of significant proteins
 
-1. Navigate to your project:
-   cd proteomics-app
+### 4. Generate AI insights
 
-2. Create new files:
-   touch utils/stats.py
-   touch components/qc_plots.py
+- Click "Generate Full Report" to get AI-powered biological interpretation
+- Use the chat interface to ask specific questions about your data
 
-3. Copy code from the markdown file I created:
-   - Open enhanced-proteomics-qc-complete.md
-   - Copy each file's code to corresponding location
+## Data Format
 
-4. Update requirements:
-   pip install scipy scikit-learn
+Your input file should contain at minimum:
 
-5. Run enhanced app:
-   streamlit run app.py
+- **Gene**: Gene symbol or protein ID
+- **Fold Change**: Numerical fold change values (or log2 fold change)
+- **P-value**: Statistical significance values
 
+Optional columns:
+- Description
+- Intensities (sample and control)
+- Additional annotations
 
-📊 USAGE EXAMPLE
-═════════════════
+## Features Detail
 
-Step-by-Step:
+### Volcano Plot
+- Interactive visualization of differential expression
+- Color-coded by significance (red=up, blue=down, gray=NS)
+- Adjustable thresholds with visual guides
+- Click-to-select functionality
 
-1. 📤 UPLOAD
-   - Click "Load Demo Dataset"
-   - See 500 proteins, 6 columns (A1-A3, B1-B3)
+### AI Analysis
+- Automated pathway identification
+- Functional categorization
+- Biological interpretation
+- Experimental recommendations
 
-2. 🎯 MAP REPLICATES
-   - Select 2 conditions
-   - Assign A1, A2, A3 → Condition A
-   - Assign B1, B2, B3 → Condition B
-   - Click "Confirm & Proceed"
+### Chat Interface
+- Ask questions about specific proteins
+- Query pathway involvement
+- Get functional explanations
+- Context-aware responses
 
-3. 📊 CHECK NORMALITY
-   - Click "Run Normality Tests"
-   - See results: 2/6 samples normal
-   - Recommendation: "Log transformation required"
-   - Click "Apply Log2 Transformation"
+## Configuration
 
-4. 🔄 TRANSFORM
-   - Set pseudocount = 1.0
-   - Click "Apply Transformation"
-   - View histograms: Before (skewed) → After (normal)
-   - Click "Proceed to QC"
+### Default Thresholds
+- P-value cutoff: 1.3 (-log10 scale, equivalent to p=0.05)
+- Fold change cutoff: 1.0 (log2 scale, equivalent to 2-fold)
 
-5. 🔬 QC ANALYSIS
-   - Boxplots: See 6 boxes (A1-A3, B1-B3)
-   - CV: Condition A = 15% (Excellent), B = 18% (Excellent)
-   - PCA: Clear clustering by condition, 75% variance explained
-   - Missing: 5% total missing, 450 complete proteins
-   - Rank: 4 orders of magnitude dynamic range
+### Customization
+Modify `app.py` to change:
+- Color schemes
+- Plot dimensions
+- Statistical methods
+- UI layout
 
-6. 📈 STATISTICAL ANALYSIS
-   - Automatic t-tests completed (500 proteins)
-   - Adjust thresholds: p-val = 1.3, FC = 1.0
-   - Volcano plot: 85 significant proteins
-   - Download CSV with all results
-   - Generate AI report
+## Troubleshooting
 
+### Gemini API not working
+- Ensure API key is correctly set
+- Check internet connection
+- Verify API key has appropriate permissions
+- The app will work in demo mode without API key (limited features)
 
-🎓 QUALITY METRICS
-═══════════════════
+### Data upload issues
+- Ensure file is CSV or TSV format
+- Check column names match expected format
+- Verify numeric columns contain valid numbers
 
-CV Assessment:
-  Excellent:  <20%  CV  → Green  
-  Good:       20-30% CV  → Orange 
-  Poor:       >30%  CV  → Red    
+### Performance issues
+- Large datasets (>10,000 proteins) may be slow
+- Consider filtering data before upload
+- Use Chrome or Firefox for best performance
 
-PCA Quality:
-  Good:       >60% variance in PC1+PC2
-  Expected:   Clustering by condition
-  Warning:    Outliers indicate issues
+## Demo Mode
 
-Missing Values:
-  Excellent:  <5%   missing
-  Acceptable: 5-15% missing
-  Poor:       >15%  missing
+Without Gemini API configured, the app runs in demo mode:
+- ✅ Full visualization and filtering capabilities
+- ✅ Data table and statistics
+- ⚠️ Limited AI analysis (template reports)
+- ⚠️ Basic chat responses
 
-Dynamic Range:
-  Typical:    4-6 orders of magnitude
-  Log2:       10-15 units difference
+## License
 
+MIT License - feel free to use and modify
 
-✨ BENEFITS
-════════════
+## Contributing
 
-For Researchers:
-  ✓ Publication-ready QC visualizations
-  ✓ Transparent statistical workflow
-  ✓ Reproducible analysis pipeline
-  ✓ Export-ready results
+Contributions welcome! Please feel free to submit issues or pull requests.
 
-For Data Quality:
-  ✓ Early detection of technical issues
-  ✓ Batch effect identification
-  ✓ Outlier detection
-  ✓ Reproducibility assessment
+## Credits
 
-For Analysis:
-  ✓ Proper normalization workflow
-  ✓ Statistical rigor (t-tests)
-  ✓ Multiple testing correction ready
-  ✓ Comprehensive documentation
+- Built with [Streamlit](https://streamlit.io/)
+- AI powered by [Google Gemini](https://deepmind.google/technologies/gemini/)
+- Visualization with [Plotly](https://plotly.com/)
+- Original React version inspiration
 
+## Support
 
-🎯 NEXT STEPS
-══════════════
-
-Immediate:
-  1. Copy code files from markdown
-  2. Update requirements.txt
-  3. Test with demo dataset
-  4. Verify all 5 QC plots render
-
-Future Enhancements:
-  - Multiple testing correction (Benjamini-Hochberg)
-  - Pathway enrichment analysis
-  - Interactive protein selection from plots
-  - Batch effect correction tools
-  - Export to MaxQuant format
-
-
-═══════════════════════════════════════════════════════════════
-
-                    🎉 IMPLEMENTATION COMPLETE 🎉
-
-Your proteomics application now has:
-✅ Complete raw data processing pipeline
-✅ Comprehensive QC dashboard (5 visualization types)
-✅ Statistical testing suite (8+ methods)
-✅ Guided workflow (5 steps)
-✅ Professional production-ready interface
-
-Ready to analyze your proteomics data! 🧬🔬
-
-═══════════════════════════════════════════════════════════════
-"""
-
-print(summary_visual)
+For issues or questions:
+1. Check the troubleshooting section
+2. Review the code documentation
+3. Open an issue on GitHub
