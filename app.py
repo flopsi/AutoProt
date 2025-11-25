@@ -136,9 +136,6 @@ df = load_and_parse(uploaded_file)
 st.session_state.df = df
 st.success(f"Data imported — {len(df):,} proteins")
 st.dataframe(df.head(10), use_container_width=True)
-# REPLACE EVERYTHING AFTER "st.dataframe(df.head(10), use_container_width=True)" 
-# WITH THIS SINGLE BLOCK:
-
 # ─────────────────────────────────────────────────────────────
 # SINGLE UNIFIED TABLE — FULLY WORKING (Streamlit 1.38+)
 # ─────────────────────────────────────────────────────────────
@@ -146,9 +143,10 @@ with st.container():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("Column Assignment & Renaming")
 
+    # Identify numeric (intensity) columns — this is the real source of truth
     numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
 
-    # Auto-detect Condition 1
+    # ── Auto-detect Condition 1 (Yxx-Exx pattern) ──
     import re
     ratio_groups = {}
     for col in numeric_cols:
@@ -164,7 +162,7 @@ with st.container():
     elif len(numeric_cols) >= 2:
         default_cond1 = numeric_cols[:len(numeric_cols)//2]
 
-    # Auto-detect Species & Protein
+    # ── Auto-detect Species & Protein Group columns ──
     species_col_default = "Species" if "Species" in df.columns else None
     if not species_col_default:
         for col in df.columns:
@@ -174,15 +172,14 @@ with st.container():
 
     protein_col_default = next((c for c in df.columns if "protein" in c.lower()), df.columns[0])
 
-# Build data
-# Build unified table — FIXED: intensity columns correctly marked
+    # ── Build unified table (correct Type detection!) ──
     rows = []
     for col in df.columns:
-        is_intensity = pd.api.types.is_numeric_dtype(df[col])
+        is_intensity = pd.api.types.is_numeric_dtype(df[col])   # ← CRITICAL: use actual dtype
         preview = " | ".join(df[col].dropna().astype(str).unique()[:3]) if not is_intensity else "numeric"
         rows.append({
             "Rename": col,
-            "Cond 1": col in default_cond1 and is_intensity,   # ← only intensity columns can be checked
+            "Cond 1": col in default_cond1 and is_intensity,
             "Species": col == species_col_default,
             "Protein Group": col == protein_col_default,
             "Original Name": col,
@@ -190,19 +187,32 @@ with st.container():
             "Type": "Intensity" if is_intensity else "Metadata"
         })
 
-df_edit = pd.DataFrame(rows)
+    df_edit = pd.DataFrame(rows)
 
+    # ── data_editor with correct default=True (so pre-checks are respected) ──
     edited = st.data_editor(
         df_edit,
         column_config={
-            "Rename": st.column_config.TextColumn(label="Rename (optional)", required=False),
+            "Rename": st.column_config.TextColumn(
+                label="Rename (optional)",
+                help="Leave blank or type new name",
+                required=False
+            ),
             "Cond 1": st.column_config.CheckboxColumn(
                 label="Condition 1",
                 help="Check = assign to Condition 1",
+                default=True          # ← Must be True!
+            ),
+            "Species": st.column_config.CheckboxColumn(
+                label="Species",
+                help="Exactly one column",
                 default=True
             ),
-            "Species": st.column_config.CheckboxColumn(label="Species", default=True),
-            "Protein Group": st.column_config.CheckboxColumn(label="Protein Group", default=True),
+            "Protein Group": st.column_config.CheckboxColumn(
+                label="Protein Group",
+                help="Exactly one column",
+                default=True
+            ),
             "Original Name": st.column_config.TextColumn(label="Original Name", disabled=True),
             "Preview": st.column_config.TextColumn(label="Preview", disabled=True),
             "Type": st.column_config.TextColumn(label="Type", disabled=True),
@@ -210,69 +220,27 @@ df_edit = pd.DataFrame(rows)
         disabled=["Original Name", "Preview", "Type"],
         hide_index=True,
         use_container_width=True,
-        key="unified_table_fixed"
+        key="unified_table_final_2024"
     )
 
-# CORRECT column_config syntax for Streamlit 1.38+
-edited = st.data_editor(
-    df_edit,
-    column_config={
-        "Rename": st.column_config.TextColumn(
-            label="Rename (optional)",
-            help="Leave blank or type new name",
-            required=False
-        ),
-        "Cond 1": st.column_config.CheckboxColumn(
-            label="Condition 1",
-            help="Check = assign to Condition 1",
-            default=True   # ← THIS WAS THE FIX! Must be True
-        ),
-        "Species": st.column_config.CheckboxColumn(
-            label="Species",
-            help="Exactly one column",
-            default=True
-        ),
-        "Protein Group": st.column_config.CheckboxColumn(
-            label="Protein Group",
-            help="Exactly one column",
-            default=True
-        ),
-        "Original Name": st.column_config.TextColumn(
-            label="Original Name",
-            disabled=True
-        ),
-        "Preview": st.column_config.TextColumn(
-            label="Preview",
-            disabled=True
-        ),
-        "Type": st.column_config.TextColumn(
-            label="Type",
-            disabled=True
-        ),
-    },
-    disabled=["Original Name", "Preview", "Type"],
-    hide_index=True,
-    use_container_width=True,
-    key="unified_table_final"
-)
-# Apply renaming
-rename_map = {}
-for _, row in edited.iterrows():
-    new_name = row["Rename"].strip()
-    if new_name and new_name != row["Original Name"]:
-        rename_map[row["Original Name"]] = new_name
+    # ── Apply renaming ──
+    rename_map = {}
+    for _, row in edited.iterrows():
+        new_name = row["Rename"].strip()
+        if new_name and new_name != row["Original Name"]:
+            rename_map[row["Original Name"]] = new_name
 
-if rename_map:
-    df = df.rename(columns=rename_map)
-    st.session_state.df = df
+    if rename_map:
+        df = df.rename(columns=rename_map)
+        st.session_state.df = df
 
-    # Extract assignments — FIXED: now correctly identifies Cond 2
+    # ── Extract final assignments ──
     cond1_cols = edited[edited["Cond 1"]]["Original Name"].tolist()
-    cond2_cols = [c for c in numeric_cols if c not in cond1_cols]  # ← this line was correct
+    cond2_cols = [c for c in numeric_cols if c not in cond1_cols]
     species_col = edited[edited["Species"]]["Original Name"].tolist()
     protein_col = edited[edited["Protein Group"]]["Original Name"].tolist()
 
-    # Final validation
+    # ── Validation ──
     if len(cond1_cols) == 0:
         st.error("Condition 1 must have at least one replicate")
         st.stop()
@@ -286,29 +254,28 @@ if rename_map:
         st.error("Exactly one Protein Group column must be selected")
         st.stop()
 
-    # Save to session state
+    # ── Save everything ──
     st.session_state.cond1_cols = cond1_cols
     st.session_state.cond2_cols = cond2_cols
     st.session_state.species_col = species_col[0]
     st.session_state.protein_col = protein_col[0]
     st.session_state.df = df
 
-    # SUCCESS MESSAGE — NOW SHOWS BOTH CONDITIONS
+    # ── Success display ──
     st.success("All assignments applied successfully!")
-    
-    colA, colB = st.columns(2)
-    with colA:
+    c1, c2 = st.columns(2)
+    with c1:
         st.metric("**Condition 1**", f"{len(cond1_cols)} replicates")
         st.write("Replicates:")
         st.write(", ".join(cond1_cols))
-    with colB:
+    with c2:
         st.metric("**Condition 2**", f"{len(cond2_cols)} replicates")
         st.write("Replicates:")
         st.write(", ".join(cond2_cols))
 
     st.info(f"**Species column** → `{species_col[0]}` | **Protein Group** → `{protein_col[0]}`")
-
     st.markdown("</div>", unsafe_allow_html=True)
+
 # ─────────────────────────────────────────────────────────────
 # Ready for next module
 # ─────────────────────────────────────────────────────────────
