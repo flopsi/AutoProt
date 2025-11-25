@@ -175,12 +175,13 @@ with st.container():
     protein_col_default = next((c for c in df.columns if "protein" in c.lower()), df.columns[0])
 
     # Build data
+    # Build data — CORRECT intensity detection
     rows = []
     for col in df.columns:
-        is_intensity = col in numeric_cols
+        is_intensity = pd.api.types.is_numeric_dtype(df[col])
         preview = " | ".join(df[col].dropna().astype(str).unique()[:3]) if not is_intensity else "numeric"
         rows.append({
-            "Rename": col,  # user-editable
+            "Rename": col,
             "Cond 1": col in default_cond1 and is_intensity,
             "Species": col == species_col_default,
             "Protein Group": col == protein_col_default,
@@ -190,6 +191,27 @@ with st.container():
         })
 
     df_edit = pd.DataFrame(rows)
+
+    edited = st.data_editor(
+        df_edit,
+        column_config={
+            "Rename": st.column_config.TextColumn(label="Rename (optional)", required=False),
+            "Cond 1": st.column_config.CheckboxColumn(
+                label="Condition 1",
+                help="Check = assign to Condition 1",
+                default=True
+            ),
+            "Species": st.column_config.CheckboxColumn(label="Species", default=True),
+            "Protein Group": st.column_config.CheckboxColumn(label="Protein Group", default=True),
+            "Original Name": st.column_config.TextColumn(label="Original Name", disabled=True),
+            "Preview": st.column_config.TextColumn(label="Preview", disabled=True),
+            "Type": st.column_config.TextColumn(label="Type", disabled=True),
+        },
+        disabled=["Original Name", "Preview", "Type"],
+        hide_index=True,
+        use_container_width=True,
+        key="unified_table_fixed"
+    )
 
     # CORRECT column_config syntax for Streamlit 1.38+
     edited = st.data_editor(
