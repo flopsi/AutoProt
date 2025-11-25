@@ -1,3 +1,4 @@
+summary_visual = """
 ╔════════════════════════════════════════════════════════════════════════╗
 ║                                                                        ║
 ║              🎉 ENHANCED PROTEOMICS APP - COMPLETE 🎉                 ║
@@ -291,3 +292,5 @@ Ready to analyze your proteomics data! 🧬🔬
 
 ═══════════════════════════════════════════════════════════════
 """
+
+print(summary_visual)
