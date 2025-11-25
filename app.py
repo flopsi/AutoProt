@@ -272,33 +272,51 @@ def step3_transform_data():
             
             sample_col = all_replicates[0]
             
-            fig = go.Figure()
+            from plotly.subplots import make_subplots
             
-            # Before
-            fig.add_trace(go.Histogram(
-                x=df[sample_col].dropna(),
-                name="Original",
-                opacity=0.7,
-                marker_color='#3498db'
-            ))
+            # Create side-by-side subplots
+            fig = make_subplots(
+                rows=1, cols=2,
+                subplot_titles=("Original Distribution", "Log2 Transformed Distribution"),
+                horizontal_spacing=0.15
+            )
             
-            # After
-            fig.add_trace(go.Histogram(
-                x=transformed_df[sample_col].dropna(),
-                name="Log2 Transformed",
-                opacity=0.7,
-                marker_color='#2ecc71'
-            ))
+            # Before (left)
+            fig.add_trace(
+                go.Histogram(
+                    x=df[sample_col].dropna(),
+                    name="Original",
+                    marker_color='#3498db',
+                    nbinsx=50
+                ),
+                row=1, col=1
+            )
+            
+            # After (right)
+            fig.add_trace(
+                go.Histogram(
+                    x=transformed_df[sample_col].dropna(),
+                    name="Log2 Transformed",
+                    marker_color='#2ecc71',
+                    nbinsx=50
+                ),
+                row=1, col=2
+            )
+            
+            # Update axes
+            fig.update_xaxes(title_text="Intensity", row=1, col=1)
+            fig.update_xaxes(title_text="Log2 Intensity", row=1, col=2)
+            fig.update_yaxes(title_text="Count", row=1, col=1)
+            fig.update_yaxes(title_text="Count", row=1, col=2)
             
             fig.update_layout(
-                title=f"Distribution Comparison: {sample_col}",
-                xaxis_title="Intensity",
-                yaxis_title="Count",
-                barmode='overlay',
+                title_text=f"Distribution Comparison: {sample_col}",
+                showlegend=False,
                 height=400
             )
             
             st.plotly_chart(fig, use_container_width=True)
+
             
             # Re-test normality
             st.markdown("### Updated Normality Test")
