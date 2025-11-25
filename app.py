@@ -25,6 +25,8 @@ from components.stats import render_stats_cards
 from services.gemini_service import analyze_proteins, chat_with_data
 
 
+# ==================== HELPER FUNCTIONS ====================
+
 def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """
     Clean DataFrame: strip whitespace from column names and index
@@ -53,178 +55,42 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = df[col].astype(float)
     
     return df
-# After creating clean_df
-st.session_state.raw_data = df.copy()  # Working data (can be transformed)
-st.session_state.raw_data_original = df.copy()  # NEVER MODIFIED - for CV only
-st.session_state.replicate_mapping = condition_mapping
-
-# Page configuration
-st.set_page_config(
-    page_title="ProteoFlow - QC & Analysis",
-    page_icon="🔬",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Initialize session state
-if 'step' not in st.session_state:
-    st.session_state.step = 1
-if 'raw_data' not in st.session_state:
-    st.session_state.raw_data = None
-if 'replicate_mapping' not in st.session_state:
-    st.session_state.replicate_mapping = {}
-if 'transformed_data' not in st.session_state:
-    st.session_state.transformed_data = None
-if 'log_transformed' not in st.session_state:
-    st.session_state.log_transformed = False
-if 'results_df' not in st.session_state:
-    st.session_state.results_df = None
 
 
-def reset_workflow():
-    """Reset entire workflow"""
-    st.session_state.step = 1
-    st.session_state.raw_data = None
-    st.session_state.replicate_mapping = {}
-    st.session_state.transformed_data = None
-    st.session_state.log_transformed = False
-    st.session_state.results_df = None
-
-
-def render_sidebar():
-    """Render sidebar with navigation controls"""
-    with st.sidebar:
-        st.title("🔬 ProteoFlow")
-        st.markdown("---")
-        
-        st.subheader("📍 Current Step")
-        st.info(f"**Step {st.session_state.step} of 5**")
-        
-        st.markdown("---")
-        
-        st.subheader("🧭 Navigation")
-        
-        # Step navigation buttons
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("⬅️ Previous", disabled=st.session_state.step == 1, use_container_width=True):
-                st.session_state.step = max(1, st.session_state.step - 1)
-                st.rerun()
-        
-        with col2:
-            if st.button("Next ➡️", disabled=st.session_state.step == 5, use_container_width=True):
-                # Check if can proceed
-                can_proceed = False
-                if st.session_state.step == 1 and st.session_state.raw_data is not None and len(st.session_state.replicate_mapping) >= 2:
-                    can_proceed = True
-                elif st.session_state.step > 1:
-                    can_proceed = True
-                
-                if can_proceed:
-                    st.session_state.step = min(5, st.session_state.step + 1)
-                    st.rerun()
-                else:
-                    st.warning("Complete current step first!")
-        
-        st.markdown("---")
-        
-        # Jump to step (only if data loaded)
-        if st.session_state.raw_data is not None and len(st.session_state.replicate_mapping) >= 2:
-            st.subheader("⚡ Quick Jump")
-            
-            step_options = {
-                "1️⃣ Load & Map": 1,
-                "2️⃣ Normality Check": 2,
-                "3️⃣ Transform": 3,
-                "4️⃣ QC Analysis": 4,
-                "5️⃣ Statistics": 5
-            }
-            
-            selected = st.selectbox(
-                "Jump to step",
-                options=list(step_options.keys()),
-                index=st.session_state.step - 1
-            )
-            
-            if st.button("Go to Step", use_container_width=True):
-                st.session_state.step = step_options[selected]
-                st.rerun()
-        
-        st.markdown("---")
-        
-        # Reset button
-        st.subheader("🔄 Reset")
-        if st.button("🔴 Start Over", type="secondary", use_container_width=True):
-            reset_workflow()
-            st.rerun()
-        
-        st.markdown("---")
-        
-        # Status info
-        st.subheader("📊 Workflow Status")
-        
-        status_items = [
-            ("Data Loaded", st.session_state.raw_data is not None),
-            ("Replicates Mapped", len(st.session_state.replicate_mapping) >= 2),
-            ("Data Transformed", st.session_state.transformed_data is not None),
-            ("Results Generated", st.session_state.results_df is not None)
-        ]
-        
-        for label, status in status_items:
-            if status:
-                st.success(f"✅ {label}")
-            else:
-                st.error(f"❌ {label}")
-
-
-def main():
-    """Main application"""
+def generate_mock_proteins(n_proteins: int = 500) -> pd.DataFrame:
+    """Generate mock protein intensity data for demo"""
+    np.random.seed(42)
     
-    # Render sidebar
-    render_sidebar()
+    proteins = [f"Protein_{i:04d}" for i in range(n_proteins)]
     
-    st.title("🔬 ProteoFlow - Proteomics QC & Analysis Platform")
-    st.markdown("### Guided workflow from raw data to publication-ready results")
+    # Generate data for two conditions with 3 replicates each
+    data = {}
     
-    # Progress indicator
-    render_progress_bar()
+    # Condition A (Young) - 3 replicates
+    for i in range(1, 4):
+        base = np.random.lognormal(10, 2, n_proteins)
+        noise = np.random.normal(1, 0.15, n_proteins)
+        data[f'Condition_A_R{i}'] = base * noise
     
-    st.markdown("---")
+    # Condition B (Old) - 3 replicates
+    for i in range(1, 4):
+        base = np.random.lognormal(10, 2, n_proteins)
+        # Some proteins upregulated
+        upregulated = np.random.choice([False, True], n_proteins, p=[0.9, 0.1])
+        base[upregulated] *= 2
+        noise = np.random.normal(1, 0.15, n_proteins)
+        data[f'Condition_B_R{i}'] = base * noise
     
-    # Step router
-    if st.session_state.step == 1:
-        step1_load_and_map()
-    elif st.session_state.step == 2:
-        step2_check_normality()
-    elif st.session_state.step == 3:
-        step3_transform_data()
-    elif st.session_state.step == 4:
-        step4_qc_analysis()
-    elif st.session_state.step == 5:
-        step5_statistical_analysis()
+    df = pd.DataFrame(data, index=proteins)
+    
+    # Add some missing values
+    mask = np.random.random(df.shape) > 0.95
+    df[mask] = np.nan
+    
+    return df
 
 
-def render_progress_bar():
-    """Render workflow progress indicator"""
-    steps = [
-        "1️⃣ Load & Map",
-        "2️⃣ Normality Check",
-        "3️⃣ Transform",
-        "4️⃣ QC Analysis",
-        "5️⃣ Statistics"
-    ]
-    
-    cols = st.columns(5)
-    for idx, (col, step_name) in enumerate(zip(cols, steps)):
-        with col:
-            if idx + 1 < st.session_state.step:
-                st.success(step_name)
-            elif idx + 1 == st.session_state.step:
-                st.info(f"**{step_name}**")
-            else:
-                st.text(step_name)
-
+# ==================== WORKFLOW STEPS ====================
 
 def step1_load_and_map():
     """Step 1: Load data and map replicates to conditions with clean naming"""
@@ -246,14 +112,11 @@ def step1_load_and_map():
                 else:
                     raw_df = pd.read_csv(uploaded_file, sep='\t', index_col=0)
                 
+                # Clean the raw dataframe
+                raw_df = clean_dataframe(raw_df)
+                
                 # Store raw data temporarily
-                # Store BOTH clean data and a copy for CV calculation
-                # Store clean data
-                st.session_state.raw_data = clean_df
-                st.session_state.raw_data_for_cv = clean_df.copy()  # PRESERVE ORIGINAL FOR CV
-                st.session_state.replicate_mapping = condition_mapping
-
-
+                st.session_state.raw_data_temp = raw_df
                 st.success(f"✅ Loaded {len(raw_df)} proteins with {len(raw_df.columns)} columns")
                 
                 with st.expander("Preview raw data"):
@@ -367,7 +230,8 @@ def step1_load_and_map():
                             return
                     
                     # Store clean data and mappings
-                    st.session_state.raw_data = clean_df
+                    st.session_state.raw_data = clean_df.copy()  # Working data (can be transformed)
+                    st.session_state.raw_data_original = clean_df.copy()  # NEVER MODIFIED - for CV only
                     st.session_state.replicate_mapping = condition_mapping
                     st.session_state.column_mapping = column_mapping  # For reference
                     
@@ -386,14 +250,11 @@ def step1_load_and_map():
                     with st.expander("Preview clean dataset"):
                         st.dataframe(clean_df.head(10), use_container_width=True)
                         st.markdown("**Data types:**")
-                        st.text(f"All columns: float64")
+                        st.text("All columns: float64")
                     
                     # Proceed to next step
                     st.session_state.step = 2
                     st.rerun()
-
-
-
 
 def step2_check_normality():
     """Step 2: Check data normality and recommend transformation"""
