@@ -53,7 +53,7 @@ from utils.stats import (
 
 
 def render_boxplots(data: pd.DataFrame, replicate_cols: List[str], 
-                   condition_names: Dict[str, List[str]], log_scale: bool = False):
+                   condition_names: Dict[str, List[str]], log_scale: bool = True):
     """
     Render boxplots for all replicates grouped by condition
     
