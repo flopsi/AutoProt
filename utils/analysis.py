@@ -1,19 +1,64 @@
+"""
+Analysis utilities for proteomics data processing
+"""
+
 import pandas as pd
 import numpy as np
-from typing import Dict
-def process_data(df: pd.DataFrame, p_val_cutoff: float, fc_cutoff: float) -> pd.DataFrame:
-    """    Process proteomics data and assign significance categories    Args:        df: DataFrame with protein data        p_val_cutoff: -log10 p-value threshold        fc_cutoff: log2 fold change threshold    Returns:        DataFrame with significance column updated    """    df = df.copy()
-    def assign_significance(row):
-        if row['negLog10PValue'] >= p_val_cutoff:
-            if row['log2FoldChange'] >= fc_cutoff:
-                return 'UP'            elif row['log2FoldChange'] <= -fc_cutoff:
-                return 'DOWN'        return 'NS'    df['significance'] = df.apply(assign_significance, axis=1)
+
+
+def process_data(df: pd.DataFrame, p_value_threshold: float = 0.05, 
+                 fc_threshold: float = 1.0) -> pd.DataFrame:
+    """
+    Process proteomics data and assign significance categories
+    
+    Args:
+        df: DataFrame with protein data including log2FoldChange and pValue
+        p_value_threshold: P-value threshold for significance (as -log10)
+        fc_threshold: Fold change threshold (log2 scale)
+        
+    Returns:
+        DataFrame with added significance column
+    """
+    df = df.copy()
+    
+    # Calculate -log10(p-value) if not present
+    if 'negLog10PValue' not in df.columns and 'pValue' in df.columns:
+        df['negLog10PValue'] = -np.log10(df['pValue'].clip(lower=1e-300))
+    
+    # Assign significance categories
+    conditions = [
+        (df['negLog10PValue'] >= p_value_threshold) & (df['log2FoldChange'] >= fc_threshold),
+        (df['negLog10PValue'] >= p_value_threshold) & (df['log2FoldChange'] <= -fc_threshold),
+    ]
+    choices = ['UP', 'DOWN']
+    df['significance'] = np.select(conditions, choices, default='NS')
+    
     return df
-def calculate_stats(df: pd.DataFrame) -> Dict[str, int]:
-    """    Calculate summary statistics from processed data    Args:        df: Processed DataFrame with significance column    Returns:        Dictionary with counts    """    return {
+
+
+def calculate_stats(df: pd.DataFrame) -> dict:
+    """
+    Calculate summary statistics for processed data
+    
+    Args:
+        df: DataFrame with significance column
+        
+    Returns:
+        Dictionary with counts of different significance categories
+    """
+    if 'significance' not in df.columns:
+        return {
+            'total': len(df),
+            'up': 0,
+            'down': 0,
+            'ns': len(df),
+            'significant': 0
+        }
+    
+    return {
         'total': len(df),
-        'up': len(df[df['significance'] == 'UP']),
-        'down': len(df[df['significance'] == 'DOWN']),
-        'ns': len(df[df['significance'] == 'NS']),
-        'significant': len(df[df['significance'] != 'NS'])
+        'up': (df['significance'] == 'UP').sum(),
+        'down': (df['significance'] == 'DOWN').sum(),
+        'ns': (df['significance'] == 'NS').sum(),
+        'significant': ((df['significance'] == 'UP') | (df['significance'] == 'DOWN')).sum()
     }
