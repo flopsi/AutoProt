@@ -186,85 +186,126 @@ with st.container():
 # In the condition assignment section (replace the old one):
 
 # ─────────────────────────────────────────────────────────────
-# 4. SMART Auto-Detection of Conditions & Ratios
+# 4. SMART Condition Assignment + Replica Preview Table (with checkboxes)
 # ─────────────────────────────────────────────────────────────
 with st.container():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.subheader("Smart Condition Assignment")
+    st.subheader("Condition Assignment")
 
+    # All numeric (intensity) columns
     numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
 
-    # Auto-detect ratio groups
+    # ── Auto-detect ratio groups from filename pattern Yxx-Exx ──
     import re
     ratio_groups = {}
     for col in numeric_cols:
         match = re.search(r'_Y(\d{2})-E(\d{2})_', col)
         if match:
-            yeast_pct = int(match.group(1))
-            ecoli_pct = int(match.group(2))
-            ratio_key = f"Y{yeast_pct:02d}-E{ecoli_pct:02d}"
-            if ratio_key not in ratio_groups:
-                ratio_groups[ratio_key] = {
-                    'columns': [],
-                    'yeast_pct': yeast_pct,
-                    'ecoli_pct': ecoli_pct,
-                    'human_pct': 100 - yeast_pct - ecoli_pct
-                }
-            ratio_groups[ratio_key]['columns'].append(col)
+            y = int(match.group(1))
+            e = int(match.group(2))
+            key = f"Y{y:02d}-E{e:02d}"
+            ratio_groups.setdefault(key, []).append(col)
 
+    # ── Auto-split into two conditions (lowest yeast % → Cond1, highest → Cond2)
     if len(ratio_groups) >= 2:
-        # Sort by yeast % (low → high)
-        sorted_ratios = sorted(ratio_groups.items(), key=lambda x: x[1]['yeast_pct'])
-        
-        cond1_key, cond1_info = sorted_ratios[0]
-        cond2_key, cond2_info = sorted_ratios[-1]
-        
-        cond1_cols = cond1_info['columns']
-        cond2_cols = cond2_info['columns']
-        
-        # Auto-calculate expected log2 ratios
-        expected_yeast = np.log2(cond2_info['yeast_pct'] / cond1_info['yeast_pct'])
-        expected_ecoli = np.log2(cond2_info['ecoli_pct'] / cond1_info['ecoli_pct'])
-        expected_human = 0.0  # always 1:1
-        
-        st.success(f"✅ **Auto-detected {len(cond1_cols)}:3 design**")
-        st.info(f"Expected log₂ ratios: Yeast={expected_yeast:.2f}, E.coli={expected_ecoli:.2f}, Human={expected_human:.2f}")
-        
-        # Confirmation table
-        st.dataframe(pd.DataFrame({
-            'Ratio': [cond1_key, cond2_key],
-            'Condition': ['**Cond 1** (low yeast)', '**Cond 2** (high yeast)'],
-            'Replicates': [len(cond1_cols), len(cond2_cols)],
-            'Columns': [', '.join(cond1_cols), ', '.join(cond2_cols)]
-        }).style.format({'Replicates': '{:.0f}'}))
-        
-        # Option to override
-        if st.button("Use Auto-Detection"):
-            st.session_state.cond1_cols = cond1_cols
-            st.session_state.cond2_cols = cond2_cols
-            st.session_state.expected_ratios = {
-                'YEAST': expected_yeast,
-                'ECOLI': expected_ecoli, 
-                'HUMAN': expected_human
-            }
-            st.success("Auto-detection confirmed!")
-            
+        sorted_keys = sorted(ratio_groups.keys(), key=lambda x: int(x.split('-')[0][1:]))
+        cond1_key = sorted_keys[0]
+        cond2_key = sorted_keys[-1]
+        default_cond1 = ratio_groups[cond1_key]
+        default_cond2 = ratio_groups[cond2_key]
     else:
-        # Fallback: half-split
+        # Fallback: even split
         half = len(numeric_cols) // 2
-        cond1_cols = numeric_cols[:half]
-        cond2_cols = numeric_cols[half:]
+        default_cond1 = numeric_cols[:half]
+        default_cond2 = numeric_cols[half:]
+
+    # ── Preview table with pre-selected checkboxes ──
+    st.write("**Select replicates for Condition 1** (all others will automatically go to Condition 2)")
+
+    preview_data = []
+    for col in numeric_cols:
+        preview_data.append({
+            "Include in Cond 1": col in default_cond1,
+            "Column": col,
+            "Suggested Condition": "Condition 1" if col in default_cond1 else "Condition 2"
+        })
+
+    preview_df = pd.DataFrame(preview_data)
+
+    # Editable checkbox table
+    edited_df = st.data_editor(
+        preview_df,
+        column_config={
+            "Include in Cond 1": st.column_config.CheckboxColumn(
+                "Include in Cond 1",
+                default_value=False
+            ),
+            "Column": st.column_config.TextColumn("Column", disabled=True),
+            "Suggested Condition": st.column_config.TextColumn("Suggested Condition", disabled=True),
+        },
+        hide_index=True,
+        use_container_width=True,
+        num_rows="fixed"
+    )
+
+    # Extract final selection
+    final_cond1 = edited_df[edited_df["Include in Cond 1"]]["Column"].tolist()
+    final_cond2 = [c for c in numeric_cols if c not in final_cond1]
+
+    if len(final_cond1) == 0 or len(final_cond2) == 0:
+        st.error("At least one replicate must be assigned to each condition.")
+        st.stop()
+
+    st.session_state.cond1_cols = final_cond1
+    st.session_state.cond2_cols = final_cond2
+
+    st.success(f"Condition 1: {len(final_cond1)} replicates | Condition 2: {len(final_cond2)} replicates")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
-# 5. Ready for Data Quality Module
+# 5. Auto-detect Species and Protein Group columns
 # ─────────────────────────────────────────────────────────────
-st.markdown("<div class='card'>", unsafe_allow_html=True)
-st.subheader("Ready for Data Quality Assessment")
-st.info("Data is loaded, validated, and conditions assigned. Next: **Module 2 – Data Quality** (intensity distribution, missing values, CVs, PCA, etc.)")
-st.markdown("**We will design this page together before coding.**")
-st.markdown("</div>", unsafe_allow_html=True)
+with st.container():
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.subheader("Metadata Columns")
+
+    # Species column
+    species_candidates = [c for c in df.columns if "HUMAN" in df[c].astype(str).str.upper().any()]
+    if "Species" in df.columns:
+        species_col = "Species"
+    elif species_candidates:
+        species_col = species_candidates[0]
+    else:
+        species_col = st.selectbox("Select Species column (contains HUMAN/YEAST/ECOLI)", df.columns)
+
+    # Protein Group / Accession column
+    protein_candidates = [c for c in df.columns if "protein" in c.lower()]
+    if protein_candidates:
+        protein_col = protein_candidates[0]
+    else:
+        protein_col = df.columns[0]  # fallback
+
+    st.info(f"**Protein IDs** → `{protein_col}`  |  **Species** → `{species_col}`")
+
+    st.session_state.species_col = species_col
+    st.session_state.protein_col = protein_col
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────
+# 6. Clean Replica Names (auto-trimmed)
+# ─────────────────────────────────────────────────────────────
+clean_names = {}
+for col in numeric_cols:
+    # Remove date + everything before last underscore
+    clean = col.split("_")[-1].replace(".raw", "")
+    clean_names[col] = f"Rep {clean}"
+
+if st.checkbox("Use clean replica names in plots/tables", value=True):
+    st.session_state.clean_names = clean_names
+else:
+    st.session_state.clean_names = {col: col for col in numeric_cols}
 
 # ─────────────────────────────────────────────────────────────
 # Footer
