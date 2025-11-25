@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
+from plotly.subplots import make_subplots
 from io import BytesIO
 
 # Import utilities
@@ -47,8 +48,108 @@ if 'results_df' not in st.session_state:
     st.session_state.results_df = None
 
 
+def reset_workflow():
+    """Reset entire workflow"""
+    st.session_state.step = 1
+    st.session_state.raw_data = None
+    st.session_state.replicate_mapping = {}
+    st.session_state.transformed_data = None
+    st.session_state.log_transformed = False
+    st.session_state.results_df = None
+
+
+def render_sidebar():
+    """Render sidebar with navigation controls"""
+    with st.sidebar:
+        st.title("🔬 ProteoFlow")
+        st.markdown("---")
+        
+        st.subheader("📍 Current Step")
+        st.info(f"**Step {st.session_state.step} of 5**")
+        
+        st.markdown("---")
+        
+        st.subheader("🧭 Navigation")
+        
+        # Step navigation buttons
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("⬅️ Previous", disabled=st.session_state.step == 1, use_container_width=True):
+                st.session_state.step = max(1, st.session_state.step - 1)
+                st.rerun()
+        
+        with col2:
+            if st.button("Next ➡️", disabled=st.session_state.step == 5, use_container_width=True):
+                # Check if can proceed
+                can_proceed = False
+                if st.session_state.step == 1 and st.session_state.raw_data is not None and len(st.session_state.replicate_mapping) >= 2:
+                    can_proceed = True
+                elif st.session_state.step > 1:
+                    can_proceed = True
+                
+                if can_proceed:
+                    st.session_state.step = min(5, st.session_state.step + 1)
+                    st.rerun()
+                else:
+                    st.warning("Complete current step first!")
+        
+        st.markdown("---")
+        
+        # Jump to step (only if data loaded)
+        if st.session_state.raw_data is not None and len(st.session_state.replicate_mapping) >= 2:
+            st.subheader("⚡ Quick Jump")
+            
+            step_options = {
+                "1️⃣ Load & Map": 1,
+                "2️⃣ Normality Check": 2,
+                "3️⃣ Transform": 3,
+                "4️⃣ QC Analysis": 4,
+                "5️⃣ Statistics": 5
+            }
+            
+            selected = st.selectbox(
+                "Jump to step",
+                options=list(step_options.keys()),
+                index=st.session_state.step - 1
+            )
+            
+            if st.button("Go to Step", use_container_width=True):
+                st.session_state.step = step_options[selected]
+                st.rerun()
+        
+        st.markdown("---")
+        
+        # Reset button
+        st.subheader("🔄 Reset")
+        if st.button("🔴 Start Over", type="secondary", use_container_width=True):
+            reset_workflow()
+            st.rerun()
+        
+        st.markdown("---")
+        
+        # Status info
+        st.subheader("📊 Workflow Status")
+        
+        status_items = [
+            ("Data Loaded", st.session_state.raw_data is not None),
+            ("Replicates Mapped", len(st.session_state.replicate_mapping) >= 2),
+            ("Data Transformed", st.session_state.transformed_data is not None),
+            ("Results Generated", st.session_state.results_df is not None)
+        ]
+        
+        for label, status in status_items:
+            if status:
+                st.success(f"✅ {label}")
+            else:
+                st.error(f"❌ {label}")
+
+
 def main():
     """Main application"""
+    
+    # Render sidebar
+    render_sidebar()
     
     st.title("🔬 ProteoFlow - Proteomics QC & Analysis Platform")
     st.markdown("### Guided workflow from raw data to publication-ready results")
@@ -112,11 +213,27 @@ def step1_load_and_map():
                 else:
                     df = pd.read_csv(uploaded_file, sep='\t', index_col=0)
                 
+                # ⭐ FORCE CONVERT ALL NUMERIC COLUMNS TO FLOAT
+                for col in df.columns:
+                    # Try to convert to numeric, coerce errors to NaN
+                    if df[col].dtype == 'object':
+                        df[col] = pd.to_numeric(df[col], errors='coerce')
+                    # Ensure it's float
+                    if pd.api.types.is_numeric_dtype(df[col]):
+                        df[col] = df[col].astype(float)
+                
                 st.session_state.raw_data = df
                 st.success(f"✅ Loaded {len(df)} proteins with {len(df.columns)} columns")
                 
-                with st.expander("Preview data"):
+                # Show data types info
+                with st.expander("Preview data & types"):
                     st.dataframe(df.head(10), use_container_width=True)
+                    
+                    # Data type summary
+                    dtype_summary = df.dtypes.value_counts()
+                    st.markdown("**Column Types:**")
+                    for dtype, count in dtype_summary.items():
+                        st.text(f"  {dtype}: {count} columns")
                     
             except Exception as e:
                 st.error(f"Error loading file: {str(e)}")
@@ -125,6 +242,12 @@ def step1_load_and_map():
         st.subheader("🧪 Or Try Demo Data")
         if st.button("Load Demo Dataset", use_container_width=True):
             df = generate_mock_proteins(n_proteins=500)
+            
+            # ⭐ ENSURE DEMO DATA IS ALSO FLOAT
+            for col in df.columns:
+                if pd.api.types.is_numeric_dtype(df[col]):
+                    df[col] = df[col].astype(float)
+            
             st.session_state.raw_data = df
             st.success("✅ Demo dataset loaded!")
             st.rerun()
@@ -135,7 +258,15 @@ def step1_load_and_map():
         st.subheader("🔗 Map Replicates to Conditions")
         
         df = st.session_state.raw_data
-        available_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        
+        # ⭐ ONLY SHOW FLOAT/NUMERIC COLUMNS
+        available_cols = [col for col in df.columns if pd.api.types.is_numeric_dtype(df[col])]
+        
+        if len(available_cols) == 0:
+            st.error("No numeric columns found! Please check your data file.")
+            return
+        
+        st.info(f"Found {len(available_cols)} numeric columns available for analysis")
         
         n_conditions = st.number_input(
             "Number of experimental conditions",
@@ -166,6 +297,7 @@ def step1_load_and_map():
                 st.session_state.replicate_mapping = condition_mapping
                 st.session_state.step = 2
                 st.rerun()
+
 
 
 def step2_check_normality():
@@ -213,13 +345,11 @@ def step2_check_normality():
                     f"⚠️ Only {normal_count}/{total_count} samples show normal distribution. "
                     "**Log2 transformation is recommended** to improve normality and stabilize variance."
                 )
-                recommend_transform = True
             else:
                 st.success(
                     f"✅ {normal_count}/{total_count} samples show normal distribution. "
                     "Data appears reasonably normal, but log transformation may still improve results."
                 )
-                recommend_transform = False
     
     st.markdown("---")
     
@@ -267,12 +397,10 @@ def step3_transform_data():
             
             st.success("✅ Transformation complete!")
             
-            # Show before/after comparison
+            # Show before/after comparison - SIDE BY SIDE
             st.markdown("### Before & After Comparison")
             
             sample_col = all_replicates[0]
-            
-            from plotly.subplots import make_subplots
             
             # Create side-by-side subplots
             fig = make_subplots(
@@ -316,7 +444,6 @@ def step3_transform_data():
             )
             
             st.plotly_chart(fig, use_container_width=True)
-
             
             # Re-test normality
             st.markdown("### Updated Normality Test")
