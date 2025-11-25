@@ -237,15 +237,3 @@ with col_restart:
         st.session_state.clear()
         st.rerun()
 
-# Optional: Bottom fixed restart button (always visible)
-st.markdown("""
-<div style="position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 999;">
-    <div style="background: #E71316; color: white; padding: 12px 30px; border-radius: 8px; font-weight: 500; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">
-        Restart Analysis — Clear All Data
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-if st.button("Restart Analysis — Clear All Data", key="fixed_restart", use_container_width=True):
-    st.session_state.clear()
-    st.rerun()
