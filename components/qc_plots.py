@@ -65,6 +65,9 @@ def render_boxplots(data: pd.DataFrame, replicate_cols: List[str],
     """
     st.markdown("### 📊 Replicate Intensity Distributions")
     
+    # Create short names mapping
+    short_names = {col: shorten_sample_name(col) for col in replicate_cols}
+    
     # Prepare data for plotting
     plot_data = []
     for condition, cols in condition_names.items():
@@ -72,7 +75,8 @@ def render_boxplots(data: pd.DataFrame, replicate_cols: List[str],
             values = data[col].dropna()
             for val in values:
                 plot_data.append({
-                    'Replicate': col,
+                    'Replicate': short_names[col],  # Use shortened name
+                    'Original': col,  # Keep original for hover
                     'Condition': condition,
                     'Intensity': val
                 })
@@ -91,14 +95,15 @@ def render_boxplots(data: pd.DataFrame, replicate_cols: List[str],
     for idx, (condition, cols) in enumerate(condition_names.items()):
         color = colors[idx % len(colors)]
         for col in cols:
-            subset = plot_df[plot_df['Replicate'] == col]
+            subset = plot_df[plot_df['Original'] == col]
             fig.add_trace(go.Box(
                 y=subset['Intensity'],
-                name=col,
+                name=short_names[col],  # Use shortened name
                 marker_color=color,
                 boxmean='sd',
                 legendgroup=condition,
-                legendgrouptitle_text=condition
+                legendgrouptitle_text=condition,
+                hovertext=f"Full name: {col}"  # Show full name on hover
             ))
     
     y_label = "Log2 Intensity" if log_scale else "Intensity"
@@ -107,7 +112,8 @@ def render_boxplots(data: pd.DataFrame, replicate_cols: List[str],
         yaxis_title=y_label,
         xaxis_title="Replicate",
         showlegend=True,
-        height=500
+        height=500,
+        xaxis=dict(tickangle=-45)  # Angle x-axis labels
     )
     
     st.plotly_chart(fig, use_container_width=True)
@@ -120,7 +126,8 @@ def render_boxplots(data: pd.DataFrame, replicate_cols: List[str],
             if len(values) > 0:
                 quartiles = calculate_quartiles(values)
                 summary_data.append({
-                    'Replicate': col,
+                    'Replicate': short_names[col],
+                    'Full Name': col,
                     'Count': len(values),
                     'Mean': f"{values.mean():.2f}",
                     'Median': f"{quartiles['median']:.2f}",
