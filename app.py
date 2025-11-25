@@ -123,65 +123,16 @@ if not uploaded_file:
     st.stop()
 
 # ─────────────────────────────────────────────────────────────
-# Load & Parse
-# ─────────────────────────────────────────────────────────────
-@st.cache_data
-def load_and_parse(file):
-    content = file.getvalue().decode("utf-8", errors="replace")
-    if content.startswith("\ufeff"): content = content[1:]
-    df = pd.read_csv(io.StringIO(content), sep=None, engine="python", dtype=str)
-    
-    intensity_cols = [c for c in df.columns if c not in ["pg", "name"]]
-    for col in intensity_cols:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    if "name" in df.columns:
-        split = df["name"].str.split(",", n=1, expand=True)
-        if split.shape[1] == 2:
-            df.insert(1, "Accession", split[0])
-            df.insert(2, "Species", split[1])
-            df = df.drop(columns=["name"])
-
-    return df
-
-df = load_and_parse(uploaded_file)
-st.session_state.df = df
-st.success(f"Data imported — {len(df):,} proteins")
-st.dataframe(df.head(10), use_container_width=True)
-
-# ─────────────────────────────────────────────────────────────
-# Column Renaming (optional)
+# ONE Unified Preview & Assignment Table (replaces all previous tables)
 # ─────────────────────────────────────────────────────────────
 with st.container():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.subheader("Column Renaming (optional)")
-    rename_dict = {}
-    cols = df.columns.tolist()
-    c1, c2 = st.columns(2)
-    for i, col in enumerate(cols):
-        with (c1 if i % 2 == 0 else c2):
-            new = st.text_input(f"`{col}` →", value=col, key=f"r_{col}")
-            if new != col and new.strip():
-                rename_dict[col] = new.strip()
-
-    if st.button("Apply Renaming"):
-        if rename_dict:
-            df = df.rename(columns=rename_dict)
-            st.session_state.df = df
-            st.success("Renamed")
-            st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# ─────────────────────────────────────────────────────────────
-# Condition Assignment with Working Checkbox Table
-# ─────────────────────────────────────────────────────────────
-with st.container():
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.subheader("Condition Assignment")
+    st.subheader("Data Preview & Column Assignment")
 
     numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
 
-    # Auto-detect Yxx-Exx pattern
+    # Auto-detect conditions (Yxx-Exx pattern)
+    import re
     ratio_groups = {}
     for col in numeric_cols:
         m = re.search(r'_Y(\d{2})-E(\d{2})_', col)
@@ -195,65 +146,88 @@ with st.container():
     else:
         default_cond1 = numeric_cols[:len(numeric_cols)//2]
 
-    # Preview table
-    preview_data = []
-    for col in numeric_cols:
-        preview_data.append({
-            "Cond 1": col in default_cond1,
+    # Auto-detect Species & Protein columns
+    species_candidates = []
+    for col in df.columns:
+        if df[col].astype(str).str.upper().fillna("").str.contains("HUMAN|YEAST|ECOLI").any():
+            species_candidates.append(col)
+
+    protein_candidates = [c for c in df.columns if "protein" in c.lower()]
+
+    default_species = "Species" if "Species" in df.columns else (species_candidates[0] if species_candidates else None)
+    default_protein = protein_candidates[0] if protein_candidates else df.columns[0]
+
+    # Build unified preview table
+    rows = []
+    for col in df.columns:
+        is_numeric = col in numeric_cols
+        preview = " | ".join(df[col].dropna().astype(str).unique()[:3]) if not is_numeric else "numeric intensity"
+        rows.append({
+            "Cond 1": col in default_cond1 and is_numeric,
+            "Species": col == default_species,
+            "Protein Group": col == default_protein,
             "Column": col,
-            "Suggested": "Condition 1" if col in default_cond1 else "Condition 2"
+            "Preview": preview,
+            "Type": "Intensity" if is_numeric else "Metadata"
         })
 
-    preview_df = pd.DataFrame(preview_data)
+    preview_df = pd.DataFrame(rows)
 
     edited = st.data_editor(
         preview_df,
         column_config={
-            "Cond 1": st.column_config.CheckboxColumn("Cond 1", default=False),
+            "Cond 1": st.column_config.CheckboxColumn(
+                "Condition 1",
+                help="Check = assign to Condition 1 (others go to Condition 2)",
+                default=False
+            ),
+            "Species": st.column_config.CheckboxColumn(
+                "Species",
+                help="Exactly one column must contain HUMAN/YEAST/ECOLI",
+                default=False
+            ),
+            "Protein Group": st.column_config.CheckboxColumn(
+                "Protein Group",
+                help="Exactly one column = protein identifiers",
+                default=False
+            ),
             "Column": st.column_config.TextColumn("Column", disabled=True),
-            "Suggested": st.column_config.TextColumn("Suggested", disabled=True),
+            "Preview": st.column_config.TextColumn("Preview", disabled=True),
+            "Type": st.column_config.TextColumn("Type", disabled=True),
         },
-        disabled=["Column", "Suggested"],
+        disabled=["Column", "Preview", "Type"],
         hide_index=True,
         use_container_width=True,
-        key="cond_editor"
+        key="unified_assignment"
     )
 
+    # Extract selections
     cond1_cols = edited[edited["Cond 1"]]["Column"].tolist()
     cond2_cols = [c for c in numeric_cols if c not in cond1_cols]
+    species_cols = edited[edited["Species"]]["Column"].tolist()
+    protein_cols = edited[edited["Protein Group"]]["Column"].tolist()
 
+    # Validation
     if len(cond1_cols) == 0 or len(cond2_cols) == 0:
         st.error("Both conditions must have at least one replicate")
         st.stop()
+    if len(species_cols) != 1:
+        st.error("Exactly one Species column must be selected")
+        st.stop()
+    if len(protein_cols) != 1:
+        st.error("Exactly one Protein Group column must be selected")
+        st.stop()
 
+    # Save to session
     st.session_state.cond1_cols = cond1_cols
     st.session_state.cond2_cols = cond2_cols
-    st.success(f"Condition 1: {len(cond1_cols)} | Condition 2: {len(cond2_cols)}")
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.session_state.species_col = species_cols[0]
+    st.session_state.protein_col = protein_cols[0]
 
-# ─────────────────────────────────────────────────────────────
-# Species & Protein Column (fixed)
-# ─────────────────────────────────────────────────────────────
-with st.container():
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.subheader("Metadata")
+    st.success("All assignments complete!")
+    st.info(f"**Condition 1**: {len(cond1_cols)} reps | **Condition 2**: {len(cond2_cols)} reps | "
+            f"**Species** → `{species_cols[0]}` | **Protein** → `{protein_cols[0]}`")
 
-    # Safe species detection
-    species_col = "Species" if "Species" in df.columns else None
-    if not species_col:
-        for col in df.columns:
-            if df[col].astype(str).str.upper().fillna("").str.contains("HUMAN").any():
-                species_col = col
-                break
-    if not species_col:
-        species_col = st.selectbox("Species column", df.columns)
-
-    # Protein column
-    protein_col = next((c for c in df.columns if "protein" in c.lower()), df.columns[0])
-
-    st.info(f"**Protein IDs** → `{protein_col}` | **Species** → `{species_col}`")
-    st.session_state.species_col = species_col
-    st.session_state.protein_col = protein_col
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
