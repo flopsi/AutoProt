@@ -1,27 +1,27 @@
-# app.py — LFQbench Proteomics Analysis (Thermo Fisher Corporate Design)
+# app.py — LFQbench Data Import Module (Thermo Fisher Corporate Design)
 import streamlit as st
 import pandas as pd
 import numpy as np
-import seaborn as sns
-import matplotlib.pyplot as plt
-from scipy.stats import ttest_ind
 import io
 
 # ─────────────────────────────────────────────────────────────
-# Page Config & Full Thermo Fisher CSS (pixel-perfect match)
+# Page Config
 # ─────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="LFQbench Analysis | Thermo Fisher Scientific",
+    page_title="LFQbench Data Import | Thermo Fisher Scientific",
     page_icon="https://www.thermofisher.com/etc.clientlibs/fe-dam/clientlibs/fe-dam-site/resources/images/favicons/favicon-32x32.png",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
+# ─────────────────────────────────────────────────────────────
+# Full Thermo Fisher CSS (pixel-perfect match to your mockup)
+# ─────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
     :root {
-        --primary-red: #E71316; --dark-red: #A6192E; --primary-gray: #54585A;
-        --light-gray: #E2E3E4; --navy: #262262; --green: #B5BD00; --orange: #EA7600;
+        --primary-red: #E71316; --dark-red: #A6192E; --gray: #54585A;
+        --light-gray: #E2E3E4; --navy: #262262; --green: #B5BD00;
     }
     html, body, [class*="css"] {font-family: Arial, sans-serif !important;}
     .header {
@@ -76,7 +76,7 @@ st.markdown("""
 </div>
 <div class="nav">
     <div class="nav-item active">Module 1: Data Import</div>
-    <div class="nav-item">Module 2: Quality Control</div>
+    <div class="nav-item">Module 2: Data Quality</div>
     <div class="nav-item">Module 3: Preprocessing</div>
     <div class="nav-item">Module 4: Analysis</div>
 </div>
@@ -90,13 +90,13 @@ st.markdown("""
     <div class="module-icon">Upload</div>
     <div>
         <h2>Module 1: Data Import & Validation</h2>
-        <p>Upload your MaxQuant proteinGroups.txt or any LFQ intensity matrix</p>
+        <p>Upload and validate your LFQ intensity matrix</p>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
-# 1. File Upload (exact same logic as before)
+# 1. File Upload (Beautiful branded area)
 # ─────────────────────────────────────────────────────────────
 with st.container():
     st.markdown("""
@@ -125,20 +125,22 @@ if not uploaded_file:
     st.stop()
 
 # ─────────────────────────────────────────────────────────────
-# 2. Load & Parse (your exact logic restored)
+# 2. Load & Parse — FIXED low_memory issue + your exact logic
 # ─────────────────────────────────────────────────────────────
 @st.cache_data
 def load_and_parse(file):
     content = file.getvalue().decode("utf-8", errors="replace")
-    if content.startswith("\ufeff"): content = content[1:]
-    df = pd.read_csv(io.StringIO(content), sep=None, engine="python", low_memory=False)
+    if content.startswith("\ufeff"):
+        content = content[1:]
+    # Fixed: low_memory is deprecated → use dtype=str to avoid warnings
+    df = pd.read_csv(io.StringIO(content), sep=None, engine="python", dtype=str)
+    
+    # Convert only intensity columns to numeric
+    intensity_cols = [c for c in df.columns if c not in ["pg", "name"]]
+    for col in intensity_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Force numeric
-    for col in df.columns:
-        if col not in ["pg", "name"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    # Extract species from 'name' column (P12345,YEAST → Accession + Species)
+    # Extract species from 'name' column
     if "name" in df.columns:
         split = df["name"].str.split(",", n=1, expand=True)
         if split.shape[1] == 2:
@@ -151,93 +153,44 @@ def load_and_parse(file):
 df = load_and_parse(uploaded_file)
 st.session_state.df = df
 
-st.success(f"Data imported successfully — {len(df):,} proteins detected")
-st.dataframe(df.head(), use_container_width=True)
+st.success(f"Data imported successfully — {len(df):,} proteins, {len(df.columns)} columns")
+st.dataframe(df.head(10), use_container_width=True)
 
 # ─────────────────────────────────────────────────────────────
-# 3. Column Renaming (beautiful branded grid)
+# 3. Column Renaming (optional, clean layout)
+# ─────────────────────────────────────────────────────────────
+with st.container():
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.subheader("Column Renaming (optional)")
+
+    rename_dict = {}
+    cols = df.columns.tolist()
+    col1, col2 = st.columns(2)
+    for i, col in enumerate(cols):
+        with (col1 if i % 2 == 0 else col2):
+            new_name = st.text_input(f"`{col}` →", value=col, key=f"rename_{col}")
+            if new_name != col and new_name.strip():
+                rename_dict[col] = new_name.strip()
+
+    if st.button("Apply Renaming"):
+        if rename_dict:
+            df = df.rename(columns=rename_dict)
+            st.session_state.df = df
+            st.success("Columns renamed successfully")
+            st.rerun()
+        else:
+            st.info("No changes made")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────
+# 4. Ready for Next Step
 # ─────────────────────────────────────────────────────────────
 st.markdown("<div class='card'>", unsafe_allow_html=True)
-st.subheader("Column Renaming (optional)")
-
-rename_dict = {}
-cols = df.columns.tolist()
-col1, col2 = st.columns(2)
-for i, col in enumerate(cols):
-    with (col1 if i % 2 == 0 else col2):
-        new_name = st.text_input(f"Rename `{col}`", value=col, key=f"rename_{col}")
-        if new_name != col and new_name.strip():
-            rename_dict[col] = new_name.strip()
-
-if rename_dict:
-    df = df.rename(columns=rename_dict)
-    st.session_state.df = df
-    st.success("Columns renamed successfully")
-
+st.subheader("Ready for Data Quality Assessment")
+st.info("Data is loaded and validated. Next: **Module 2 – Data Quality** (intensity distribution, missing values, CVs, PCA, etc.)")
+st.markdown("**We will design this page together before coding.**")
 st.markdown("</div>", unsafe_allow_html=True)
-
-# ─────────────────────────────────────────────────────────────
-# 4. Condition Assignment
-# ─────────────────────────────────────────────────────────────
-st.markdown("<div class='card'>", unsafe_allow_html=True)
-st.subheader("Assign Replicates to Conditions")
-
-numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
-left, right = st.columns(2)
-
-with left:
-    cond1_cols = st.multiselect("Condition 1 (e.g., Control)", options=numeric_cols, default=numeric_cols[:3])
-with right:
-    cond2_cols = st.multiselect("Condition 2 (e.g., Treatment)", options=numeric_cols, default=numeric_cols[3:6])
-
-if set(cond1_cols) & set(cond2_cols):
-    st.error("Same column cannot be in both conditions")
-    st.stop()
-
-st.markdown("</div>", unsafe_allow_html=True)
-
-# ─────────────────────────────────────────────────────────────
-# 5. Run LFQbench Analysis
-# ─────────────────────────────────────────────────────────────
-if st.button("Run LFQbench Analysis", type="primary"):
-    work = df.copy()
-    work = work.dropna(subset=cond1_cols + cond2_cols + ["Species"])
-    work = work[(work[cond1_cols + cond2_cols] > 0).all(axis=1)]
-
-    work["mean_cond1"] = work[cond1_cols].mean(axis=1)
-    work["mean_cond2"] = work[cond2_cols].mean(axis=1)
-    work["log2_ratio"] = np.log2(work["mean_cond2"] / work["mean_cond1"])
-
-    # p-values
-    pvals = []
-    for _, row in work.iterrows():
-        _, p = ttest_ind(row[cond1_cols], row[cond2_cols], equal_var=False)
-        pvals.append(p if not np.isnan(p) else 1.0)
-    work["p_value"] = pvals
-
-    # Summary
-    summary = (
-        work.groupby("Species")["log2_ratio"]
-        .agg(["count","mean","std"])
-        .round(4)
-        .reset_index()
-    )
-    summary.rename(columns={"mean":"observed_mean", "std":"precision_1SD"}, inplace=True)
-
-    st.success("Analysis Complete!")
-    st.subheader("LFQbench Summary Table")
-    st.dataframe(summary.style.format("{:.3f}"), use_container_width=True)
-
-    # Boxplot
-    st.subheader("Log₂ Ratio Distribution by Species")
-    fig, ax = plt.subplots(figsize=(10,6))
-    sns.boxplot(data=work, x="Species", y="log2_ratio", ax=ax, palette="Set2")
-    ax.set_title("Observed Log₂ Ratios by Species", fontsize=16, color="#54585A")
-    st.pyplot(fig)
-
-    # Download
-    csv = work.to_csv(index=False).encode()
-    st.download_button("Download Full Results", csv, "lfqbench_results.csv", "text/csv")
 
 # ─────────────────────────────────────────────────────────────
 # Footer
