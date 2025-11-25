@@ -443,26 +443,42 @@ def step3_transform_data():
 
 
 def step4_qc_analysis():
-    """Step 4: Comprehensive QC analysis"""
+    """Step 4: Quality Control Analysis"""
     st.header("Step 4: Quality Control Analysis")
     
-    # Get working data
-    df = st.session_state.transformed_data if st.session_state.transformed_data is not None else st.session_state.raw_data
+    # Verify data exists
+    if not hasattr(st.session_state, 'raw_data'):
+        st.error("❌ No data found. Please go back to Step 1.")
+        return
+    
+    if not hasattr(st.session_state, 'replicate_mapping'):
+        st.error("❌ No replicate mapping found. Please go back to Step 1.")
+        return
+    
+    # Get working data (use raw_data which contains current state)
+    df = st.session_state.raw_data
     mapping = st.session_state.replicate_mapping
     
     # Get all replicate columns
-    all_replicates = []
-    for cols in mapping.values():
-        all_replicates.extend(cols)
+    all_replicates = [col for cols in mapping.values() for col in cols]
     
-    # Render complete QC dashboard
-    render_qc_dashboard(df, all_replicates, mapping, st.session_state.log_transformed)
+    st.info(f"Analyzing {len(df)} proteins across {len(all_replicates)} samples")
     
+    # Show transformation status
+    if hasattr(st.session_state, 'data_is_transformed') and st.session_state.data_is_transformed:
+        st.success("📊 Analyzing **transformed** data (log2 scale)")
+    else:
+        st.info("📊 Analyzing **original** data (linear scale)")
+    
+    # Render QC dashboard
+    render_qc_dashboard(df, all_replicates, mapping)
+    
+    # Proceed button
     st.markdown("---")
-    
     if st.button("➡️ Proceed to Statistical Analysis", type="primary", use_container_width=True):
         st.session_state.step = 5
         st.rerun()
+
 
 
 def step5_statistical_analysis():
