@@ -183,43 +183,77 @@ with st.container():
 
     st.markdown("</div>", unsafe_allow_html=True)
 
+# In the condition assignment section (replace the old one):
+
 # ─────────────────────────────────────────────────────────────
-# 4. Auto-Guess Conditions + Species Column
+# 4. SMART Auto-Detection of Conditions & Ratios
 # ─────────────────────────────────────────────────────────────
 with st.container():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.subheader("Assign Replicates to Conditions")
+    st.subheader("Smart Condition Assignment")
 
-    # Detect numeric columns
-    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c]) and c != "Species"]
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
 
-    # Auto-guess: Assume even number, split in half
-    if len(numeric_cols) % 2 == 0:
-        half = len(numeric_cols) // 2
-        default_cond1 = numeric_cols[:half]
-        default_cond2 = numeric_cols[half:]
+    # Auto-detect ratio groups
+    import re
+    ratio_groups = {}
+    for col in numeric_cols:
+        match = re.search(r'_Y(\d{2})-E(\d{2})_', col)
+        if match:
+            yeast_pct = int(match.group(1))
+            ecoli_pct = int(match.group(2))
+            ratio_key = f"Y{yeast_pct:02d}-E{ecoli_pct:02d}"
+            if ratio_key not in ratio_groups:
+                ratio_groups[ratio_key] = {
+                    'columns': [],
+                    'yeast_pct': yeast_pct,
+                    'ecoli_pct': ecoli_pct,
+                    'human_pct': 100 - yeast_pct - ecoli_pct
+                }
+            ratio_groups[ratio_key]['columns'].append(col)
+
+    if len(ratio_groups) >= 2:
+        # Sort by yeast % (low → high)
+        sorted_ratios = sorted(ratio_groups.items(), key=lambda x: x[1]['yeast_pct'])
+        
+        cond1_key, cond1_info = sorted_ratios[0]
+        cond2_key, cond2_info = sorted_ratios[-1]
+        
+        cond1_cols = cond1_info['columns']
+        cond2_cols = cond2_info['columns']
+        
+        # Auto-calculate expected log2 ratios
+        expected_yeast = np.log2(cond2_info['yeast_pct'] / cond1_info['yeast_pct'])
+        expected_ecoli = np.log2(cond2_info['ecoli_pct'] / cond1_info['ecoli_pct'])
+        expected_human = 0.0  # always 1:1
+        
+        st.success(f"✅ **Auto-detected {len(cond1_cols)}:3 design**")
+        st.info(f"Expected log₂ ratios: Yeast={expected_yeast:.2f}, E.coli={expected_ecoli:.2f}, Human={expected_human:.2f}")
+        
+        # Confirmation table
+        st.dataframe(pd.DataFrame({
+            'Ratio': [cond1_key, cond2_key],
+            'Condition': ['**Cond 1** (low yeast)', '**Cond 2** (high yeast)'],
+            'Replicates': [len(cond1_cols), len(cond2_cols)],
+            'Columns': [', '.join(cond1_cols), ', '.join(cond2_cols)]
+        }).style.format({'Replicates': '{:.0f}'}))
+        
+        # Option to override
+        if st.button("Use Auto-Detection"):
+            st.session_state.cond1_cols = cond1_cols
+            st.session_state.cond2_cols = cond2_cols
+            st.session_state.expected_ratios = {
+                'YEAST': expected_yeast,
+                'ECOLI': expected_ecoli, 
+                'HUMAN': expected_human
+            }
+            st.success("Auto-detection confirmed!")
+            
     else:
-        default_cond1 = numeric_cols[:len(numeric_cols)//2]
-        default_cond2 = numeric_cols[len(numeric_cols)//2:]
-
-    left, right = st.columns(2)
-    with left:
-        cond1_cols = st.multiselect("Condition 1 (e.g., A replicates)", options=numeric_cols, default=default_cond1)
-    with right:
-        cond2_cols = st.multiselect("Condition 2 (e.g., B replicates)", options=numeric_cols, default=default_cond2)
-
-    if set(cond1_cols) & set(cond2_cols):
-        st.error("Same column cannot be in both conditions")
-        st.stop()
-
-    # Species Column Selection
-    species_options = [c for c in df.columns if "Species" in c or df[c].dtype == "object"]
-    default_species = "Species" if "Species" in df.columns else species_options[0] if species_options else None
-    species_col = st.selectbox("Species Column", options=species_options, index=species_options.index(default_species) if default_species else 0)
-
-    st.session_state.cond1_cols = cond1_cols
-    st.session_state.cond2_cols = cond2_cols
-    st.session_state.species_col = species_col
+        # Fallback: half-split
+        half = len(numeric_cols) // 2
+        cond1_cols = numeric_cols[:half]
+        cond2_cols = numeric_cols[half:]
 
     st.markdown("</div>", unsafe_allow_html=True)
 
