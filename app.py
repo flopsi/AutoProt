@@ -233,20 +233,31 @@ with st.container():
     preview_df = pd.DataFrame(preview_data)
 
     # Editable checkbox table
+    # ─── REPLACE THE ENTIRE data_editor BLOCK WITH THIS ─────────────────────
     edited_df = st.data_editor(
         preview_df,
         column_config={
             "Include in Cond 1": st.column_config.CheckboxColumn(
-                "Include in Cond 1",
-                default_value=False
+                label="Include in Cond 1",
+                help="Check = assign to Condition 1",
+                default_value=True   # pre-check the auto-detected ones
             ),
-            "Column": st.column_config.TextColumn("Column", disabled=True),
-            "Suggested Condition": st.column_config.TextColumn("Suggested Condition", disabled=True),
+            "Column": st.column_config.TextColumn(
+                "Column",
+                disabled=True
+            ),
+            "Suggested Condition": st.column_config.TextColumn(
+                "Suggested Condition",
+                disabled=True
+            ),
         },
+        disabled=["Column", "Suggested Condition"],
         hide_index=True,
         use_container_width=True,
-        num_rows="fixed"
+        num_rows="fixed",
+        key="cond1_editor"
     )
+# ────────────────────────────────────────────────────────────────────────
 
     # Extract final selection
     final_cond1 = edited_df[edited_df["Include in Cond 1"]]["Column"].tolist()
