@@ -245,8 +245,11 @@ def step1_load_and_map():
                 
                 # Store raw data temporarily
                 # Store BOTH clean data and a copy for CV calculation
+                # Store clean data
                 st.session_state.raw_data = clean_df
-                st.session_state.raw_data_for_cv = clean_df.copy()  # Preserve for CV
+                st.session_state.raw_data_for_cv = clean_df.copy()  # PRESERVE ORIGINAL FOR CV
+                st.session_state.replicate_mapping = condition_mapping
+
 
                 st.success(f"✅ Loaded {len(raw_df)} proteins with {len(raw_df.columns)} columns")
                 
