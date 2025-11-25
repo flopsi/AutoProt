@@ -215,3 +215,37 @@ with st.container():
 # ─────────────────────────────────────────────────────────────
 st.success("Data import complete! Ready for **Module 2: Data Quality**")
 st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────
+# NAVIGATION & RESTART CONTROLS (add this block exactly here)
+# ─────────────────────────────────────────────────────────────
+st.markdown("---")
+
+# Center-aligned navigation buttons
+col_prev, col_space, col_next, col_space2, col_restart = st.columns([1, 1, 1, 1, 2])
+
+with col_prev:
+    if st.button("Previous Step", use_container_width=True):
+        st.switch_page("pages/1_Data_Import.py")  # adjust path if needed
+
+with col_next:
+    if st.button("Next: Data Quality", type="primary", use_container_width=True):
+        st.switch_page("pages/2_Data_Quality.py")
+
+with col_restart:
+    if st.button("Restart Entire Analysis", type="secondary", help="Clear all data and start over"):
+        st.session_state.clear()
+        st.rerun()
+
+# Optional: Bottom fixed restart button (always visible)
+st.markdown("""
+<div style="position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 999;">
+    <div style="background: #E71316; color: white; padding: 12px 30px; border-radius: 8px; font-weight: 500; box-shadow: 0 4px 12px rgba(0,0,0,0.2);">
+        Restart Analysis — Clear All Data
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+if st.button("Restart Analysis — Clear All Data", key="fixed_restart", use_container_width=True):
+    st.session_state.clear()
+    st.rerun()
