@@ -177,16 +177,58 @@ with st.container():
     st.info(f"**Peptide/Protein ID** → `{id_col}` | **Sequence** → {'Yes' if has_sequence else 'No'}")
     st.markdown("</div>", unsafe_allow_html=True)
 
-# Navigation
+# ─────────────────────────────────────────────────────────────
+# UNIVERSAL NAVIGATION + CLEAN INVISIBLE RESTART
+# ─────────────────────────────────────────────────────────────
 st.markdown("---")
-col1, col2, col3 = st.columns([1,1,2])
+
+col1, col2, col3, col4 = st.columns([1.2, 1.2, 1.2, 1.8])
+
 with col1:
-    if st.button("Previous", use_container_width=True):
+    if st.button("Protein Upload", use_container_width=True):
         st.switch_page("app.py")
+
 with col2:
-    if st.button("Next: Data Quality", type="primary", use_container_width=True):
-        st.switch_page("pages/2_Data_Quality.py")
+    if st.button("Peptide Upload", use_container_width=True):
+        st.switch_page("pages/1_Peptide_Data_Import.py")
+
 with col3:
-    if st.button("Restart Entire Analysis", type="secondary"):
+    if st.button("Data Quality", type="primary", use_container_width=True):
+        if "df" in st.session_state or "df_peptide" in st.session_state:
+            st.switch_page("pages/2_Data_Quality.py")
+        else:
+            st.error("Please upload data first")
+            st.stop()
+
+with col4:
+    if st.button("Restart Analysis", type="secondary", use_container_width=True):
         st.session_state.clear()
         st.rerun()
+
+# FIXED: Truly invisible restart button (only the red bar is visible)
+st.markdown("""
+<div style="position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 9999; cursor: pointer;">
+    <div style="
+        background: #E71316; 
+        color: white; 
+        padding: 14px 36px; 
+        border-radius: 10px; 
+        font-weight: 600; 
+        font-size: 16px;
+        box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+        user-select: none;
+        transition: all 0.2s;
+    " onclick="document.getElementById('invisible_restart').click()">
+        Restart Analysis — Clear All Data
+    </div>
+</div>
+
+<!-- This is the REAL hidden button — completely invisible -->
+<button id="invisible_restart" style="position:fixed; bottom:0; left:0; width:0; height:0; opacity:0; pointer-events:none;" 
+        onclick="this.closest('form').submit()"></button>
+""", unsafe_allow_html=True)
+
+# The actual hidden restart trigger
+if st.button("real_hidden_restart", key="real_hidden_restart"):
+    st.session_state.clear()
+    st.rerun()
