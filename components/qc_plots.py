@@ -217,3 +217,199 @@ def render_pca_plot(data: pd.DataFrame, replicate_cols: List[str],
             textposition='top center',
             marker=dict(size=12, line=dict(width=2, color='white'))
         )
+        
+        fig.update_layout(
+            xaxis_title=f"PC1 ({explained_var[0]*100:.1f}% variance)",
+            yaxis_title=f"PC2 ({explained_var[1]*100:.1f}% variance)",
+            height=500
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Interpretation guide
+        with st.expander("📖 How to Interpret PCA"):
+            st.markdown("""
+            **What to Look For:**
+            - **Clustering by condition**: Samples from the same condition should group together
+            - **Variance explained**: Higher is better (>60% combined is good)
+            - **Outliers**: Points far from their group may indicate technical issues
+            - **Separation**: Clear separation between conditions suggests biological differences
+            
+            **Quality Indicators:**
+            - ✅ Good: Clear clustering, >60% variance explained
+            - ⚠️ Moderate: Some overlap, 40-60% variance explained
+            - ❌ Poor: No clustering, <40% variance explained or obvious outliers
+            """)
+        
+        # Variance metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("PC1 Variance", f"{explained_var[0]*100:.1f}%")
+        with col2:
+            st.metric("PC2 Variance", f"{explained_var[1]*100:.1f}%")
+        with col3:
+            total_var = (explained_var[0] + explained_var[1]) * 100
+            st.metric("Total Variance", f"{total_var:.1f}%")
+            
+    except Exception as e:
+        st.error(f"PCA failed: {str(e)}")
+        st.info("This usually means not enough complete proteins across all samples. Try filtering missing values first.")
+
+
+def render_missing_value_heatmap(data: pd.DataFrame, replicate_cols: List[str]):
+    """
+    Render heatmap showing missing value patterns
+    
+    Args:
+        data: DataFrame with protein intensities
+        replicate_cols: All replicate column names
+    """
+    st.markdown("### 🔥 Missing Value Patterns")
+    
+    # Calculate missing value stats
+    missing_stats = calculate_missing_values(data, replicate_cols)
+    
+    # Create binary matrix (1 = present, 0 = missing) for top proteins
+    n_proteins_to_show = min(100, len(data))
+    subset = data[replicate_cols].head(n_proteins_to_show)
+    binary_matrix = (~subset.isna()).astype(int)
+    
+    # Create heatmap
+    fig = go.Figure(data=go.Heatmap(
+        z=binary_matrix.values,
+        x=replicate_cols,
+        y=[f"Protein {i+1}" for i in range(len(binary_matrix))],
+        colorscale=[[0, '#e74c3c'], [1, '#2ecc71']],
+        showscale=True,
+        colorbar=dict(
+            title="Status",
+            tickvals=[0.25, 0.75],
+            ticktext=["Missing", "Present"]
+        )
+    ))
+    
+    fig.update_layout(
+        title=f"Data Completeness (Top {n_proteins_to_show} Proteins)",
+        xaxis_title="Sample",
+        yaxis_title="Protein",
+        height=600,
+        yaxis=dict(showticklabels=False)
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Summary metrics
+    total_missing = missing_stats['Missing_Count'].sum()
+    total_possible = len(data) * len(replicate_cols)
+    percent_missing = (total_missing / total_possible) * 100
+    
+    complete_proteins = (data[replicate_cols].notna().all(axis=1)).sum()
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Missing", f"{total_missing:,}", 
+                 delta=f"{percent_missing:.1f}% of total")
+    with col2:
+        st.metric("Complete Proteins", f"{complete_proteins:,}",
+                 delta=f"{(complete_proteins/len(data)*100):.1f}%")
+    with col3:
+        worst_sample = missing_stats.loc[missing_stats['Missing_Count'].idxmax(), 'Sample']
+        worst_count = missing_stats['Missing_Count'].max()
+        st.metric("Most Affected Sample", worst_sample,
+                 delta=f"{worst_count:,} missing")
+    
+    # Sample-wise statistics
+    with st.expander("📊 Sample-wise Missing Value Statistics"):
+        st.dataframe(missing_stats, use_container_width=True, hide_index=True)
+
+
+def render_rank_plots(data: pd.DataFrame, condition_names: Dict[str, List[str]], 
+                     log_scale: bool = False):
+    """
+    Render rank-ordered intensity plots for dynamic range visualization
+    
+    Args:
+        data: DataFrame with protein intensities
+        condition_names: Dict mapping condition name to list of column names
+        log_scale: Whether data is log-transformed
+    """
+    st.markdown("### 📉 Dynamic Range Analysis")
+    
+    fig = go.Figure()
+    
+    colors = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12']
+    
+    for idx, (condition, cols) in enumerate(condition_names.items()):
+        rank_df = calculate_dynamic_range(data, cols)
+        
+        fig.add_trace(go.Scatter(
+            x=rank_df['Rank'],
+            y=rank_df['Mean_Intensity'],
+            mode='lines',
+            name=condition,
+            line=dict(color=colors[idx % len(colors)], width=2)
+        ))
+    
+    y_label = "Log2 Mean Intensity" if log_scale else "Mean Intensity"
+    fig.update_layout(
+        title="Protein Rank Plot (Dynamic Range)",
+        xaxis_title="Protein Rank (High to Low)",
+        yaxis_title=y_label,
+        yaxis_type="log" if not log_scale else "linear",
+        height=500,
+        showlegend=True
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Dynamic range summary
+    cols_summary = st.columns(len(condition_names))
+    for idx, (condition, cols) in enumerate(condition_names.items()):
+        with cols_summary[idx]:
+            rank_df = calculate_dynamic_range(data, cols)
+            if len(rank_df) > 0:
+                dynamic_range = rank_df['Mean_Intensity'].max() / rank_df['Mean_Intensity'].min()
+                log_range = np.log10(dynamic_range) if dynamic_range > 0 else 0
+                
+                st.metric(
+                    label=f"{condition} - Dynamic Range",
+                    value=f"{log_range:.1f} orders",
+                    delta=f"{dynamic_range:.1e}x"
+                )
+
+
+def render_qc_dashboard(data: pd.DataFrame, replicate_cols: List[str], 
+                       condition_names: Dict[str, List[str]], log_transformed: bool = False):
+    """
+    Render complete QC dashboard with all visualizations
+    
+    Args:
+        data: DataFrame with protein intensities
+        replicate_cols: All replicate column names
+        condition_names: Dict mapping condition name to list of column names
+        log_transformed: Whether data has been log-transformed
+    """
+    st.markdown("## 🔬 Quality Control Dashboard")
+    st.markdown("---")
+    
+    # 1. Boxplots
+    render_boxplots(data, replicate_cols, condition_names, log_transformed)
+    st.markdown("---")
+    
+    # 2. CV Analysis
+    render_cv_analysis(data, condition_names)
+    st.markdown("---")
+    
+    # 3. PCA Plot
+    render_pca_plot(data, replicate_cols, condition_names)
+    st.markdown("---")
+    
+    # 4. Missing Value Heatmap
+    render_missing_value_heatmap(data, replicate_cols)
+    st.markdown("---")
+    
+    # 5. Rank Plots
+    render_rank_plots(data, condition_names, log_transformed)
+    st.markdown("---")
+    
+    st.success("✅ Quality control analysis complete!")
