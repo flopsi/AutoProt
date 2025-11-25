@@ -244,7 +244,10 @@ def step1_load_and_map():
                     raw_df = pd.read_csv(uploaded_file, sep='\t', index_col=0)
                 
                 # Store raw data temporarily
-                st.session_state.raw_data_temp = raw_df
+                # Store BOTH clean data and a copy for CV calculation
+                st.session_state.raw_data = clean_df
+                st.session_state.raw_data_for_cv = clean_df.copy()  # Preserve for CV
+
                 st.success(f"✅ Loaded {len(raw_df)} proteins with {len(raw_df.columns)} columns")
                 
                 with st.expander("Preview raw data"):
@@ -478,7 +481,10 @@ def step3_transform_data():
         
         with st.spinner("Applying log2 transformation..."):
             transformed_df = log2_transform(df, all_replicates, pseudocount)
-            st.session_state.transformed_data = transformed_df
+            # Apply transformation
+            st.session_state.raw_data = transformed_df
+            # DON'T overwrite raw_data_for_cv - it stays original!
+
             st.session_state.log_transformed = True
             
             st.success("✅ Transformation complete!")
