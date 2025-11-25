@@ -125,145 +125,136 @@ if not uploaded_file:
     st.stop()
 
 # ─────────────────────────────────────────────────────────────
-# 2. Load & Parse — Fixed low_memory + species extraction
+# 2. Load & Parse + Smart Column Processing
 # ─────────────────────────────────────────────────────────────
 @st.cache_data
-def load_and_parse(file):
+def load_and_process(file):
     content = file.getvalue().decode("utf-8", errors="replace")
     if content.startswith("\ufeff"):
         content = content[1:]
-    # Fixed: Use dtype=str to avoid low_memory warnings
-    df = pd.read_csv(io.StringIO(content), sep=None, engine="python", dtype=str)
-    
+    df = pd.read_csv(io.StringIO(content), sep="\t", engine="python", dtype=str)  # MaxQuant is tab-separated
+
     # Convert intensity columns to numeric
-    intensity_cols = [c for c in df.columns if c not in ["pg", "name"]]
-    for col in intensity_cols:
+    potential_intensity = [c for c in df.columns if c not in ["pg", "name", "Protein IDs", "Majority protein IDs", "Fasta headers"]]
+    for col in potential_intensity:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Extract species from 'name' column
+    # Extract species from 'name' or fallback to common columns
+    species_col = None
     if "name" in df.columns:
         split = df["name"].str.split(",", n=1, expand=True)
         if split.shape[1] == 2:
             df.insert(1, "Accession", split[0])
             df.insert(2, "Species", split[1])
             df = df.drop(columns=["name"])
+            species_col = "Species"
+    
+    # === SMART COLUMN PARSING (for raw file names) ===
+    intensity_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
 
-    return df
+    # Extract ratio key: look for Ydd-Edd pattern
+    ratio_pattern = re.compile(r'Y(\d{2})-E(\d{2})')
+    col_to_ratio = {}
+    col_to_rep = {}
+    short_names = {}
 
-df = load_and_parse(uploaded_file)
+    for col in intensity_cols:
+        # Strip .raw if present
+        clean_col = col.replace(".raw", "")
+        match = ratio_pattern.search(clean_col)
+        if match:
+            ratio_key = match.group(0)  # e.g., Y05-E45
+            # Extract replicate number (last _01, _02, etc.)
+            rep = clean_col.split("_")[-1]
+            rep_num = rep.lstrip("0") or "1"  # handle _01 → 1
+            col_to_ratio[col] = ratio_key
+            col_to_rep[col] = rep_num
+            short_names[col] = f"{ratio_key}_{rep_num}"
+        else:
+            # Fallback: no ratio found
+            short_names[col] = col[:15] + ("..." if len(col)>15 else "")
+
+    # Auto-rename columns to short, clean names
+    if len(short_names) == len(intensity_cols):
+        df = df.rename(columns=short_names)
+        intensity_cols = list(short_names.values())
+        st.success("Columns automatically shortened and grouped by mixing ratio")
+
+    # Group by ratio for condition auto-guess
+    ratio_groups = {}
+    for col, ratio in col_to_ratio.items():
+        ratio_groups.setdefault(ratio, []).append(short_names.get(col, col))
+
+    # Sort ratios logically (Y05-E45 first, then Y45-E05)
+    sorted_ratios = sorted(ratio_groups.keys(), key=lambda x: (int(x[1:3]), int(x[5:7])))  # Y05 then Y45
+
+    default_cond1 = ratio_groups.get(sorted_ratios[0], intensity_cols[:len(intensity_cols)//2])
+    default_cond2 = ratio_groups.get(sorted_ratios[1], intensity_cols[len(intensity_cols)//2:]) if len(sorted_ratios)>1 else []
+
+    # Store ratio mapping for later modules
+    st.session_state.ratio_to_cols = ratio_groups
+    st.session_state.ratio_order = sorted_ratios  # for expected log2 later
+
+    return df, intensity_cols, default_cond1, default_cond2, species_col or "Species"
+
+df, intensity_cols, auto_cond1, auto_cond2, species_col = load_and_process(uploaded_file)
 st.session_state.df = df
 
-st.success(f"Data imported successfully — {len(df):,} proteins, {len(df.columns)} columns")
+st.success(f"Data imported — {len(df):,} proteins, {len(intensity_cols)} samples detected")
+if st.session_state.ratio_order:
+    st.info(f"Detected mixing ratios: {', '.join(st.session_state.ratio_order)}")
+
 st.dataframe(df.head(10), use_container_width=True)
 
 # ─────────────────────────────────────────────────────────────
-# 3. Column Renaming (optional)
+# 3. Condition Assignment (auto-guessed + editable)
 # ─────────────────────────────────────────────────────────────
 with st.container():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.subheader("Column Renaming (optional)")
+    st.subheader("Condition Assignment")
 
-    rename_dict = {}
-    cols = df.columns.tolist()
     col1, col2 = st.columns(2)
-    for i, col in enumerate(cols):
-        with (col1 if i % 2 == 0 else col2):
-            new_name = st.text_input(f"`{col}` →", value=col, key=f"rename_{col}")
-            if new_name != col and new_name.strip():
-                rename_dict[col] = new_name.strip()
+    with col1:
+        cond1_cols = st.multiselect(
+            "Condition 1 (auto-detected)",
+            options=intensity_cols,
+            default=auto_cond1
+        )
+    with col2:
+        cond2_cols = st.multiselect(
+            "Condition 2 (auto-detected)",
+            options=intensity_cols,
+            default=auto_cond2
+        )
 
-    if st.button("Apply Renaming"):
-        if rename_dict:
-            df = df.rename(columns=rename_dict)
-            st.session_state.df = df
-            st.success("Columns renamed successfully")
-            st.rerun()
-        else:
-            st.info("No changes made")
+    if set(cond1_cols) & set(cond2_cols):
+        st.error("Cannot assign the same replicate to both conditions")
+    else:
+        st.session_state.cond1_cols = cond1_cols
+        st.session_state.cond2_cols = cond2_cols
+        if st.session_state.ratio_order:
+            st.success(f"Condition 1 → {st.session_state.ratio_order[0]}\nCondition 2 → {st.session_state.ratio_order[1]}")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-# In the condition assignment section (replace the old one):
-
 # ─────────────────────────────────────────────────────────────
-# 4. SMART Auto-Detection of Conditions & Ratios
+# 4. Species Column Confirmation
 # ─────────────────────────────────────────────────────────────
 with st.container():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.subheader("Smart Condition Assignment")
-
-    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
-
-    # Auto-detect ratio groups
-    import re
-    ratio_groups = {}
-    for col in numeric_cols:
-        match = re.search(r'_Y(\d{2})-E(\d{2})_', col)
-        if match:
-            yeast_pct = int(match.group(1))
-            ecoli_pct = int(match.group(2))
-            ratio_key = f"Y{yeast_pct:02d}-E{ecoli_pct:02d}"
-            if ratio_key not in ratio_groups:
-                ratio_groups[ratio_key] = {
-                    'columns': [],
-                    'yeast_pct': yeast_pct,
-                    'ecoli_pct': ecoli_pct,
-                    'human_pct': 100 - yeast_pct - ecoli_pct
-                }
-            ratio_groups[ratio_key]['columns'].append(col)
-
-    if len(ratio_groups) >= 2:
-        # Sort by yeast % (low → high)
-        sorted_ratios = sorted(ratio_groups.items(), key=lambda x: x[1]['yeast_pct'])
-        
-        cond1_key, cond1_info = sorted_ratios[0]
-        cond2_key, cond2_info = sorted_ratios[-1]
-        
-        cond1_cols = cond1_info['columns']
-        cond2_cols = cond2_info['columns']
-        
-        # Auto-calculate expected log2 ratios
-        expected_yeast = np.log2(cond2_info['yeast_pct'] / cond1_info['yeast_pct'])
-        expected_ecoli = np.log2(cond2_info['ecoli_pct'] / cond1_info['ecoli_pct'])
-        expected_human = 0.0  # always 1:1
-        
-        st.success(f"✅ **Auto-detected {len(cond1_cols)}:3 design**")
-        st.info(f"Expected log₂ ratios: Yeast={expected_yeast:.2f}, E.coli={expected_ecoli:.2f}, Human={expected_human:.2f}")
-        
-        # Confirmation table
-        st.dataframe(pd.DataFrame({
-            'Ratio': [cond1_key, cond2_key],
-            'Condition': ['**Cond 1** (low yeast)', '**Cond 2** (high yeast)'],
-            'Replicates': [len(cond1_cols), len(cond2_cols)],
-            'Columns': [', '.join(cond1_cols), ', '.join(cond2_cols)]
-        }).style.format({'Replicates': '{:.0f}'}))
-        
-        # Option to override
-        if st.button("Use Auto-Detection"):
-            st.session_state.cond1_cols = cond1_cols
-            st.session_state.cond2_cols = cond2_cols
-            st.session_state.expected_ratios = {
-                'YEAST': expected_yeast,
-                'ECOLI': expected_ecoli, 
-                'HUMAN': expected_human
-            }
-            st.success("Auto-detection confirmed!")
-            
-    else:
-        # Fallback: half-split
-        half = len(numeric_cols) // 2
-        cond1_cols = numeric_cols[:half]
-        cond2_cols = numeric_cols[half:]
-
+    st.subheader("Species Column")
+    species_options = [c for c in df.columns if df[c].dtype == "object" and c in ["Species", "Organism", "Taxonomy"]]
+    selected_species = st.selectbox("Select species column", options=species_options, index=0 if species_options else None)
+    st.session_state.species_col = selected_species
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
-# 5. Ready for Data Quality Module
+# 5. Ready for Data Quality
 # ─────────────────────────────────────────────────────────────
 st.markdown("<div class='card'>", unsafe_allow_html=True)
-st.subheader("Ready for Data Quality Assessment")
-st.info("Data is loaded, validated, and conditions assigned. Next: **Module 2 – Data Quality** (intensity distribution, missing values, CVs, PCA, etc.)")
-st.markdown("**We will design this page together before coding.**")
+st.subheader("Ready for Data Quality Module")
+st.success("All samples automatically grouped by mixing ratio. Conditions and species ready.")
+st.info("Next step: **Module 2 – Data Quality** (missing values, CVs, intensity distribution, PCA, etc.)")
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
