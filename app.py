@@ -224,7 +224,7 @@ def render_progress_bar():
 
 
 def step1_load_and_map():
-    """Step 1: Load data and map replicates to conditions"""
+    """Step 1: Load data and map replicates to conditions with clean naming"""
     st.header("Step 1: Load Data & Map Replicates")
     
     col1, col2 = st.columns([2, 1])
@@ -239,25 +239,16 @@ def step1_load_and_map():
         if uploaded_file:
             try:
                 if uploaded_file.name.endswith('.csv'):
-                    df = pd.read_csv(uploaded_file, index_col=0)
+                    raw_df = pd.read_csv(uploaded_file, index_col=0)
                 else:
-                    df = pd.read_csv(uploaded_file, sep='\t', index_col=0)
+                    raw_df = pd.read_csv(uploaded_file, sep='\t', index_col=0)
                 
-                # ⭐ CLEAN THE DATAFRAME
-                df = clean_dataframe(df)
+                # Store raw data temporarily
+                st.session_state.raw_data_temp = raw_df
+                st.success(f"✅ Loaded {len(raw_df)} proteins with {len(raw_df.columns)} columns")
                 
-                st.session_state.raw_data = df
-                st.success(f"✅ Loaded {len(df)} proteins with {len(df.columns)} columns")
-                
-                # Show data types info
-                with st.expander("Preview data & types"):
-                    st.dataframe(df.head(10), use_container_width=True)
-                    
-                    # Data type summary
-                    dtype_summary = df.dtypes.value_counts()
-                    st.markdown("**Column Types:**")
-                    for dtype, count in dtype_summary.items():
-                        st.text(f"  {dtype}: {count} columns")
+                with st.expander("Preview raw data"):
+                    st.dataframe(raw_df.head(10), use_container_width=True)
                     
             except Exception as e:
                 st.error(f"Error loading file: {str(e)}")
@@ -265,40 +256,35 @@ def step1_load_and_map():
     with col2:
         st.subheader("🧪 Or Try Demo Data")
         if st.button("Load Demo Dataset", use_container_width=True):
-            df = generate_mock_proteins(n_proteins=500)
-            
-            # ⭐ CLEAN DEMO DATA TOO
-            df = clean_dataframe(df)
-            
-            st.session_state.raw_data = df
+            raw_df = generate_mock_proteins(n_proteins=500)
+            st.session_state.raw_data_temp = raw_df
             st.success("✅ Demo dataset loaded!")
             st.rerun()
     
-    # Replicate mapping interface
-    if st.session_state.raw_data is not None:
+    # Replicate mapping interface with clean naming
+    if hasattr(st.session_state, 'raw_data_temp'):
         st.markdown("---")
         st.subheader("🔗 Map Replicates to Conditions")
         
-        df = st.session_state.raw_data
+        raw_df = st.session_state.raw_data_temp
         
-        # Only show numeric columns
-        available_cols = [col for col in df.columns if pd.api.types.is_numeric_dtype(df[col])]
+        # Get all columns (any type)
+        available_cols = raw_df.columns.tolist()
         
-        if len(available_cols) == 0:
-            st.error("No numeric columns found! Please check your data file.")
-            return
-        
-        st.info(f"Found {len(available_cols)} numeric columns available for analysis")
+        st.info(f"Found {len(available_cols)} columns in your data")
         
         n_conditions = st.number_input(
             "Number of experimental conditions",
             min_value=2, max_value=4, value=2
         )
         
+        # Store column mapping: {clean_name: original_column}
+        column_mapping = {}
         condition_mapping = {}
         
         for i in range(n_conditions):
             st.markdown(f"**Condition {i+1}:**")
+            
             condition_name = st.text_input(
                 f"Name for condition {i+1}",
                 value=f"Condition_{chr(65+i)}",
@@ -312,13 +298,91 @@ def step1_load_and_map():
             )
             
             if selected_cols:
-                condition_mapping[condition_name] = selected_cols
+                # Generate clean names for each replicate
+                clean_names = []
+                
+                st.markdown(f"*Clean names for {condition_name}:*")
+                
+                for j, orig_col in enumerate(selected_cols):
+                    # Auto-generate clean name
+                    default_clean = f"{condition_name}_R{j+1}"
+                    
+                    clean_name = st.text_input(
+                        f"Rename: {orig_col[:50]}...",
+                        value=default_clean,
+                        key=f"clean_name_{i}_{j}"
+                    )
+                    
+                    column_mapping[clean_name] = orig_col
+                    clean_names.append(clean_name)
+                
+                condition_mapping[condition_name] = clean_names
         
-        if len(condition_mapping) >= 2:
-            if st.button("✅ Confirm Mapping & Proceed", type="primary", use_container_width=True):
-                st.session_state.replicate_mapping = condition_mapping
-                st.session_state.step = 2
-                st.rerun()
+        # Create clean DataFrame button
+        if len(condition_mapping) >= 2 and len(column_mapping) > 0:
+            st.markdown("---")
+            
+            with st.expander("📋 Preview Column Mapping"):
+                mapping_preview = pd.DataFrame([
+                    {"Clean Name": clean, "Original Column": orig}
+                    for clean, orig in column_mapping.items()
+                ])
+                st.dataframe(mapping_preview, use_container_width=True, hide_index=True)
+            
+            if st.button("✅ Create Clean Dataset & Proceed", type="primary", use_container_width=True):
+                
+                with st.spinner("Creating clean dataset..."):
+                    # Create new clean DataFrame
+                    clean_df = pd.DataFrame(index=raw_df.index)
+                    
+                    conversion_issues = []
+                    
+                    for clean_name, orig_col in column_mapping.items():
+                        # Extract and convert to numeric
+                        try:
+                            clean_df[clean_name] = pd.to_numeric(
+                                raw_df[orig_col], 
+                                errors='coerce'
+                            ).astype(float)
+                            
+                            # Check if conversion caused issues
+                            orig_valid = raw_df[orig_col].notna().sum()
+                            new_valid = clean_df[clean_name].notna().sum()
+                            
+                            if new_valid < orig_valid:
+                                conversion_issues.append(
+                                    f"{clean_name}: {orig_valid - new_valid} non-numeric values converted to NaN"
+                                )
+                        except Exception as e:
+                            st.error(f"Error converting {orig_col} to {clean_name}: {str(e)}")
+                            return
+                    
+                    # Store clean data and mappings
+                    st.session_state.raw_data = clean_df
+                    st.session_state.replicate_mapping = condition_mapping
+                    st.session_state.column_mapping = column_mapping  # For reference
+                    
+                    # Clean up temp
+                    del st.session_state.raw_data_temp
+                    
+                    st.success(f"✅ Created clean dataset with {len(clean_df.columns)} replicates")
+                    
+                    # Show conversion issues if any
+                    if conversion_issues:
+                        with st.expander("⚠️ Conversion Warnings"):
+                            for issue in conversion_issues:
+                                st.warning(issue)
+                    
+                    # Show clean data preview
+                    with st.expander("Preview clean dataset"):
+                        st.dataframe(clean_df.head(10), use_container_width=True)
+                        st.markdown("**Data types:**")
+                        st.text(f"All columns: float64")
+                    
+                    # Proceed to next step
+                    st.session_state.step = 2
+                    st.rerun()
+
 
 
 
