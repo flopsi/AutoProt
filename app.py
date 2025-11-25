@@ -96,7 +96,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
-# 1. File Upload (Beautiful branded area)
+# 1. File Upload
 # ─────────────────────────────────────────────────────────────
 with st.container():
     st.markdown("""
@@ -125,17 +125,17 @@ if not uploaded_file:
     st.stop()
 
 # ─────────────────────────────────────────────────────────────
-# 2. Load & Parse — FIXED low_memory issue + your exact logic
+# 2. Load & Parse — Fixed low_memory + species extraction
 # ─────────────────────────────────────────────────────────────
 @st.cache_data
 def load_and_parse(file):
     content = file.getvalue().decode("utf-8", errors="replace")
     if content.startswith("\ufeff"):
         content = content[1:]
-    # Fixed: low_memory is deprecated → use dtype=str to avoid warnings
+    # Fixed: Use dtype=str to avoid low_memory warnings
     df = pd.read_csv(io.StringIO(content), sep=None, engine="python", dtype=str)
     
-    # Convert only intensity columns to numeric
+    # Convert intensity columns to numeric
     intensity_cols = [c for c in df.columns if c not in ["pg", "name"]]
     for col in intensity_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -157,7 +157,7 @@ st.success(f"Data imported successfully — {len(df):,} proteins, {len(df.column
 st.dataframe(df.head(10), use_container_width=True)
 
 # ─────────────────────────────────────────────────────────────
-# 3. Column Renaming (optional, clean layout)
+# 3. Column Renaming (optional)
 # ─────────────────────────────────────────────────────────────
 with st.container():
     st.markdown("<div class='card'>", unsafe_allow_html=True)
@@ -184,11 +184,51 @@ with st.container():
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
-# 4. Ready for Next Step
+# 4. Auto-Guess Conditions + Species Column
+# ─────────────────────────────────────────────────────────────
+with st.container():
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.subheader("Assign Replicates to Conditions")
+
+    # Detect numeric columns
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c]) and c != "Species"]
+
+    # Auto-guess: Assume even number, split in half
+    if len(numeric_cols) % 2 == 0:
+        half = len(numeric_cols) // 2
+        default_cond1 = numeric_cols[:half]
+        default_cond2 = numeric_cols[half:]
+    else:
+        default_cond1 = numeric_cols[:len(numeric_cols)//2]
+        default_cond2 = numeric_cols[len(numeric_cols)//2:]
+
+    left, right = st.columns(2)
+    with left:
+        cond1_cols = st.multiselect("Condition 1 (e.g., A replicates)", options=numeric_cols, default=default_cond1)
+    with right:
+        cond2_cols = st.multiselect("Condition 2 (e.g., B replicates)", options=numeric_cols, default=default_cond2)
+
+    if set(cond1_cols) & set(cond2_cols):
+        st.error("Same column cannot be in both conditions")
+        st.stop()
+
+    # Species Column Selection
+    species_options = [c for c in df.columns if "Species" in c or df[c].dtype == "object"]
+    default_species = "Species" if "Species" in df.columns else species_options[0] if species_options else None
+    species_col = st.selectbox("Species Column", options=species_options, index=species_options.index(default_species) if default_species else 0)
+
+    st.session_state.cond1_cols = cond1_cols
+    st.session_state.cond2_cols = cond2_cols
+    st.session_state.species_col = species_col
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────
+# 5. Ready for Data Quality Module
 # ─────────────────────────────────────────────────────────────
 st.markdown("<div class='card'>", unsafe_allow_html=True)
 st.subheader("Ready for Data Quality Assessment")
-st.info("Data is loaded and validated. Next: **Module 2 – Data Quality** (intensity distribution, missing values, CVs, PCA, etc.)")
+st.info("Data is loaded, validated, and conditions assigned. Next: **Module 2 – Data Quality** (intensity distribution, missing values, CVs, PCA, etc.)")
 st.markdown("**We will design this page together before coding.**")
 st.markdown("</div>", unsafe_allow_html=True)
 
