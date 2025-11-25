@@ -33,7 +33,7 @@ peptide_page = st.Page("Peptide_Import.py", title="Peptide Upload", icon="🧬")
 quality_page = st.Page("Data_Quality.py", title="Data Quality", icon="📊", default=True)
 
 # ── NAVIGATION MENU ──
-pg = st.navigation([protein_page, peptide_page, quality_page])
+pg = st.navigation([st.Page("Protein_Import.py"),st.Page("Peptide_Import.py"),st.Page("Data_Quality.py")])
 pg.run()
 
 # ── FIXED BOTTOM RESTART ──
