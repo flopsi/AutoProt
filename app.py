@@ -236,7 +236,7 @@ with col_restart:
 # ─────────────────────────────────────────────────────────────
 # Ready
 # ─────────────────────────────────────────────────────────────
-st.success("Data import complete! Ready for **Module 2: Data Quality**")
+
 st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
 
 
