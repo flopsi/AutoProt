@@ -260,84 +260,116 @@ def render_cv_violin(data: pd.DataFrame, replicate_cols: List[str],
     else:
         st.warning(f"⚠️ **Poor reproducibility.** Overall median CV: {overall_median:.1f}% - Consider reviewing sample preparation.")
 
-def render_cv_analysis(data: pd.DataFrame, condition_names: Dict[str, List[str]]):
+def render_cv_violin(data: pd.DataFrame, replicate_cols: List[str], 
+                     condition_names: Dict[str, List[str]]):
     """
-    Render CV analysis for each condition
+    Render violin plot showing CV distribution for each condition
+    CV is calculated WITHIN each condition's replicates separately
     
     Args:
         data: DataFrame with protein intensities
+        replicate_cols: All replicate column names
         condition_names: Dict mapping condition name to list of column names
     """
-    st.markdown("### 📈 Coefficient of Variation Analysis")
+    st.markdown("### 🎻 Coefficient of Variation (CV) Analysis")
     
-    cv_results = {}
+    st.info("""
+    **CV (Coefficient of Variation)** measures reproducibility **within** each condition's replicates:
+    - CV = (Standard Deviation / Mean) × 100%
+    - Calculated separately for each condition
+    - Lower CV = Better reproducibility
+    - **Excellent:** CV < 20% | **Good:** 20-30% | **Poor:** > 30%
+    """)
+    
+    # Calculate CV for each protein WITHIN each condition separately
+    cv_data = []
+    
     for condition, cols in condition_names.items():
-        if len(cols) >= 2:
-            cvs = calculate_cv(data, cols)
-            cv_results[condition] = cvs.dropna()
+        if len(cols) < 2:
+            st.warning(f"Condition '{condition}' has fewer than 2 replicates. CV cannot be calculated.")
+            continue
+        
+        # Calculate CV for each protein using ONLY this condition's replicates
+        for idx, row in data.iterrows():
+            values = row[cols].dropna()
+            
+            if len(values) >= 2:  # Need at least 2 values for CV
+                mean_val = values.mean()
+                std_val = values.std()
+                
+                if mean_val != 0:  # Avoid division by zero
+                    cv = (std_val / mean_val) * 100
+                    
+                    # Only include reasonable CV values (filter extreme outliers)
+                    if 0 <= cv <= 200:  # Cap at 200% for visualization
+                        cv_data.append({
+                            'Condition': condition,
+                            'CV': cv,
+                            'Protein': idx
+                        })
     
-    if not cv_results:
-        st.warning("Need at least 2 replicates per condition for CV analysis")
+    if len(cv_data) == 0:
+        st.warning("Insufficient data to calculate CV")
         return
     
-    # Create histogram for each condition
-    fig = make_subplots(
-        rows=1, cols=len(cv_results),
-        subplot_titles=list(cv_results.keys())
-    )
+    cv_df = pd.DataFrame(cv_data)
+    
+    # Create violin plot
+    fig = go.Figure()
     
     colors = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12']
     
-    for idx, (condition, cvs) in enumerate(cv_results.items()):
-        fig.add_trace(
-            go.Histogram(
-                x=cvs,
-                name=condition,
-                marker_color=colors[idx % len(colors)],
-                opacity=0.7,
-                nbinsx=30
-            ),
-            row=1, col=idx+1
-        )
+    for idx, condition in enumerate(condition_names.keys()):
+        condition_data = cv_df[cv_df['Condition'] == condition]['CV']
         
-        # Add median line
-        median_cv = cvs.median()
-        fig.add_vline(
-            x=median_cv,
-            line_dash="dash",
-            line_color="red",
-            annotation_text=f"Median: {median_cv:.1f}%",
-            row=1, col=idx+1
-        )
+        if len(condition_data) > 0:
+            fig.add_trace(go.Violin(
+                y=condition_data,
+                name=condition,
+                box_visible=True,
+                meanline_visible=True,
+                fillcolor=colors[idx % len(colors)],
+                opacity=0.6,
+                x0=condition
+            ))
     
-    fig.update_xaxes(title_text="CV (%)")
-    fig.update_yaxes(title_text="Count")
+    # Add reference lines for quality thresholds
+    fig.add_hline(y=20, line_dash="dash", line_color="green", 
+                  annotation_text="Excellent (<20%)", 
+                  annotation_position="right")
+    fig.add_hline(y=30, line_dash="dash", line_color="orange", 
+                  annotation_text="Good (<30%)", 
+                  annotation_position="right")
+    
     fig.update_layout(
-        title="CV Distribution by Condition",
-        showlegend=False,
-        height=400
+        title="CV Distribution by Condition (Within-Condition Replicates)",
+        yaxis_title="Coefficient of Variation (%)",
+        xaxis_title="Condition",
+        showlegend=True,
+        height=500,
+        yaxis=dict(range=[0, min(100, cv_df['CV'].max() * 1.1)])
     )
     
     st.plotly_chart(fig, use_container_width=True)
     
-    # Quality assessment
-    cols = st.columns(len(cv_results))
-    for idx, (condition, cvs) in enumerate(cv_results.items()):
-        with cols[idx]:
-            median_cv = cvs.median()
+    # Summary statistics per condition
+    st.markdown("### 📊 CV Summary Statistics (Per Condition)")
+    
+    summary_data = []
+    for condition, cols in condition_names.items():
+        condition_cvs = cv_df[cv_df['Condition'] == condition]['CV']
+        
+        if len(condition_cvs) > 0:
+            # Count proteins in each quality category
+            excellent = (condition_cvs < 20).sum()
+            good = ((condition_cvs >= 20) & (condition_cvs < 30)).sum()
+            poor = (condition_cvs >= 30).sum()
             
-            if median_cv < 20:
-                status = "🟢 Excellent"
-            elif median_cv < 30:
-                status = "🟠 Good"
-            else:
-                status = "🔴 Needs Review"
-            
-            st.metric(
-                label=f"{condition} - Median CV",
-                value=f"{median_cv:.1f}%",
-                delta=status
-            )
+            summary_data.append({
+                'Condition': condition,
+                'Replicates': len(cols),
+                'Proteins Analyzed': len(condition_cvs),
+                'Median
 
 
 def render_pca_plot(data: pd.DataFrame, replicate_cols: List[str], 
@@ -561,7 +593,7 @@ def render_qc_dashboard(data: pd.DataFrame, replicate_cols: List[str],
     
     # CV Violin Plot
     st.markdown("---")
-    render_cv_violin(data, all_replicates, condition_names)
+    render_cv_violin(data, replicate_cols, condition_names)
     
     # 3. PCA Plot
     render_pca_plot(data, replicate_cols, condition_names)
