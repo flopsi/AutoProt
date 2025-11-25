@@ -31,12 +31,9 @@ if uploaded_file is None:
 @st.cache_data
 def load_data(file):
     content = file.getvalue()
-    try:
-        df = pd.read_csv(io.BytesIO(content), sep='\t', low_memory=False)
-        st.success("Tab-separated file loaded")
-    except:
-        df = pd.read_csv(io.BytesIO(content), sep=',')
-        st.success("Comma-separated file loaded")
+    df = pd.read_csv(io.BytesIO(content), sep=',')
+    st.success("Comma-separated file loaded")
+   
     return df
 
 df = load_data(uploaded_file)
