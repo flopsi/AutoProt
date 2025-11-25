@@ -58,4 +58,25 @@ def create_volcano_plot(df: pd.DataFrame, p_value_threshold: float = 1.3,
     
     # Add threshold lines
     fig.add_hline(y=p_value_threshold, line_dash="dash", line_color="gray",
-                 annotation_text=
+                 annotation_text=f"p-value threshold ({10**(-p_value_threshold):.1e})",
+                 annotation_position="right")
+    fig.add_vline(x=fc_threshold, line_dash="dash", line_color="gray")
+    fig.add_vline(x=-fc_threshold, line_dash="dash", line_color="gray")
+    
+    # Update layout
+    fig.update_layout(
+        title="Volcano Plot",
+        xaxis_title="Log2 Fold Change",
+        yaxis_title="-Log10 p-value",
+        hovermode='closest',
+        height=600,
+        showlegend=True,
+        legend=dict(
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01
+        )
+    )
+    
+    return fig
