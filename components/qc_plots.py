@@ -145,11 +145,7 @@ def render_cv_violin(data: pd.DataFrame, replicate_cols: List[str],
     """
     Render violin plot showing CV distribution for each condition
     CV is ALWAYS calculated on original untransformed data
-    
-    Args:
-        data: DataFrame (may be transformed)
-        replicate_cols: All replicate column names
-        condition_names: Dict mapping condition name to list of column names
+    OPTIMIZED for large datasets using vectorized operations
     """
     st.markdown("### 🎻 Coefficient of Variation (CV) Analysis")
     
@@ -166,40 +162,43 @@ def render_cv_violin(data: pd.DataFrame, replicate_cols: List[str],
     if hasattr(st.session_state, 'raw_data_for_cv'):
         raw_data = st.session_state.raw_data_for_cv
     else:
-        # Fallback: assume current data is raw
         raw_data = data
         st.warning("Using current data for CV. For accurate CV, ensure data is not transformed.")
     
-    cv_data = []
+    # Vectorized CV calculation - much faster!
+    cv_records = []
     
-    for condition, cols in condition_names.items():
-        if len(cols) < 2:
-            st.warning(f"Condition '{condition}' has fewer than 2 replicates. CV cannot be calculated.")
-            continue
-        
-        # Calculate CV PER CONDITION using RAW data
-        for idx, row in raw_data.iterrows():
-            values = row[cols].dropna()
+    with st.spinner("Calculating CVs..."):
+        for condition, cols in condition_names.items():
+            if len(cols) < 2:
+                st.warning(f"Condition '{condition}' has fewer than 2 replicates. CV cannot be calculated.")
+                continue
             
-            if len(values) >= 2:
-                mean_val = values.mean()
-                std_val = values.std()
-                
-                if mean_val > 0:
-                    cv = (std_val / mean_val) * 100
-                    
-                    if 0 <= cv <= 200:
-                        cv_data.append({
-                            'Condition': condition,
-                            'CV': cv,
-                            'Protein': idx
-                        })
+            # VECTORIZED: Calculate mean and std for all proteins at once
+            condition_data = raw_data[cols]
+            means = condition_data.mean(axis=1)
+            stds = condition_data.std(axis=1)
+            
+            # Calculate CV for all proteins at once
+            cvs = (stds / means) * 100
+            
+            # Filter: only keep valid CVs (mean > 0, CV in reasonable range)
+            valid_mask = (means > 0) & (cvs >= 0) & (cvs <= 200) & (~cvs.isna())
+            valid_cvs = cvs[valid_mask]
+            
+            # Create records for this condition
+            for protein_id, cv_val in valid_cvs.items():
+                cv_records.append({
+                    'Condition': condition,
+                    'CV': cv_val,
+                    'Protein': protein_id
+                })
     
-    if len(cv_data) == 0:
+    if len(cv_records) == 0:
         st.warning("Insufficient data to calculate CV")
         return
     
-    cv_df = pd.DataFrame(cv_data)
+    cv_df = pd.DataFrame(cv_records)
     
     # Create violin plot
     fig = go.Figure()
@@ -292,6 +291,7 @@ def render_cv_violin(data: pd.DataFrame, replicate_cols: List[str],
                     st.warning(f"{worst_condition} (Median CV: {worst_cv:.1f}%)")
                 else:
                     st.info(f"{worst_condition} (Median CV: {worst_cv:.1f}%)")
+
 
 
 def render_pca_plot(data: pd.DataFrame, replicate_cols: List[str], 
