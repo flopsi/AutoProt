@@ -212,27 +212,52 @@ with st.container():
     st.markdown("</div>", unsafe_allow_html=True)
 
 st.success("Data import complete! Ready for **Module 2: Data Quality**")
+
 # ─────────────────────────────────────────────────────────────
-# NAVIGATION & RESTART CONTROLS (add this block exactly here)
+# UNIVERSAL NAVIGATION — Works from ANY page, ANY workflow
 # ─────────────────────────────────────────────────────────────
 st.markdown("---")
 
-# Center-aligned navigation buttons
-col_prev, col_space, col_next, col_space2, col_restart = st.columns([1, 1, 1, 1, 2])
+# Main navigation buttons
+col1, col2, col3, col4 = st.columns([1.2, 1.2, 1.2, 1.8])
 
-with col_prev:
-    if st.button("Previous Step", use_container_width=True):
-        st.switch_page("pages/1_Data_Import.py")  # adjust path if needed
+with col1:
+    if st.button("Protein Upload", use_container_width=True):
+        st.switch_page("app.py")  # your main protein page
 
-with col_next:
-    if st.button("Next: Data Quality", type="primary", use_container_width=True):
-        st.switch_page("pages/2_Data_Quality.py")
+with col2:
+    if st.button("Peptide Upload", use_container_width=True):
+        st.switch_page("pages/1_Peptide_Data_Import.py")
 
-with col_restart:
-    if st.button("Restart Entire Analysis", type="secondary", help="Clear all data and start over"):
+with col3:
+    if st.button("Data Quality", type="primary", use_container_width=True):
+        # Check what data exists and route intelligently
+        if "df" in st.session_state or "df_peptide" in st.session_state:
+            st.switch_page("pages/2_Data_Quality.py")
+        else:
+            st.error("Please upload protein or peptide data first")
+            st.stop()
+
+with col4:
+    if st.button("Restart Entire Analysis", type="secondary", use_container_width=True):
         st.session_state.clear()
         st.rerun()
 
+# Fixed bottom restart button (always visible)
+st.markdown("""
+<div style="position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 9999;">
+    <div style="background: #E71316; color: white; padding: 14px 32px; border-radius: 8px; font-weight: 600; box-shadow: 0 6px 16px rgba(0,0,0,0.3); cursor: pointer;" 
+         onclick="document.getElementById('restart-btn').click()">
+        Restart Analysis — Clear All Data
+    </div>
+</div>
+<button id="restart-btn" style="display:none" onclick="location.reload()"></button>
+""", unsafe_allow_html=True)
+
+# Hidden real restart button
+if st.button("hidden_restart", key="hidden_restart_key"):
+    st.session_state.clear()
+    st.rerun()
 # ─────────────────────────────────────────────────────────────
 # Ready
 # ─────────────────────────────────────────────────────────────
