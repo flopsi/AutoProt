@@ -232,30 +232,28 @@ with st.container():
 
     preview_df = pd.DataFrame(preview_data)
 
-    # Editable checkbox table
-    # ─── REPLACE THE ENTIRE data_editor BLOCK WITH THIS ─────────────────────
     edited_df = st.data_editor(
-        preview_df,
-        column_config={
-            "Include in Cond 1": st.column_config.CheckboxColumn(
-                label="Include in Cond 1",
-                help="Check = assign to Condition 1",
-                default_value=True   # pre-check the auto-detected ones
-            ),
-            "Column": st.column_config.TextColumn(
-                "Column",
-                disabled=True
-            ),
-            "Suggested Condition": st.column_config.TextColumn(
-                "Suggested Condition",
-                disabled=True
-            ),
-        },
-        disabled=["Column", "Suggested Condition"],
-        hide_index=True,
-        use_container_width=True,
-        num_rows="fixed",
-        key="cond1_editor"
+            preview_df,
+            column_config={
+                "Include in Cond 1": st.column_config.CheckboxColumn(
+                    "Include in Cond 1",          # ← this is the display label
+                    help="Check = assign to Condition 1",
+                    default_value=True            # ← pre-selects auto-detected replicates
+                ),
+                "Column": st.column_config.TextColumn(
+                    "Column",
+                    disabled=True
+                ),
+                "Suggested Condition": st.column_config.TextColumn(
+                    "Suggested Condition",
+                    disabled=True
+                )
+            },
+            disabled=["Column", "Suggested Condition"],
+            hide_index=True,
+            use_container_width=True,
+            num_rows="fixed",
+            key="condition_assignment_table"   # ← required for stateful editor
     )
 # ────────────────────────────────────────────────────────────────────────
 
