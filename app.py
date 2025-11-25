@@ -201,18 +201,20 @@ with st.container():
         "df": df
     })
 
-    st.success("All assignments applied!")
+    st.success("All assignments applied successfully!")
+    
     c1, c2 = st.columns(2)
     with c1:
-        st.metric("**Condition 1**", f"{len(cond1_cols)} reps")
+        st.metric("**Condition 1**", f"{len(cond1_cols)} replicates")
+        st.write("Replicates:")
         st.write(", ".join(cond1_cols))
     with c2:
-        st.metric("**Condition 2**", f"{len(cond2_cols May be truncated) reps")
+        st.metric("**Condition 2**", f"{len(cond2_cols)} replicates")
+        st.write("Replicates:")
         st.write(", ".join(cond2_cols))
 
-    st.info(f"Species → `{species_col[0]}` | Protein → `{protein_col[0]}`")
+    st.info(f"**Species column** → `{species_col[0]}` | **Protein Group** → `{protein_col[0]}`")
     st.markdown("</div>", unsafe_allow_html=True)
-
 # ─────────────────────────────────────────────────────────────
 # Ready
 # ─────────────────────────────────────────────────────────────
