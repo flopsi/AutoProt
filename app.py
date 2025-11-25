@@ -184,13 +184,45 @@ with st.container():
         df = df.rename(columns=rename_map)
         st.session_state.df = df
 
-    # Extract assignments
-    cond1_cols = edited[edited["Cond 1"]]["Original Name"].tolist()
-    cond2_cols = [c for c in numeric_cols if c not in cond1_cols]
-    species_col = edited[edited["Species"]]["Original Name"].tolist()[0]
-    protein_col = edited[edited["Protein Group"]]["Original Name"].tolist()[0]
+    # ── SAFE extraction with proper validation ──
+    cond1_checked = edited[edited["Cond 1"]]
+    species_checked = edited[edited["Species"]]
+    protein_checked = edited[edited["Protein Group"]]
 
-    # Save
+    cond1_cols = cond1_checked["Original Name"].tolist()
+    cond2_cols = [c for c in numeric_cols if c not in cond1_cols]
+
+    species_cols = species_checked["Original Name"].tolist()
+    protein_cols = protein_checked["Original Name"].tolist()
+
+    # ── BULLETPROOF validation ──
+    errors = []
+
+    if len(cond1_cols) == 0:
+        errors.append("Condition 1 must have at least one replicate")
+    if len(cond2_cols) == 0:
+        errors.append("Condition 2 must have at least one replicate")
+
+    if len(species_cols) == 0:
+        errors.append("Exactly one Species column must be selected")
+    elif len(species_cols) > 1:
+        errors.append("Only one Species column allowed — uncheck the others")
+
+    if len(protein_cols) == 0:
+        errors.append("Exactly one Protein Group column must be selected")
+    elif len(protein_cols) > 1:
+        errors.append("Only one Protein Group column allowed")
+
+    if errors:
+        for e in errors:
+            st.error(e)
+        st.stop()
+
+    # ── Now safe to access [0] ──
+    species_col = species_cols[0]
+    protein_col = protein_cols[0]
+
+    # ── Save everything ──
     st.session_state.update({
         "cond1_cols": cond1_cols,
         "cond2_cols": cond2_cols,
