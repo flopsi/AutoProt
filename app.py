@@ -325,107 +325,121 @@ def step2_check_normality():
 
 
 def step3_transform_data():
-    """Step 3: Apply log2 transformation"""
+    """Step 3: Transform data if needed"""
     st.header("Step 3: Data Transformation")
     
-    df = st.session_state.raw_data
-    mapping = st.session_state.replicate_mapping
+    if not hasattr(st.session_state, 'raw_data'):
+        st.warning("⚠️ No data loaded. Please go back to Step 1.")
+        return
     
-    # Get all replicate columns
-    all_replicates = []
-    for cols in mapping.values():
-        all_replicates.extend(cols)
+    # Check if already transformed
+    if hasattr(st.session_state, 'data_is_transformed') and st.session_state.data_is_transformed:
+        st.success("✅ Data has been transformed")
+        
+        # Show summary
+        st.markdown("### Transformation Summary")
+        st.info(f"Applied log2 transformation with pseudocount = {st.session_state.get('pseudocount_used', 1.0)}")
+        
+        # Show proceed button
+        st.markdown("---")
+        if st.button("➡️ Proceed to QC Analysis", type="primary", use_container_width=True):
+            st.session_state.step = 4
+            st.rerun()
+        return
     
-    st.markdown("### Log2 Transformation")
-    st.info("Log2 transformation normalizes skewed distributions and stabilizes variance across intensity ranges.")
+    # Get replicate mapping
+    replicate_mapping = st.session_state.replicate_mapping
+    all_cols = [col for cols in replicate_mapping.values() for col in cols]
     
+    # Select first sample for visualization
+    sample_col = all_cols[0]
+    
+    st.info("Based on normality test results, you may want to apply log2 transformation to improve data distribution.")
+    
+    # Pseudocount selection
     pseudocount = st.number_input(
-        "Pseudocount value (added before log to avoid log(0))",
-        min_value=0.1, max_value=10.0, value=1.0, step=0.1
+        "Pseudocount (value added before log2 transformation)",
+        min_value=0.0,
+        max_value=10.0,
+        value=1.0,
+        step=0.1,
+        help="Small value added to avoid log(0). Typical value: 1.0"
     )
     
-    if st.button("🔄 Apply Transformation", type="primary"):
-        
-        with st.spinner("Applying log2 transformation..."):
-            transformed_df = log2_transform(df, all_replicates, pseudocount)
+    # Transform button
+    if st.button("🔄 Apply Log2 Transformation", type="primary", use_container_width=True):
+        with st.spinner("Applying transformation..."):
             # Apply transformation
+            transformed_df = log2_transform(
+                st.session_state.raw_data,
+                all_cols,
+                pseudocount
+            )
+            
+            # Update working data
             st.session_state.raw_data = transformed_df
-            # DON'T overwrite raw_data_for_cv - it stays original!
-
-            st.session_state.log_transformed = True
+            st.session_state.data_is_transformed = True
+            st.session_state.pseudocount_used = pseudocount
             
-            st.success("✅ Transformation complete!")
-            
-            # Show before/after comparison - SIDE BY SIDE
-            st.markdown("### Before & After Comparison")
-            
-            sample_col = all_replicates[0]
-            
-            # Create side-by-side subplots
-            fig = make_subplots(
-                rows=1, cols=2,
-                subplot_titles=("Original Distribution", "Log2 Transformed Distribution"),
-                horizontal_spacing=0.15
-            )
-            
-            # Before (left)
-            fig.add_trace(
-                go.Histogram(
-                    x=df[sample_col].dropna(),
-                    name="Original",
-                    marker_color='#3498db',
-                    nbinsx=50
-                ),
-                row=1, col=1
-            )
-            
-            # After (right)
-            fig.add_trace(
-                go.Histogram(
-                    x=transformed_df[sample_col].dropna(),
-                    name="Log2 Transformed",
-                    marker_color='#2ecc71',
-                    nbinsx=50
-                ),
-                row=1, col=2
-            )
-            
-            # Update axes
-            fig.update_xaxes(title_text="Intensity", row=1, col=1)
-            fig.update_xaxes(title_text="Log2 Intensity", row=1, col=2)
-            fig.update_yaxes(title_text="Count", row=1, col=1)
-            fig.update_yaxes(title_text="Count", row=1, col=2)
-            
-            fig.update_layout(
-                title_text=f"Distribution Comparison: {sample_col}",
-                showlegend=False,
-                height=400
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Re-test normality
-            st.markdown("### Updated Normality Test")
-            normality = check_normality(transformed_df[sample_col])
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("p-value", f"{normality['p_value']:.4f}")
-            with col2:
-                st.metric("Skewness", f"{normality['skewness']:.2f}")
-            with col3:
-                st.metric("Kurtosis", f"{normality['kurtosis']:.2f}")
-            
-            if normality['is_normal']:
-                st.success("✅ Data now shows normal distribution!")
-            else:
-                st.info("ℹ️ Distribution improved but still non-normal. This is common for proteomics data.")
+            st.success("✅ Transformation applied!")
+            st.rerun()
     
-                st.markdown("---")
-                
-            if st.button("➡️ Proceed to QC Analysis", type="primary", use_container_width=True):
-                st.session_state.step = 4
-                st.rerun()
+    # Preview original distribution
+    st.markdown("### Original Distribution Preview")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown(f"**Sample: {sample_col}**")
+        original_values = st.session_state.raw_data[sample_col].dropna()
+        
+        fig = go.Figure()
+        fig.add_trace(go.Histogram(
+            x=original_values,
+            nbinsx=50,
+            name="Original"
+        ))
+        fig.update_layout(
+            title="Original Intensity Distribution",
+            xaxis_title="Intensity",
+            yaxis_title="Count",
+            height=300
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Show normality stats
+        normality = check_normality(original_values)
+        st.metric("Skewness", f"{normality['skewness']:.2f}")
+    
+    with col2:
+        st.markdown("**After transformation (preview)**")
+        preview_transformed = np.log2(original_values + pseudocount)
+        
+        fig = go.Figure()
+        fig.add_trace(go.Histogram(
+            x=preview_transformed,
+            nbinsx=50,
+            name="Transformed",
+            marker_color='orange'
+        ))
+        fig.update_layout(
+            title="Log2 Transformed Distribution (Preview)",
+            xaxis_title="Log2 Intensity",
+            yaxis_title="Count",
+            height=300
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Show normality stats for preview
+        normality_preview = check_normality(pd.Series(preview_transformed))
+        st.metric("Skewness (after)", f"{normality_preview['skewness']:.2f}")
+    
+    # Skip transformation option
+    st.markdown("---")
+    if st.button("⏭️ Skip Transformation & Proceed", use_container_width=True):
+        st.session_state.data_is_transformed = False
+        st.session_state.step = 4
+        st.rerun()
+
 
 
 def step4_qc_analysis():
