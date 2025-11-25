@@ -1,4 +1,8 @@
-# Components packagefrom .plots import create_volcano_plot
+"""
+Components package for UI rendering
+"""
+
+from .plots import create_volcano_plot
 from .tables import render_data_table
 from .stats import render_stats_cards
 from .qc_plots import (
@@ -9,6 +13,7 @@ from .qc_plots import (
     render_rank_plots,
     render_qc_dashboard
 )
+
 __all__ = [
     'create_volcano_plot',
     'render_data_table',
@@ -18,4 +23,5 @@ __all__ = [
     'render_pca_plot',
     'render_missing_value_heatmap',
     'render_rank_plots',
-    'render_qc_dashboard']
+    'render_qc_dashboard'
+]
