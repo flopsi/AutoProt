@@ -259,7 +259,7 @@ with col1:
 
 with col2:
     if st.button("Peptide Upload", use_container_width=True):
-        st.Page("Peptide_Import.py")
+        st.Navigation("Peptide_Import.py")
 
 with col3:
     if st.button("Data Quality", type="primary", use_container_width=True):
