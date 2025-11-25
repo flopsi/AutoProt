@@ -246,10 +246,11 @@ with st.container():
 st.success("Data import complete! Ready for **Module 2: Data Quality**")
 
 # ─────────────────────────────────────────────────────────────
-# UNIVERSAL NAVIGATION + CLEAN INVISIBLE RESTART
+# FIXED NAVIGATION & RESTART — HIDDEN BUTTON NOW TRULY HIDDEN
 # ─────────────────────────────────────────────────────────────
 st.markdown("---")
 
+# Main navigation buttons
 col1, col2, col3, col4 = st.columns([1.2, 1.2, 1.2, 1.8])
 
 with col1:
@@ -273,6 +274,33 @@ with col4:
         st.session_state.clear()
         st.rerun()
 
+# FIXED BOTTOM RESTART BUTTON — NOW USING ST.BUTTON WITH CSS (no HTML onclick issues)
+st.markdown("""
+<style>
+    .fixed-restart {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 999;
+    }
+    .fixed-restart .stButton > button {
+        background: #E71316;
+        color: white;
+        padding: 14px 32px;
+        font-weight: 600;
+        border-radius: 8px;
+        box-shadow: 0 6px 16px rgba(0,0,0,0.3);
+    }
+</style>
+""", unsafe_allow_html=True)
+
+with st.container():
+    st.markdown('<div class="fixed-restart">', unsafe_allow_html=True)
+    if st.button("Restart Analysis — Clear All Data", key="fixed_restart"):
+        st.session_state.clear()
+        st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
 # Ready
