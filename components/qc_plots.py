@@ -144,24 +144,32 @@ def render_cv_violin(data: pd.DataFrame, replicate_cols: List[str],
                      condition_names: Dict[str, List[str]]):
     """
     Render violin plot showing CV distribution for each condition
-    CV is calculated WITHIN each condition's replicates separately
+    CV is ALWAYS calculated on original untransformed data
     
     Args:
-        data: DataFrame with protein intensities
+        data: DataFrame (may be transformed)
         replicate_cols: All replicate column names
         condition_names: Dict mapping condition name to list of column names
     """
     st.markdown("### 🎻 Coefficient of Variation (CV) Analysis")
     
     st.info(
-        "**CV (Coefficient of Variation)** measures reproducibility **within** each condition's replicates:\n"
+        "**CV (Coefficient of Variation)** measures reproducibility **within** each condition.\n"
+        "**Important:** CV is ALWAYS calculated on ORIGINAL (untransformed) intensities.\n"
         "- CV = (Standard Deviation / Mean) × 100%\n"
-        "- Calculated separately for each condition\n"
+        "- Calculated separately for each condition on raw data\n"
         "- Lower CV = Better reproducibility\n"
         "- **Excellent:** CV < 20% | **Good:** 20-30% | **Poor:** > 30%"
     )
     
-    # Calculate CV for each protein WITHIN each condition separately
+    # Get the original raw data from session state
+    if hasattr(st.session_state, 'raw_data_for_cv'):
+        raw_data = st.session_state.raw_data_for_cv
+    else:
+        # Fallback: assume current data is raw
+        raw_data = data
+        st.warning("Using current data for CV. For accurate CV, ensure data is not transformed.")
+    
     cv_data = []
     
     for condition, cols in condition_names.items():
@@ -169,15 +177,15 @@ def render_cv_violin(data: pd.DataFrame, replicate_cols: List[str],
             st.warning(f"Condition '{condition}' has fewer than 2 replicates. CV cannot be calculated.")
             continue
         
-        # Calculate CV for each protein using ONLY this condition's replicates
-        for idx, row in data.iterrows():
+        # Calculate CV PER CONDITION using RAW data
+        for idx, row in raw_data.iterrows():
             values = row[cols].dropna()
             
             if len(values) >= 2:
                 mean_val = values.mean()
                 std_val = values.std()
                 
-                if mean_val != 0:
+                if mean_val > 0:
                     cv = (std_val / mean_val) * 100
                     
                     if 0 <= cv <= 200:
@@ -212,7 +220,6 @@ def render_cv_violin(data: pd.DataFrame, replicate_cols: List[str],
                 x0=condition
             ))
     
-    # Add reference lines
     fig.add_hline(y=20, line_dash="dash", line_color="green", 
                   annotation_text="Excellent (<20%)", 
                   annotation_position="right")
@@ -221,7 +228,7 @@ def render_cv_violin(data: pd.DataFrame, replicate_cols: List[str],
                   annotation_position="right")
     
     fig.update_layout(
-        title="CV Distribution by Condition (Within-Condition Replicates)",
+        title="CV Distribution Per Condition (Raw Intensities)",
         yaxis_title="Coefficient of Variation (%)",
         xaxis_title="Condition",
         showlegend=True,
@@ -231,8 +238,8 @@ def render_cv_violin(data: pd.DataFrame, replicate_cols: List[str],
     
     st.plotly_chart(fig, use_container_width=True)
     
-    # Summary statistics
-    st.markdown("### 📊 CV Summary Statistics (Per Condition)")
+    # Summary statistics PER CONDITION
+    st.markdown("### 📊 CV Summary (Per Condition, Raw Data)")
     
     summary_data = []
     for condition, cols in condition_names.items():
@@ -246,7 +253,7 @@ def render_cv_violin(data: pd.DataFrame, replicate_cols: List[str],
             summary_data.append({
                 'Condition': condition,
                 'Replicates': len(cols),
-                'Proteins Analyzed': len(condition_cvs),
+                'Proteins': len(condition_cvs),
                 'Median CV (%)': f"{condition_cvs.median():.1f}",
                 'Mean CV (%)': f"{condition_cvs.mean():.1f}",
                 'Excellent (<20%)': f"{excellent} ({excellent/len(condition_cvs)*100:.1f}%)",
@@ -260,25 +267,32 @@ def render_cv_violin(data: pd.DataFrame, replicate_cols: List[str],
     # Compare conditions
     st.markdown("### 🔍 Condition Comparison")
     
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("**Best Reproducibility:**")
-        best_idx = summary_df['Median CV (%)'].str.replace('%', '').astype(float).idxmin()
-        best_condition = summary_df.loc[best_idx, 'Condition']
-        best_cv = summary_df.loc[best_idx, 'Median CV (%)']
-        st.success(f"{best_condition} (Median CV: {best_cv})")
-    
-    with col2:
-        st.markdown("**Needs Improvement:**")
-        worst_idx = summary_df['Median CV (%)'].str.replace('%', '').astype(float).idxmax()
-        worst_condition = summary_df.loc[worst_idx, 'Condition']
-        worst_cv = summary_df.loc[worst_idx, 'Median CV (%)']
+    if len(summary_data) > 1:
+        col1, col2 = st.columns(2)
         
-        if float(worst_cv.replace('%', '')) > 30:
-            st.warning(f"{worst_condition} (Median CV: {worst_cv})")
-        else:
-            st.info(f"{worst_condition} (Median CV: {worst_cv})")
+        condition_medians = {}
+        for condition in condition_names.keys():
+            condition_cvs = cv_df[cv_df['Condition'] == condition]['CV']
+            if len(condition_cvs) > 0:
+                condition_medians[condition] = condition_cvs.median()
+        
+        if condition_medians:
+            with col1:
+                st.markdown("**Best Reproducibility:**")
+                best_condition = min(condition_medians, key=condition_medians.get)
+                best_cv = condition_medians[best_condition]
+                st.success(f"{best_condition} (Median CV: {best_cv:.1f}%)")
+            
+            with col2:
+                st.markdown("**Needs Improvement:**")
+                worst_condition = max(condition_medians, key=condition_medians.get)
+                worst_cv = condition_medians[worst_condition]
+                
+                if worst_cv > 30:
+                    st.warning(f"{worst_condition} (Median CV: {worst_cv:.1f}%)")
+                else:
+                    st.info(f"{worst_condition} (Median CV: {worst_cv:.1f}%)")
+
 
 def render_pca_plot(data: pd.DataFrame, replicate_cols: List[str], 
                    condition_names: Dict[str, List[str]]):
