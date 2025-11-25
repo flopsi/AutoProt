@@ -28,9 +28,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── DEFINE PAGES WITH st.Page ──
-protein_page = st.Page("Protein_Import.py", title="Protein Upload", icon="🧬")
-peptide_page = st.Page("Peptide_Import.py", title="Peptide Upload", icon="🧬")
-quality_page = st.Page("Data_Quality.py", title="Data Quality", icon="📊", default=True)
+#protein_page = st.Page("Protein_Import.py", title="Protein Upload", icon="🧬")
+#peptide_page = st.Page("Peptide_Import.py", title="Peptide Upload", icon="🧬")
+#quality_page = st.Page("Data_Quality.py", title="Data Quality", icon="📊", default=True)
 
 # ── NAVIGATION MENU ──
 pg = st.navigation([st.Page("Protein_Import.py"),st.Page("Peptide_Import.py"),st.Page("Data_Quality.py")])
