@@ -1,5 +1,5 @@
-echo "streamlit>=1.28" > requirements.txt
-echo "pandas" >> requirements.txt
-echo "seaborn" >> requirements.txt
-echo "matplotlib" >> requirements.txt
-echo "scipy" >> requirements.txt
+streamlit>=1.28
+pandas
+seaborn
+matplotlib
+scipy
