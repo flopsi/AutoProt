@@ -12,7 +12,7 @@ from sklearn.preprocessing import StandardScaler
 from typing import Dict, Tuple, List, Optional
 import warnings
 warnings.filterwarnings('ignore')
-
+from utils.stats import calculate_cv
 
 def calculate_cv(data: pd.DataFrame, replicate_cols: List[str]) -> pd.Series:
     """
