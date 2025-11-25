@@ -1,678 +1,184 @@
-"""
-Enhanced ProteoFlow - Proteomics QC and Analysis Platform
-Complete guided workflow from raw data to statistical results
-"""
-
+# app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
-from io import BytesIO
+import seaborn as sns
+import matplotlib.pyplot as plt
+from scipy.stats import ttest_ind
+import io
 
-# Import utilities
-from utils.data_generator import generate_mock_proteins
-from utils.stats import (
-    check_normality,
-    log2_transform,
-    batch_process_proteins
+st.set_page_config(page_title="LFQbench Quick Test", layout="wide")
+st.title("LFQbench-style Analysis – Quick Test Version")
+
+# -------------------------------------------------
+# 1. Upload file
+# -------------------------------------------------
+uploaded_file = st.file_uploader(
+    "Upload your proteinGroups.txt or any MaxQuant/LFQ file",
+    type=["txt", "csv", "tsv"]
 )
-from components.qc_plots import render_qc_dashboard
-from components.plots import create_volcano_plot
-from components.tables import render_data_table
-from components.stats import render_stats_cards
-from services.gemini_service import analyze_proteins, chat_with_data
 
+if uploaded_file is None:
+    st.info("Upload a file to start. You can test with the official LFQbench example file:")
+    st.markdown(
+        "[Download example proteinGroups.txt (3-species mix)](https://raw.githubusercontent.com/cox-labs/LFQbench/master/example_data/proteinGroups.txt)"
+    )
+    st.stop()
 
-# ==================== HELPER FUNCTIONS ====================
-
-def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Clean DataFrame: strip whitespace from column names and index
-    Convert all numeric columns to float
-    
-    Args:
-        df: Input DataFrame
-        
-    Returns:
-        Cleaned DataFrame
-    """
-    # Strip whitespace from column names
-    df.columns = df.columns.str.strip()
-    
-    # Strip whitespace from index if it's string type
-    if df.index.dtype == 'object':
-        df.index = df.index.str.strip()
-    
-    # Convert all numeric-like columns to float
-    for col in df.columns:
-        # Try to convert to numeric, coerce errors to NaN
-        if df[col].dtype == 'object':
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-        # Ensure it's float
-        if pd.api.types.is_numeric_dtype(df[col]):
-            df[col] = df[col].astype(float)
-    
+# -------------------------------------------------
+# 2. Load data
+# -------------------------------------------------
+@st.cache_data
+def load_data(file):
+    content = file.getvalue()
+    try:
+        df = pd.read_csv(io.BytesIO(content), sep='\t', low_memory=False)
+        st.success("Tab-separated file loaded")
+    except:
+        df = pd.read_csv(io.BytesIO(content), sep=',')
+        st.success("Comma-separated file loaded")
     return df
 
+df = load_data(uploaded_file)
 
-def generate_mock_proteins(n_proteins: int = 500) -> pd.DataFrame:
-    """Generate mock protein intensity data for demo"""
-    np.random.seed(42)
-    
-    proteins = [f"Protein_{i:04d}" for i in range(n_proteins)]
-    
-    # Generate data for two conditions with 3 replicates each
-    data = {}
-    
-    # Condition A (Young) - 3 replicates
-    for i in range(1, 4):
-        base = np.random.lognormal(10, 2, n_proteins)
-        noise = np.random.normal(1, 0.15, n_proteins)
-        data[f'Condition_A_R{i}'] = base * noise
-    
-    # Condition B (Old) - 3 replicates
-    for i in range(1, 4):
-        base = np.random.lognormal(10, 2, n_proteins)
-        # Some proteins upregulated
-        upregulated = np.random.choice([False, True], n_proteins, p=[0.9, 0.1])
-        base[upregulated] *= 2
-        noise = np.random.normal(1, 0.15, n_proteins)
-        data[f'Condition_B_R{i}'] = base * noise
-    
-    df = pd.DataFrame(data, index=proteins)
-    
-    # Add some missing values
-    mask = np.random.random(df.shape) > 0.95
-    df[mask] = np.nan
-    
-    return df
+st.write("First 5 rows preview:")
+st.dataframe(df.head())
 
+# -------------------------------------------------
+# 3. Auto-detect LFQ columns (most users have these)
+# -------------------------------------------------
+lfq_cols = [c for c in df.columns if c.startswith("LFQ intensity ")]
+if not lfq_cols:
+    # fallback for newer MaxQuant versions
+    lfq_cols = [c for c in df.columns if "LFQ intensity" in c]
 
-# ==================== WORKFLOW STEPS ====================
+if not lfq_cols:
+    st.error("No LFQ intensity columns found. Check column names.")
+    st.stop()
 
-def step1_load_and_map():
-    """Step 1: Load data and map replicates to conditions with clean naming"""
-    st.header("Step 1: Load Data & Map Replicates")
-    
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.subheader("📂 Upload Your Data")
-        uploaded_file = st.file_uploader(
-            "Upload CSV or TSV file with protein intensities",
-            type=['csv', 'tsv', 'txt']
-        )
-        
-        if uploaded_file:
-            try:
-                if uploaded_file.name.endswith('.csv'):
-                    raw_df = pd.read_csv(uploaded_file, index_col=0)
-                else:
-                    raw_df = pd.read_csv(uploaded_file, sep='\t', index_col=0)
-                
-                # Clean the raw dataframe
-                raw_df = clean_dataframe(raw_df)
-                
-                # Store raw data temporarily
-                st.session_state.raw_data_temp = raw_df
-                st.success(f"✅ Loaded {len(raw_df)} proteins with {len(raw_df.columns)} columns")
-                
-                with st.expander("Preview raw data"):
-                    st.dataframe(raw_df.head(10), use_container_width=True)
-                    
-            except Exception as e:
-                st.error(f"Error loading file: {str(e)}")
-    
-    with col2:
-        st.subheader("🧪 Or Try Demo Data")
-        if st.button("Load Demo Dataset", use_container_width=True):
-            raw_df = generate_mock_proteins(n_proteins=500)
-            st.session_state.raw_data_temp = raw_df
-            st.success("✅ Demo dataset loaded!")
-            st.rerun()
-    
-    # Replicate mapping interface with clean naming
-    if hasattr(st.session_state, 'raw_data_temp'):
-        st.markdown("---")
-        st.subheader("🔗 Map Replicates to Conditions")
-        
-        raw_df = st.session_state.raw_data_temp
-        
-        # Get all columns (any type)
-        available_cols = raw_df.columns.tolist()
-        
-        st.info(f"Found {len(available_cols)} columns in your data")
-        
-        n_conditions = st.number_input(
-            "Number of experimental conditions",
-            min_value=2, max_value=4, value=2
-        )
-        
-        # Store column mapping: {clean_name: original_column}
-        column_mapping = {}
-        condition_mapping = {}
-        
-        for i in range(n_conditions):
-            st.markdown(f"**Condition {i+1}:**")
-            
-            condition_name = st.text_input(
-                f"Name for condition {i+1}",
-                value=f"Condition_{chr(65+i)}",
-                key=f"cond_name_{i}"
-            )
-            
-            selected_cols = st.multiselect(
-                f"Select replicate columns for {condition_name}",
-                options=available_cols,
-                key=f"cond_cols_{i}"
-            )
-            
-            if selected_cols:
-                # Generate clean names for each replicate
-                clean_names = []
-                
-                st.markdown(f"*Clean names for {condition_name}:*")
-                
-                for j, orig_col in enumerate(selected_cols):
-                    # Auto-generate clean name
-                    default_clean = f"{condition_name}_R{j+1}"
-                    
-                    clean_name = st.text_input(
-                        f"Rename: {orig_col[:50]}...",
-                        value=default_clean,
-                        key=f"clean_name_{i}_{j}"
-                    )
-                    
-                    column_mapping[clean_name] = orig_col
-                    clean_names.append(clean_name)
-                
-                condition_mapping[condition_name] = clean_names
-        
-        # Create clean DataFrame button
-        if len(condition_mapping) >= 2 and len(column_mapping) > 0:
-            st.markdown("---")
-            
-            with st.expander("📋 Preview Column Mapping"):
-                mapping_preview = pd.DataFrame([
-                    {"Clean Name": clean, "Original Column": orig}
-                    for clean, orig in column_mapping.items()
-                ])
-                st.dataframe(mapping_preview, use_container_width=True, hide_index=True)
-            
-            if st.button("✅ Create Clean Dataset & Proceed", type="primary", use_container_width=True):
-                
-                with st.spinner("Creating clean dataset..."):
-                    # Create new clean DataFrame
-                    clean_df = pd.DataFrame(index=raw_df.index)
-                    
-                    conversion_issues = []
-                    
-                    for clean_name, orig_col in column_mapping.items():
-                        # Extract and convert to numeric
-                        try:
-                            clean_df[clean_name] = pd.to_numeric(
-                                raw_df[orig_col], 
-                                errors='coerce'
-                            ).astype(float)
-                            
-                            # Check if conversion caused issues
-                            orig_valid = raw_df[orig_col].notna().sum()
-                            new_valid = clean_df[clean_name].notna().sum()
-                            
-                            if new_valid < orig_valid:
-                                conversion_issues.append(
-                                    f"{clean_name}: {orig_valid - new_valid} non-numeric values converted to NaN"
-                                )
-                        except Exception as e:
-                            st.error(f"Error converting {orig_col} to {clean_name}: {str(e)}")
-                            return
-                    
-                    # Store clean data and mappings
-                    st.session_state.raw_data = clean_df.copy()  # Working data (can be transformed)
-                    st.session_state.raw_data_original = clean_df.copy()  # NEVER MODIFIED - for CV only
-                    st.session_state.replicate_mapping = condition_mapping
-                    st.session_state.column_mapping = column_mapping  # For reference
-                    
-                    # Clean up temp
-                    del st.session_state.raw_data_temp
-                    
-                    st.success(f"✅ Created clean dataset with {len(clean_df.columns)} replicates")
-                    
-                    # Show conversion issues if any
-                    if conversion_issues:
-                        with st.expander("⚠️ Conversion Warnings"):
-                            for issue in conversion_issues:
-                                st.warning(issue)
-                    
-                    # Show clean data preview
-                    with st.expander("Preview clean dataset"):
-                        st.dataframe(clean_df.head(10), use_container_width=True)
-                        st.markdown("**Data types:**")
-                        st.text("All columns: float64")
-                    
-                    # Proceed to next step
-                    st.session_state.step = 2
-                    st.rerun()
+st.success(f"Found {len(lfq_cols)} LFQ columns:")
+st.write(lfq_cols)
 
-def step2_check_normality():
-    """Step 2: Check data normality and recommend transformation"""
-    st.header("Step 2: Check Data Normality")
-    
-    df = st.session_state.raw_data
-    mapping = st.session_state.replicate_mapping
-    
-    # Get all replicate columns
-    all_replicates = []
-    for cols in mapping.values():
-        all_replicates.extend(cols)
-    
-    st.info("📊 Testing normality of intensity distributions using Shapiro-Wilk test")
-    
-    if st.button("🔍 Run Normality Tests", type="primary"):
-        
-        with st.spinner("Running normality tests..."):
-            results = []
-            
-            for col in all_replicates:
-                data = df[col].dropna()
-                if len(data) > 3:
-                    normality = check_normality(data)
-                    results.append({
-                        'Sample': col,
-                        'Normal': '✅' if normality['is_normal'] else '❌',
-                        'p-value': f"{normality['p_value']:.4f}",
-                        'Skewness': f"{normality['skewness']:.2f}",
-                        'Kurtosis': f"{normality['kurtosis']:.2f}"
-                    })
-            
-            results_df = pd.DataFrame(results)
-            st.dataframe(results_df, use_container_width=True, hide_index=True)
-            
-            # Recommendation
-            normal_count = results_df['Normal'].str.contains('✅').sum()
-            total_count = len(results_df)
-            
-            st.markdown("### 💡 Recommendation")
-            
-            if normal_count / total_count < 0.5:
-                st.warning(
-                    f"⚠️ Only {normal_count}/{total_count} samples show normal distribution. "
-                    "**Log2 transformation is recommended** to improve normality and stabilize variance."
-                )
-            else:
-                st.success(
-                    f"✅ {normal_count}/{total_count} samples show normal distribution. "
-                    "Data appears reasonably normal, but log transformation may still improve results."
-                )
-    
-    st.markdown("---")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("⏭️ Skip Transformation", use_container_width=True):
-            st.session_state.transformed_data = df
-            st.session_state.log_transformed = False
-            st.session_state.step = 4  # Skip step 3
-            st.rerun()
-    
-    with col2:
-        if st.button("➡️ Proceed to Transformation", type="primary", use_container_width=True):
-            st.session_state.step = 3
-            st.rerun()
+# -------------------------------------------------
+# 4. Species column – try common names
+# -------------------------------------------------
+possible_species_cols = ["Organism", "Species", "Organisms", "Taxonomy", "Fasta headers", "Fasta header"]
+species_col = None
+for col in possible_species_cols:
+    if col in df.columns:
+        species_col = col
+        break
 
+if species_col is None:
+    st.warning("Could not auto-detect species column. Please choose manually:")
+    species_col = st.selectbox("Select species/organism column", options=df.columns)
 
-def step3_transform_data():
-    """Step 3: Transform data if needed"""
-    st.header("Step 3: Data Transformation")
-    
-    if not hasattr(st.session_state, 'raw_data'):
-        st.warning("⚠️ No data loaded. Please go back to Step 1.")
-        return
-    
-    # Check if already transformed
-    if hasattr(st.session_state, 'data_is_transformed') and st.session_state.data_is_transformed:
-        st.success("✅ Data has been transformed")
-        
-        # Show summary
-        st.markdown("### Transformation Summary")
-        st.info(f"Applied log2 transformation with pseudocount = {st.session_state.get('pseudocount_used', 1.0)}")
-        
-        # Show proceed button
-        st.markdown("---")
-        if st.button("➡️ Proceed to QC Analysis", type="primary", use_container_width=True):
-            st.session_state.step = 4
-            st.rerun()
-        return
-    
-    # Get replicate mapping
-    replicate_mapping = st.session_state.replicate_mapping
-    all_cols = [col for cols in replicate_mapping.values() for col in cols]
-    
-    # Select first sample for visualization
-    sample_col = all_cols[0]
-    
-    st.info("Based on normality test results, you may want to apply log2 transformation to improve data distribution.")
-    
-    # Pseudocount selection
-    pseudocount = st.number_input(
-        "Pseudocount (value added before log2 transformation)",
-        min_value=0.0,
-        max_value=10.0,
-        value=1.0,
+else:
+    st.info(f"Auto-selected species column: **{species_col}**")
+    if st.checkbox("Change species column"):
+        species_col = st.selectbox("Select species column", options=df.columns, index=df.columns.get_loc(species_col))
+
+# -------------------------------------------------
+# 5. Show unique species and set expected ratios
+# -------------------------------------------------
+unique_species = df[species_col].dropna().unique()
+st.write("Detected species:", unique_species)
+
+expected_ratios = {}
+st.subheader("Set expected log₂ ratios (Condition 2 / Condition 1)")
+for sp in unique_species:
+    default = 0.0
+    if "Homo sapiens" in str(sp) or "human" in str(sp).lower():
+        default = 0.0
+    elif "Saccharomyces" in str(sp) or "yeast" in str(sp).lower():
+        default = 1.0   # 2:1 example
+    elif "Escherichia" in str(sp) or "E.coli" in str(sp):
+        default = -2.0  # 1:4 example
+
+    expected_ratios[sp] = st.number_input(
+        f"Expected log₂ ratio for {sp}",
+        value=default,
         step=0.1,
-        help="Small value added to avoid log(0). Typical value: 1.0"
+        key=f"exp_{sp}"
     )
-    
-    # Transform button
-    if st.button("🔄 Apply Log2 Transformation", type="primary", use_container_width=True):
-        with st.spinner("Applying transformation..."):
-            # Apply transformation
-            transformed_df = log2_transform(
-                st.session_state.raw_data,
-                all_cols,
-                pseudocount
-            )
-            
-            # Update working data
-            st.session_state.raw_data = transformed_df
-            st.session_state.data_is_transformed = True
-            st.session_state.pseudocount_used = pseudocount
-            
-            st.success("✅ Transformation applied!")
-            st.rerun()
-    
-    # Preview original distribution
-    st.markdown("### Original Distribution Preview")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown(f"**Sample: {sample_col}**")
-        original_values = st.session_state.raw_data[sample_col].dropna()
-        
-        fig = go.Figure()
-        fig.add_trace(go.Histogram(
-            x=original_values,
-            nbinsx=50,
-            name="Original"
-        ))
-        fig.update_layout(
-            title="Original Intensity Distribution",
-            xaxis_title="Intensity",
-            yaxis_title="Count",
-            height=300
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Show normality stats
-        normality = check_normality(original_values)
-        st.metric("Skewness", f"{normality['skewness']:.2f}")
-    
-    with col2:
-        st.markdown("**After transformation (preview)**")
-        preview_transformed = np.log2(original_values + pseudocount)
-        
-        fig = go.Figure()
-        fig.add_trace(go.Histogram(
-            x=preview_transformed,
-            nbinsx=50,
-            name="Transformed",
-            marker_color='orange'
-        ))
-        fig.update_layout(
-            title="Log2 Transformed Distribution (Preview)",
-            xaxis_title="Log2 Intensity",
-            yaxis_title="Count",
-            height=300
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Show normality stats for preview
-        normality_preview = check_normality(pd.Series(preview_transformed))
-        st.metric("Skewness (after)", f"{normality_preview['skewness']:.2f}")
-    
-    # Skip transformation option
-    st.markdown("---")
-    if st.button("⏭️ Skip Transformation & Proceed", use_container_width=True):
-        st.session_state.data_is_transformed = False
-        st.session_state.step = 4
-        st.rerun()
 
+# -------------------------------------------------
+# 6. Select condition columns
+# -------------------------------------------------
+st.subheader("Assign replicates to conditions")
+cond1_cols = st.multiselect("Condition 1 replicates (e.g., control)", options=lfq_cols)
+cond2_cols = st.multiselect("Condition 2 replicates (e.g., treatment)", options=lfq_cols)
 
+if set(cond1_cols) & set(cond2_cols):
+    st.error("Same column cannot be in both conditions!")
+    st.stop()
 
-def step4_qc_analysis():
-    """Step 4: Quality Control Analysis"""
-    st.header("Step 4: Quality Control Analysis")
-    
-    # Verify data exists
-    if not hasattr(st.session_state, 'raw_data'):
-        st.error("❌ No data found. Please go back to Step 1.")
-        return
-    
-    if not hasattr(st.session_state, 'replicate_mapping'):
-        st.error("❌ No replicate mapping found. Please go back to Step 1.")
-        return
-    
-    # Get working data (use raw_data which contains current state)
-    df = st.session_state.raw_data
-    mapping = st.session_state.replicate_mapping
-    
-    # Get all replicate columns
-    all_replicates = [col for cols in mapping.values() for col in cols]
-    
-    st.info(f"Analyzing {len(df)} proteins across {len(all_replicates)} samples")
-    
-    # Show transformation status
-    if hasattr(st.session_state, 'data_is_transformed') and st.session_state.data_is_transformed:
-        st.success("📊 Analyzing **transformed** data (log2 scale)")
-    else:
-        st.info("📊 Analyzing **original** data (linear scale)")
-    
-    # Render QC dashboard
-    render_qc_dashboard(df, all_replicates, mapping)
-    
-    # Proceed button
-    st.markdown("---")
-    if st.button("➡️ Proceed to Statistical Analysis", type="primary", use_container_width=True):
-        st.session_state.step = 5
-        st.rerun()
+if st.button("Run LFQbench Analysis", type="primary"):
+    if len(cond1_cols) == 0 or len(cond2_cols) == 0:
+        st.error("Select at least one column per condition")
+        st.stop()
 
+    # -------------------------------------------------
+    # 7. Core LFQbench calculations
+    # -------------------------------------------------
+    work = df.copy()
+    intensity_cols = cond1_cols + cond2_cols
+    work = work.dropna(subset=intensity_cols + [species_col])
+    work = work[(work[intensity_cols] > 0).all(axis=1)]
 
+    work["mean_cond1"] = work[cond1_cols].mean(axis=1)
+    work["mean_cond2"] = work[cond2_cols].mean(axis=1)
+    work["log2_ratio"] = np.log2(work["mean_cond2"] / work["mean_cond1"])   # note: reversed for classic LFQbench view
+    work["species"] = work[species_col]
 
-def step5_statistical_analysis():
-    """Step 5: Statistical analysis with t-tests and volcano plot"""
-    st.header("Step 5: Statistical Analysis")
-    
-    # Get working data
-    df = st.session_state.transformed_data if st.session_state.transformed_data is not None else st.session_state.raw_data
-    mapping = st.session_state.replicate_mapping
-    
-    # For simplicity, compare first two conditions
-    conditions = list(mapping.keys())
-    
-    if len(conditions) < 2:
-        st.error("Need at least 2 conditions for statistical comparison")
-        return
-    
-    st.info(f"📊 Performing t-tests: **{conditions[0]}** vs **{conditions[1]}**")
-    
-    # Run batch analysis
-    if st.session_state.results_df is None:
-        with st.spinner("Running statistical tests..."):
-            results_df = batch_process_proteins(
-                df,
-                mapping[conditions[0]],
-                mapping[conditions[1]],
-                st.session_state.log_transformed
-            )
-            
-            # Calculate -log10(p-value)
-            results_df['negLog10PValue'] = -np.log10(results_df['p_value'].clip(lower=1e-300))
-            
-            # Add gene names if available
-            if 'gene' in df.columns:
-                results_df['gene'] = df['gene']
-            else:
-                results_df['gene'] = results_df['protein_id']
-            
-            st.session_state.results_df = results_df
-    
-    results_df = st.session_state.results_df
-    
-    # Controls
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        p_threshold = st.slider(
-            "p-value threshold (-log10)",
-            min_value=0.5, max_value=5.0, value=1.3, step=0.1
-        )
-    
-    with col2:
-        fc_threshold = st.slider(
-            "Fold change threshold (log2)",
-            min_value=0.0, max_value=3.0, value=1.0, step=0.1
-        )
-    
-    # Assign significance
-    results_df['significance'] = 'NS'
-    results_df.loc[
-        (results_df['negLog10PValue'] >= p_threshold) & 
-        (results_df['log2_fold_change'] >= fc_threshold), 
-        'significance'
-    ] = 'UP'
-    results_df.loc[
-        (results_df['negLog10PValue'] >= p_threshold) & 
-        (results_df['log2_fold_change'] <= -fc_threshold), 
-        'significance'
-    ] = 'DOWN'
-    
-    # Summary stats
-    render_stats_cards(results_df)
-    
-    st.markdown("---")
-    
-    # Volcano plot
-    st.subheader("🌋 Volcano Plot")
-    fig_volcano = create_volcano_plot(results_df, p_threshold, fc_threshold)
-    if fig_volcano:
-        st.plotly_chart(fig_volcano, use_container_width=True)
-    
-    st.markdown("---")
-    
-    # Results table
-    st.subheader("📊 Significant Proteins")
-    
-    sig_df = results_df[results_df['significance'] != 'NS'].copy()
-    sig_df = sig_df.sort_values('negLog10PValue', ascending=False)
-    
-    display_cols = [
-        'gene', 'log2_fold_change', 'p_value', 'negLog10PValue',
-        'mean_condition_a', 'mean_condition_b', 'significance'
-    ]
-    display_cols = [col for col in display_cols if col in sig_df.columns]
-    
-    st.dataframe(
-        sig_df[display_cols].head(50),
-        use_container_width=True,
-        hide_index=True
+    # p-values
+    pvals = []
+    for _, row in work.iterrows():
+        _, p = ttest_ind(row[cond1_cols], row[cond2_cols], equal_var=False)
+        pvals.append(p if not np.isnan(p) else 1.0)
+    work["p_value"] = pvals
+    work["-log10_p"] = -np.log10(work["p_value"].replace(0, np.nan)).fillna(0)
+
+    # -------------------------------------------------
+    # 8. Results
+    # -------------------------------------------------
+    st.success("Analysis complete!")
+
+    # Summary table
+    summary = (
+        work.groupby("species")["log2_ratio"]
+        .agg(["count", "mean", "std"])
+        .round(4)
+        .reset_index()
     )
-    
-    st.info(f"Showing top 50 of {len(sig_df)} significant proteins")
-    
-    # Download options
-    st.markdown("---")
-    st.subheader("💾 Download Results")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Download all results
-        csv_all = results_df.to_csv(index=False)
-        st.download_button(
-            "📥 Download All Results (CSV)",
-            data=csv_all,
-            file_name="proteomics_results_all.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
-    
-    with col2:
-        # Download significant only
-        csv_sig = sig_df.to_csv(index=False)
-        st.download_button(
-            "📥 Download Significant Only (CSV)",
-            data=csv_sig,
-            file_name="proteomics_results_significant.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
+    summary["expected"] = summary["species"].map(expected_ratios)
+    summary["bias"] = summary["mean"] - summary["expected"]
+    summary.rename(columns={"mean": "observed_mean", "std": "precision_1SD"}, inplace=True)
 
+    st.subheader("LFQbench Summary Table")
+    st.dataframe(summary.style.format("{:.3f}"))
 
-# ==================== MAIN ====================
+    # Boxplot
+    st.subheader("Log₂ Ratio Distribution")
+    fig, ax = plt.subplots(figsize=(10, 6))
+    sns.boxplot(data=work, x="species", y="log2_ratio", ax=ax)
+    for i, sp in enumerate(unique_species):
+        ax.axhline(expected_ratios[sp], color="red", linestyle="--", linewidth=2)
+    ax.set_title("Observed vs Expected Log₂ Ratios")
+    st.pyplot(fig)
 
-def main():
-    """Main application entry point"""
-    st.set_page_config(
-        page_title="ProteoFlow - Proteomics Analysis",
-        page_icon="🧬",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
-    
-    st.title("🧬 ProteoFlow - Proteomics Analysis Platform")
-    
-    # Initialize session state
-    if 'step' not in st.session_state:
-        st.session_state.step = 1
-    
-    # Sidebar navigation
-    with st.sidebar:
-        st.header("Analysis Workflow")
-        
-        steps = [
-            "1️⃣ Load & Map Data",
-            "2️⃣ Check Normality",
-            "3️⃣ Transform Data",
-            "4️⃣ QC Analysis",
-            "5️⃣ Statistical Analysis"
-        ]
-        
-        for i, step_name in enumerate(steps, 1):
-            if st.session_state.step == i:
-                st.markdown(f"**→ {step_name}**")
-            else:
-                st.markdown(f"{step_name}")
-        
-        st.markdown("---")
-        
-        # Navigation buttons
-        if st.session_state.step > 1:
-            if st.button("⬅️ Previous Step", use_container_width=True):
-                st.session_state.step -= 1
-                st.rerun()
-        
-        if st.button("🔄 Restart Analysis", use_container_width=True):
-            # Clear all session state
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.session_state.step = 1
-            st.rerun()
-    
-    # Route to appropriate step
-    if st.session_state.step == 1:
-        step1_load_and_map()
-    elif st.session_state.step == 2:
-        step2_check_normality()
-    elif st.session_state.step == 3:
-        step3_transform_data()
-    elif st.session_state.step == 4:
-        step4_qc_analysis()
-    elif st.session_state.step == 5:
-        step5_statistical_analysis()
+    # Density plot
+    st.subheader("Density Plot")
+    fig2, ax2 = plt.subplots(figsize=(10, 6))
+    for sp in unique_species:
+        subset = work[work["species"] == sp]
+        if len(subset) > 0:
+            sns.kdeplot(subset["log2_ratio"], label=str(sp), fill=True, alpha=0.5, ax=ax2)
+    for sp in unique_species:
+        ax2.axvline(expected_ratios[sp], color="red", linestyle="--")
+    ax2.legend()
+    st.pyplot(fig2)
 
-
-if __name__ == "__main__":
-    main()
+    # Download results
+    csv = work.to_csv(index=False).encode()
+    st.download_button("Download full results (CSV)", csv, "lfqbench_results.csv", "text/csv")
