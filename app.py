@@ -1,212 +1,227 @@
+# app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
+from typing import List, Dict, Any
+import plotly.express as px
 import plotly.graph_objects as go
-from typing import List, Dict, Optional
-from dataclasses import dataclass
-from datetime import datetime
-import json
-# Set page configst.set_page_config(
-    page_title="ProteoFlow - Intelligent Proteomics",
-    page_icon="🧪",
-    layout="wide",
-    initial_sidebar_state="expanded")
-# Import custom modules (these will be in separate files)from utils.data_generator import generate_mock_data
-from utils.analysis import process_data, calculate_stats
-from components.plots import create_volcano_plot
-from components.tables import render_data_table
-from components.stats import render_stats_cards
-from services.gemini_service import analyze_proteins, chat_with_data
-# Initialize session statedef init_session_state():
+
+# Local imports
+from types import ProteinRaw, ProteinQCProcessed  # Not strictly needed; using dicts/DataFrames is fine
+from utils.data_generator import generate_mock_proteins
+from utils.stats import (
+    log2_transform,
+    compute_cv,
+    missing_fraction,
+    quartiles,
+    prepare_dataframe_from_proteins
+)
+from utils import stats as stats_utils
+from components.qc_plots import (
+    replicate_boxplots,
+    cv_histogram,
+    pca_scatter,
+    missing_value_heatmap,
+    rank_plot
+)
+
+# Simple in-file constants
+REPLICATE_GROUPS: Dict[str, List[str]] = {
+    'A': ['A1', 'A2', 'A3'],
+    'B': ['B1', 'B2', 'B3']
+}
+REPLICATE_NAMES = REPLICATE_GROUPS['A'] + REPLICATE_GROUPS['B']
+
+# Initialize session state
+def init_state():
     if 'view' not in st.session_state:
-        st.session_state.view = 'upload'    if 'data' not in st.session_state:
-        st.session_state.data = None    if 'p_val_cutoff' not in st.session_state:
-        st.session_state.p_val_cutoff = 1.3    if 'fc_cutoff' not in st.session_state:
-        st.session_state.fc_cutoff = 1.0    if 'selected_protein' not in st.session_state:
-        st.session_state.selected_protein = None    if 'experiment_context' not in st.session_state:
-        st.session_state.experiment_context = ""    if 'ai_report' not in st.session_state:
-        st.session_state.ai_report = ""    if 'chat_history' not in st.session_state:
-        st.session_state.chat_history = []
-    if 'chat_input' not in st.session_state:
-        st.session_state.chat_input = ""init_session_state()
-# Custom CSS for stylingdef load_custom_css():
-    st.markdown("""    <style>    /* Main container */    .main {        background-color: #f8fafc;    }    /* Sidebar styling */    [data-testid="stSidebar"] {        background-color: #0f172a;    }    [data-testid="stSidebar"] .element-container {        color: #cbd5e1;    }    /* Headers */    .big-header {        font-size: 2rem;        font-weight: bold;        color: #1e293b;        margin-bottom: 0.5rem;    }    .sub-header {        font-size: 0.875rem;        color: #64748b;        margin-bottom: 2rem;    }    /* Cards */    .stat-card {        background: white;        padding: 1.5rem;        border-radius: 1rem;        box-shadow: 0 1px 3px rgba(0,0,0,0.1);        border: 1px solid #e2e8f0;    }    .protein-detail-card {        background: #eef2ff;        border: 1px solid #c7d2fe;        border-radius: 0.75rem;        padding: 1.5rem;        margin: 1rem 0;    }    /* Buttons */    .stButton>button {        border-radius: 0.5rem;        font-weight: 500;        transition: all 0.2s;    }    .stButton>button:hover {        transform: translateY(-1px);        box-shadow: 0 4px 6px rgba(0,0,0,0.1);    }    /* Chat messages */    .chat-message {        padding: 0.75rem 1rem;        border-radius: 1rem;        margin: 0.5rem 0;        max-width: 80%;    }    .user-message {        background-color: #4f46e5;        color: white;        margin-left: auto;        border-bottom-right-radius: 0.25rem;    }    .assistant-message {        background-color: white;        color: #1e293b;        border: 1px solid #e2e8f0;        border-bottom-left-radius: 0.25rem;    }    /* Upload area */    .upload-container {        background: white;        padding: 3rem;        border-radius: 1rem;        box-shadow: 0 4px 6px rgba(0,0,0,0.1);        border: 1px solid #e2e8f0;        text-align: center;        margin: 2rem auto;        max-width: 800px;    }    /* Hide Streamlit branding */    #MainMenu {visibility: hidden;}    footer {visibility: hidden;}    </style>    """, unsafe_allow_html=True)
-load_custom_css()
-# Sidebarwith st.sidebar:
-    st.markdown("### 🧪 ProteoFlow")
-    st.markdown("<p style='font-size: 0.75rem; color: #64748b;'>Intelligent Proteomics</p>", unsafe_allow_html=True)
-    st.divider()
-    # Navigation    st.markdown("#### Navigation")
-    if st.button("📤 Data Input", use_container_width=True,
-                 type="primary" if st.session_state.view == 'upload' else "secondary"):
-        st.session_state.view = 'upload'        st.rerun()
-    if st.button("📊 Dashboard", use_container_width=True,
-                 disabled=st.session_state.data is None,
-                 type="primary" if st.session_state.view == 'dashboard' else "secondary"):
-        st.session_state.view = 'dashboard'        st.rerun()
-    if st.button("📝 AI Report", use_container_width=True,
-                 disabled=st.session_state.data is None,
-                 type="primary" if st.session_state.view == 'report' else "secondary"):
-        st.session_state.view = 'report'        st.rerun()
-    # Parameters (only show on dashboard)    if st.session_state.view == 'dashboard' and st.session_state.data is not None:
-        st.divider()
-        st.markdown("#### ⚙️ Parameters")
-        st.session_state.p_val_cutoff = st.slider(
-            "P-value Cutoff (-log10)",
-            min_value=0.0,
-            max_value=5.0,
-            value=st.session_state.p_val_cutoff,
-            step=0.1,
-            help="Threshold for statistical significance"        )
-        st.session_state.fc_cutoff = st.slider(
-            "Log2 FC Cutoff",
-            min_value=0.0,
-            max_value=3.0,
-            value=st.session_state.fc_cutoff,
-            step=0.1,
-            help="Threshold for fold change significance"        )
-    st.divider()
-    st.markdown("<p style='text-align: center; font-size: 0.75rem; color: #64748b;'>v1.0.0 • Streamlit • GenAI</p>",
-                unsafe_allow_html=True)
-# Main content areadef render_upload_view():
-    st.markdown("<div class='big-header'>Upload Data</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='sub-header'>{st.session_state.experiment_context or 'No experiment context set.'}</div>",
-                unsafe_allow_html=True)
-    st.markdown("<div class='upload-container'>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown("### 📤 Import Proteomics Data")
-        st.markdown("Upload a CSV or TSV file containing your MaxQuant or FragPipe output.")
-        st.markdown("**Required columns:** Gene, Fold Change, P-value")
-        st.markdown("")
-        # File upload        uploaded_file = st.file_uploader("Choose a file", type=['csv', 'tsv'], label_visibility="collapsed")
-        if uploaded_file is not None:
+        st.session_state.view = 'UPLOAD'  # UPLOAD / QC / GUIDE
+    if 'raw_data' not in st.session_state:
+        st.session_state.raw_data = pd.DataFrame()
+    if 'replicate_names' not in st.session_state:
+        st.session_state.replicate_names = REPLICATE_NAMES
+    if 'qc_df' not in st.session_state:
+        st.session_state.qc_df = pd.DataFrame()
+    if 'log2_df' not in st.session_state:
+        st.session_state.log2_df = pd.DataFrame()
+init_state()
+
+st.set_page_config(page_title="Proteomics QC Studio", layout="wide")
+
+st.title("Proteomics QC Studio")
+st.write("Guided workflow: Load -> Check Normality -> Transform (Log2) -> Visualize")
+
+# Sidebar: Replicate configuration
+st.sidebar.header("Replicate Configuration")
+col1, col2 = st.sidebar.columns(2)
+with col1:
+    st.session_state.view_mode = st.checkbox("Enable guided workflow", value=True)
+
+# Upload section
+st.header("Data Upload")
+uploaded_file = st.file_uploader("Upload a CSV/TSV with replicate intensities", type=['csv','tsv'], key='upload_input')
+def parse_uploaded(file) -> pd.DataFrame:
+    if file is None:
+        return pd.DataFrame()
+    sep = ',' if file.name.endswith('.csv') else '\t'
+    df = pd.read_csv(file, sep=sep)
+    # Expect columns like: id/gene/description and replicate columns
+    if 'id' in df.columns:
+        df = df.set_index('id')
+    elif 'Gene' in df.columns:
+        df = df.set_index('Gene')
+    # Ensure replicate columns exist
+    for r in REPLICATE_NAMES:
+        if r not in df.columns:
+            df[r] = np.nan
+    return df
+
+if uploaded_file is not None:
+    with st.spinner("Loading data..."):
+        raw_df = parse_uploaded(uploaded_file)
+        st.session_state.raw_data = raw_df
+        st.success(f"Loaded {raw_df.shape[0]} proteins with replicates: {REPLICATE_NAMES}")
+
+# Demo dataset button (optional)
+if st.sidebar.button("Load Demo Dataset"):
+    demo = generate_mock_proteins(60, REPLICATE_NAMES)
+    demo_df = pd.DataFrame.from_records(demo).set_index('id')
+    st.session_state.raw_data = demo_df
+    st.success("Demo dataset loaded with replicates: " + ", ".join(REPLICATE_NAMES))
+
+# Visualize raw replication counts table (basic)
+if not st.session_state.raw_data.empty:
+    st.subheader("Raw Data Snapshot")
+    st.dataframe(st.session_state.raw_data[[*REPLICATE_NAMES]].head())
+
+# Guided workflow toggle
+if st.session_state.get('view_mode', True):
+    st.markdown("---")
+    st.subheader("Guided Analysis Workflow")
+
+    # Step 1: Check Normality
+    if st.button("Check Normality (Step 1 of 4)"):
+        df = st.session_state.raw_data.copy()
+        if df.empty:
+            st.warning("No data loaded yet.")
+        else:
+            # Normality test per protein across replicates
+            normality_results = {}
+            for idx, row in df.iterrows():
+                vals = row[REPLICATE_NAMES].dropna().values
+                if len(vals) < 3:
+                    normality_results[idx] = False
+                    continue
+                try:
+                    vals_log = np.log2(vals)
+                    w, p = stats.shapiro(vals_log)
+                    normality_results[idx] = p > 0.05
+                except Exception:
+                    normality_results[idx] = False
+            st.session_state.normality = normality_results
+            st.success(f"Normality checked for {len(normality_results)} proteins. See results in sidebar.")
+
+    # Step 2: Transform (Log2)
+    if st.button("Transform (Log2) & Prepare (Step 2 of 4)"):
+        df = st.session_state.raw_data.copy()
+        if df.empty:
+            st.warning("No data loaded yet.")
+        else:
+            df_log2 = df.copy()
+            for r in REPLICATE_NAMES:
+                df_log2[r] = df_log2[r].apply(lambda x: np.log2(x) if pd.notnull(x) and x > 0 else np.nan)
+            st.session_state.log2_df = df_log2
+            st.success("Log2 transformation applied to replicates.")
+
+    # Step 3: Visualize QC
+    if st.button("Show QC Visualizations (Step 3 of 4)"):
+        df = st.session_state.log2_df if 'log2_df' in st.session_state and not st.session_state.log2_df.empty else st.session_state.raw_data
+        if df is None or df.empty:
+            st.warning("No data available for QC plots.")
+        else:
+            # Prepare a small QC dataframe: index proteins, replicate columns
+            qc_df = df.copy()
+            # Fill missing as NaN
+            qc_df = qc_df[REPLICATE_NAMES]
+            st.session_state.qc_df = qc_df
+
+            # Replicate Boxplots
+            st.subheader("Replicate Boxplots")
+            fig_box = replicate_boxplots(qc_df, REPLICATE_NAMES, title="Replicate Boxplots")
+            st.plotly_chart(fig_box, use_container_width=True)
+
+            # CV Distribution
+            st.subheader("CV Distribution")
+            # compute CV per protein from original or log2? We'll use original intensities for CV
+            cvs = []
+            for idx, row in st.session_state.raw_data.iterrows():
+                vals = [row[r] for r in REPLICATE_NAMES if pd.notnull(row[r])]
+                if len(vals) > 1:
+                    cvs.append(np.std(vals, ddof=1) / np.mean(vals))
+            if len(cvs) > 0:
+                fig_cv = px.histogram(x=cvs, nbins=20, title="CV Distribution across Proteins")
+                st.plotly_chart(fig_cv, use_container_width=True)
+            else:
+                st.info("Not enough data to compute CV.")
+
+            # PCA Scatter (on log2 data if available)
+            st.subheader("PCA Scatter Plot")
+            # Build a data matrix: proteins x replicates
+            mat = qc_df.copy()
+            # drop rows with all NaN in replicates
+            mat = mat.dropna(how='all')
+            # Some rows may still have NaN; fill with column means
+            mat_filled = mat.fillna(mat.mean())
             try:
-                # Try to read the file                if uploaded_file.name.endswith('.csv'):
-                    df = pd.read_csv(uploaded_file)
-                else:
-                    df = pd.read_csv(uploaded_file, sep='\t')
-                # For demo, we'll use mock data but could validate uploaded data here                st.session_state.data = generate_mock_data(500)
-                st.session_state.view = 'dashboard'                st.success("Data loaded successfully!")
-                st.rerun()
+                from sklearn.decomposition import PCA
+                pca = PCA(n_components=2)
+                pcs = pca.fit_transform(mat_filled.values)
+                pca_df = pd.DataFrame(pcs, columns=['PC1', 'PC2'], index=mat_filled.index)
+                pca_fig = px.scatter(pca_df, x='PC1', y='PC2', title="PCA of Proteins (log2-transformed)", hover_data=[pca_df.index])
+                st.plotly_chart(pca_fig, use_container_width=True)
             except Exception as e:
-                st.error(f"Error loading file: {str(e)}")
-        st.markdown("**OR**")
-        if st.button("Load Demo Dataset", use_container_width=True, type="secondary"):
-            st.session_state.data = generate_mock_data(500)
-            st.session_state.experiment_context = "Comparison of drug treated (compound X) vs DMSO control in HeLa cells, 24h exposure."            st.session_state.view = 'dashboard'            st.rerun()
-        st.markdown("---")
-        # Experiment context        st.markdown("##### Experimental Context (Optional)")
-        context = st.text_area(
-            "Context",
-            value=st.session_state.experiment_context,
-            placeholder="e.g. Comparison of wild-type vs knockout mice liver tissue...",
-            height=80,
-            label_visibility="collapsed",
-            help="This context helps the AI generate more relevant biological insights."        )
-        st.session_state.experiment_context = context
-    st.markdown("</div>", unsafe_allow_html=True)
-def render_dashboard_view():
-    st.markdown("<div class='big-header'>Exploratory Analysis</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='sub-header'>{st.session_state.experiment_context or 'No experiment context set.'}</div>",
-                unsafe_allow_html=True)
-    # Process data with current thresholds    processed_data = process_data(
-        st.session_state.data,
-        st.session_state.p_val_cutoff,
-        st.session_state.fc_cutoff
-    )
-    # Stats cards    render_stats_cards(processed_data)
-    # Main content: Volcano plot and table    col1, col2 = st.columns([2, 1])
-    with col1:
-        # Volcano plot        fig = create_volcano_plot(
-            processed_data,
-            st.session_state.p_val_cutoff,
-            st.session_state.fc_cutoff
-        )
-        # Handle click events        selected_points = st.plotly_chart(fig, use_container_width=True,
-                                         on_select="rerun", key="volcano_plot")
-        # Selected protein details        if st.session_state.selected_protein is not None:
-            protein = st.session_state.selected_protein
-            st.markdown(f"""            <div class='protein-detail-card'>                <h3 style='color: #4338ca; margin-bottom: 0.5rem;'>⚡ Protein Details: {protein['gene']}</h3>                <p style='color: #3730a3; font-size: 0.875rem; line-height: 1.5;'>{protein['description']}</p>                <div style='margin-top: 1rem; display: flex; gap: 1rem;'>                    <div style='background: white; padding: 0.5rem 1rem; border-radius: 0.375rem; box-shadow: 0 1px 2px rgba(0,0,0,0.05);'>                        <span style='color: #64748b;'>Log2FC: </span>                        <span style='font-family: monospace; font-weight: bold;'>{protein['log2FoldChange']:.3f}</span>                    </div>                    <div style='background: white; padding: 0.5rem 1rem; border-radius: 0.375rem; box-shadow: 0 1px 2px rgba(0,0,0,0.05);'>                        <span style='color: #64748b;'>-Log10P: </span>                        <span style='font-family: monospace; font-weight: bold;'>{protein['negLog10PValue']:.3f}</span>                    </div>                </div>            </div>            """, unsafe_allow_html=True)
+                st.error(f"PCA failed: {e}")
+
+            # Missing Value Heatmap
+            st.subheader("Missing Value Heatmap")
+            heatmap_fig = missing_value_heatmap(mat)
+            st.plotly_chart(heatmap_fig, use_container_width=True)
+
+            # Rank Plot
+            st.subheader("Rank Plot (Dynamic Range)")
+            try:
+                rank_fig = rank_plot(mat_filled, by_col='MeanIntensity', replicate_names=REPLICATE_NAMES)
+                # The above function expects a certain structure; adapt as simple line
+                rank_df = pd.DataFrame({
+                    'Protein': mat_filled.index,
+                    'MeanIntensity': mat_filled[REPLICATE_NAMES].mean(axis=1)
+                }).set_index('Protein')
+                rank_fig = px.line(rank_df.reset_index(), x='Protein', y='MeanIntensity', title='Rank Plot by Mean Intensity')
+                st.plotly_chart(rank_fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"Rank plot failed: {e}")
+
+    # Step 4: Visualize final results (optional)
+    if st.button("Visualize Summary (Step 4 of 4)"):
+        df = st.session_state.log2_df if 'log2_df' in st.session_state and not st.session_state.log2_df.empty else st.session_state.raw_data
+        if df is None or df.empty:
+            st.warning("No data available for visualization.")
         else:
-            st.info("👆 Select a data point on the plot to view details")
-    with col2:
-        # Data table        render_data_table(processed_data)
-        # AI Analysis button        st.markdown("---")
-        with st.container():
-            st.markdown("##### ⚡ AI Analysis")
-            st.markdown("Ready to interpret these findings? Send the significant proteins to Gemini for biological context.")
-            if st.button("Generate Full Report", use_container_width=True, type="primary"):
-                st.session_state.view = 'report'                st.rerun()
-def render_report_view():
-    st.markdown("<div class='big-header'>Insights & Report</div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='sub-header'>{st.session_state.experiment_context or 'No experiment context set.'}</div>",
-                unsafe_allow_html=True)
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("#### 📝 Automated Analysis Report")
-        # Generate report button        if not st.session_state.ai_report:
-            if st.button("🔄 Run Analysis", type="primary"):
-                with st.spinner("Querying Gemini knowledge base..."):
-                    # Get significant proteins                    processed_data = process_data(
-                        st.session_state.data,
-                        st.session_state.p_val_cutoff,
-                        st.session_state.fc_cutoff
-                    )
-                    significant = processed_data[processed_data['significance'] != 'NS']
-                    top_proteins = significant.nlargest(15, 'negLog10PValue')
-                    # Generate report                    report = analyze_proteins(
-                        top_proteins.to_dict('records'),
-                        st.session_state.experiment_context
-                    )
-                    st.session_state.ai_report = report
-                    st.rerun()
-        # Display report        if st.session_state.ai_report:
-            st.markdown(st.session_state.ai_report)
-        else:
-            st.info("No report generated yet. Click 'Run Analysis' to generate.")
-    with col2:
-        st.markdown("#### 💬 Chat with Data")
-        # Chat history        chat_container = st.container(height=400)
-        with chat_container:
-            if len(st.session_state.chat_history) == 0:
-                st.markdown("""                <div style='text-align: center; color: #94a3b8; padding: 2rem; font-size: 0.875rem;'>                    <p>Ask questions like:</p>                    <ul style='list-style: none; padding: 0; margin-top: 0.5rem;'>                        <li>"What is the function of the top upregulated protein?"</li>                        <li>"Are there any mitochondrial proteins changed?"</li>                    </ul>                </div>                """, unsafe_allow_html=True)
-            for msg in st.session_state.chat_history:
-                if msg['role'] == 'user':
-                    st.markdown(f"""                    <div style='display: flex; justify-content: flex-end;'>                        <div class='chat-message user-message'>{msg['text']}</div>                    </div>                    """, unsafe_allow_html=True)
-                else:
-                    st.markdown(f"""                    <div style='display: flex; justify-content: flex-start;'>                        <div class='chat-message assistant-message'>{msg['text']}</div>                    </div>                    """, unsafe_allow_html=True)
-        # Chat input        chat_input = st.text_input("Ask a follow-up question...", key="chat_text_input")
-        if st.button("Send", type="primary") or (chat_input and st.session_state.get('enter_pressed')):
-            if chat_input.strip():
-                # Add user message                st.session_state.chat_history.append({
-                    'role': 'user',
-                    'text': chat_input,
-                    'timestamp': datetime.now().isoformat()
-                })
-                # Generate response                with st.spinner("Thinking..."):
-                    processed_data = process_data(
-                        st.session_state.data,
-                        st.session_state.p_val_cutoff,
-                        st.session_state.fc_cutoff
-                    )
-                    stats = calculate_stats(processed_data)
-                    context = f"Experiment: {st.session_state.experiment_context}. "                    context += f"Total: {stats['total']}, Up: {stats['up']}, Down: {stats['down']}. "                    if st.session_state.selected_protein:
-                        context += f"Selected Protein: {st.session_state.selected_protein['gene']}."                    else:
-                        context += "Selected Protein: None."                    response = chat_with_data(
-                        st.session_state.chat_history[:-1],
-                        chat_input,
-                        context
-                    )
-                    st.session_state.chat_history.append({
-                        'role': 'assistant',
-                        'text': response,
-                        'timestamp': datetime.now().isoformat()
-                    })
-                st.rerun()
-# Main routingif st.session_state.view == 'upload':
-    render_upload_view()
-elif st.session_state.view == 'dashboard':
-    render_dashboard_view()
-elif st.session_state.view == 'report':
-    render_report_view()
+            st.subheader("Summary by Protein")
+            df_summ = df[REPLICATE_NAMES].copy()
+            df_summ['Mean'] = df_summ.mean(axis=1)
+            df_summ['CV'] = df_summ.apply(lambda row: stats_utils.compute_cv(row.dropna().tolist()) if row.dropna().shape[0] > 1 else np.nan, axis=1)
+            display_cols = ['Mean', 'CV']
+            st.dataframe(df_summ[[*REPLICATE_NAMES, 'Mean', 'CV']].head())
+else:
+    st.info("Guided workflow is disabled. You can still explore data using the QC plots below.")
+
+st.markdown("---")
+st.header("Manual QC Explorer")
+if not st.session_state.qc_df.empty:
+    qc_df = st.session_state.qc_df
+    st.subheader("Replicate Boxplots (Manual)")
+    fig_box = replicate_boxplots(qc_df, REPLICATE_NAMES, title="Replicate Boxplots (Manual)")
+    st.plotly_chart(fig_box, use_container_width=True)
+
+# End of app.py
