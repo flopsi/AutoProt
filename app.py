@@ -582,5 +582,68 @@ def step5_statistical_analysis():
         )
 
 
+# ==================== MAIN ====================
+
+def main():
+    """Main application entry point"""
+    st.set_page_config(
+        page_title="ProteoFlow - Proteomics Analysis",
+        page_icon="🧬",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    
+    st.title("🧬 ProteoFlow - Proteomics Analysis Platform")
+    
+    # Initialize session state
+    if 'step' not in st.session_state:
+        st.session_state.step = 1
+    
+    # Sidebar navigation
+    with st.sidebar:
+        st.header("Analysis Workflow")
+        
+        steps = [
+            "1️⃣ Load & Map Data",
+            "2️⃣ Check Normality",
+            "3️⃣ Transform Data",
+            "4️⃣ QC Analysis",
+            "5️⃣ Statistical Analysis"
+        ]
+        
+        for i, step_name in enumerate(steps, 1):
+            if st.session_state.step == i:
+                st.markdown(f"**→ {step_name}**")
+            else:
+                st.markdown(f"{step_name}")
+        
+        st.markdown("---")
+        
+        # Navigation buttons
+        if st.session_state.step > 1:
+            if st.button("⬅️ Previous Step", use_container_width=True):
+                st.session_state.step -= 1
+                st.rerun()
+        
+        if st.button("🔄 Restart Analysis", use_container_width=True):
+            # Clear all session state
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.session_state.step = 1
+            st.rerun()
+    
+    # Route to appropriate step
+    if st.session_state.step == 1:
+        step1_load_and_map()
+    elif st.session_state.step == 2:
+        step2_check_normality()
+    elif st.session_state.step == 3:
+        step3_transform_data()
+    elif st.session_state.step == 4:
+        step4_qc_analysis()
+    elif st.session_state.step == 5:
+        step5_statistical_analysis()
+
+
 if __name__ == "__main__":
     main()
