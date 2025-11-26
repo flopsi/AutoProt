@@ -72,5 +72,35 @@ pages = {
 
 
 
+# ─────────────────────────────────────────────────────────────
+# Restart Button (Fixed bottom)
+# ─────────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+    .fixed-restart {
+        position: fixed; 
+        bottom: 20px; 
+        left: 50%; 
+        transform: translateX(-50%); 
+        z-index: 999;
+    }
+    .fixed-restart button {
+        background: #E71316 !important; 
+        color: white !important; 
+        padding: 14px 32px !important; 
+        font-weight: 600 !important; 
+        border-radius: 8px !important; 
+        box-shadow: 0 6px 16px rgba(0,0,0,0.3) !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+col1, col2, col3 = st.columns([1, 1, 1])
+with col2:
+    st.markdown('<div class="fixed-restart">', unsafe_allow_html=True)
+    if st.button("🔄 Restart Analysis", key="restart_global", use_container_width=True):
+        st.session_state.clear()
+        st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
