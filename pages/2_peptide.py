@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import io
 from shared import restart_button, debug
-
+import plotly.express as px
 # ====================== SAFE SESSION STATE ======================
 def ss(key, default=None):
     if key not in st.session_state:
