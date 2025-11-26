@@ -133,7 +133,7 @@ if "prot_df" in st.session_state:
 else:
     df = load_and_parse(uploaded_file)
     st.success(f"✅ Data imported — {len(df):,} proteins")
-    df = st.session_state.prot_df
+df = st.session_state.prot_df
     # ... display without re-uploading
 
 
