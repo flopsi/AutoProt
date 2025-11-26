@@ -46,12 +46,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-st.markdown("""
-<div class="module-header">
-    <div class="module-icon">Upload</div>
-    <div><h2>Module 1: Data Import & Validation</h2><p>Upload your LFQ intensity matrix</p></div>
-</div>
-""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
 # Upload
@@ -91,7 +85,6 @@ def load_and_parse(file):
 df = load_and_parse(uploaded_file)
 st.session_state.df = df
 st.success(f"Data imported — {len(df):,} proteins")
-st.dataframe(df.head(10), use_container_width=True)
 
 # ─────────────────────────────────────────────────────────────
 # SINGLE UNIFIED TABLE — 100% WORKING
