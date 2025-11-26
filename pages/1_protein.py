@@ -132,33 +132,35 @@ if 'sp_col' in locals() and sp_col != "Not found":
 else:
     ss("prot_sp_col", "Not found")
 
-st.success("Protein data successfully cached!")
+# ====================== FINAL: SAVE PROCESSED DATA FOREVER ======================
+st.success("Protein processing complete — data permanently saved!")
 
-# Final metrics
+# THIS IS THE KEY LINE — makes analysis page work forever
+ss("prot_final_df", df)           # ← This survives everything except Restart
+ss("prot_final_c1", c1)
+ss("prot_final_c2", c2)
+ss("prot_final_pg", df.index.name if isinstance(df.index, pd.RangeIndex) == False else "None")
+
+# Show plots
 col1, col2 = st.columns(2)
-with col1: st.metric("Condition A", ", ".join(c1))
-with col2: st.metric("Condition B", ", ".join(c2))
+with col1:
+    st.subheader("Intensity Distribution")
+    fig = px.box(df[c1+c2].melt(), x="variable", y="value", color="variable", log_y=True)
+    st.plotly_chart(fig, use_container_width=True)
+with col2:
+    st.subheader("Proteins per Species")
+    if "Species" in df.columns:
+        counts = df["Species"].value_counts()
+        fig2 = px.bar(x=counts.index, y=counts.values, color=counts.index)
+        st.plotly_chart(fig2, use_container_width=True)
 
-# THIS IS THE CORRECT PLACE — RIGHT BEFORE RESTART BUTTON
-if st.session_state.get("debug_log"):
-    with st.expander("Debug Log", expanded=False):
-        for entry in st.session_state.debug_log:
-            if isinstance(entry, tuple):
-                line, data = entry
-                st.markdown(line, unsafe_allow_html=True)
-                if data is not None:
-                    st.code(data)
-            else:
-                st.markdown(entry, unsafe_allow_html=True)
-        if st.button("Clear Debug Log"):
-            st.session_state.debug_log = []
-            st.rerun()
-# ====================== GO TO ANALYSIS BUTTON ======================
+# GO TO ANALYSIS BUTTON
 st.markdown("---")
-col_left, col_center, col_right = st.columns([1, 2, 1])
-with col_center:
-    if st.button("Go to Protein Exploratory Analysis", type="primary", use_container_width=True):
-        st.switch_page("pages/3_Protein_Analysis.py")
+if st.button("Go to Protein Analysis", type="primary", use_container_width=True):
+    st.switch_page("pages/3_Protein_Analysis.py")
+
+restart_button()
+        
 restart_button()
 
 st.markdown("""
