@@ -207,16 +207,19 @@ ss("pept_final_seq", df.index.name if not isinstance(df.index, pd.RangeIndex) el
 # Beautiful plots
 col1, col2 = st.columns(2)
 with col1:
-    st.subheader("Peptide Intensity Distribution")
-    fig1 = px.violin(df[c1 + c2].melt(), x="variable", y="value", color="", box=True, points=False, height=500)
+    st.subheader("Intensity Distribution (log scale)")
+    fig1 = px.box(df[c1 + c2].melt(), x="variable", y="value", color="variable", log_y=True, height=500)
     st.plotly_chart(fig1, use_container_width=True)
 
 with col2:
-    st.subheader("Top 20 Most Intense Peptides")
-    top_peptides = df[c1 + c2].mean(axis=1).nlargest(20)
-    fig2 = px.bar(x=top_peptides.index.astype(str), y=top_peptides.values, height=500)
-    fig2.update_layout(xaxis_title="Peptide", yaxis_title="Mean Intensity")
-    st.plotly_chart(fig2, use_container_width=True)
+    st.subheader("Proteins per Species")
+    if "Species" in df.columns:
+        species_counts = df["Species"].value_counts().reset_index()
+        species_counts.columns = ["Species", "Count"]
+        fig2 = px.bar(species_counts, x="Species", y="Count", color="Species", height=500)
+        st.plotly_chart(fig2, use_container_width=True)
+    else:
+        st.info("No species column detected")
 
 # GO TO ANALYSIS BUTTON
 st.markdown("---")
