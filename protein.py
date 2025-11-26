@@ -125,8 +125,16 @@ def load_and_parse(file):
             df = df.drop(columns=["name"])
     return df
 
-df = load_and_parse(uploaded_file)
-st.success(f"✅ Data imported — {len(df):,} proteins")
+st.set_page_config(page_title="Protein Import", layout="wide")
+
+# Check if data exists from session
+if "prot_df" in st.session_state:
+    st.info("📂 Data restored")
+    df = st.session_state.prot_df
+    # ... display without re-uploading
+else:
+    df = load_and_parse(uploaded_file)
+    st.success(f"✅ Data imported — {len(df):,} proteins")
 
 # ─────────────────────────────────────────────────────────────
 # Column Assignment Table
