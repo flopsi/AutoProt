@@ -91,7 +91,6 @@ st.success(f"Data imported — {len(df):,} proteins")
 # ─────────────────────────────────────────────────────────────
 # ── SINGLE UNIFIED TABLE — FINAL FIXED VERSION ──
 with st.container():
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("Column Assignment & Renaming")
 
     # Force intensity columns to float — but keep metadata as object
