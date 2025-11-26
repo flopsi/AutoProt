@@ -32,11 +32,11 @@ st.set_page_config(page_title="autoProt", page_icon ="🧬")
 
 pages = {
     "Data Upload": [
-        st.Page("protein.py", title="Upload Protein Data"),
-        st.Page("peptide.py", title="Upload Peptide Data"),
+        st.Page("pages/protein.py", title="Upload Protein Data"),
+        st.Page("pages/peptide.py", title="Upload Peptide Data"),
     ],
     "Data Quality": [
-        st.Page("quality.py", title="Exploratory Data Analysis"),
+        st.Page("pages/quality.py", title="Exploratory Data Analysis"),
 
     ],
 }
