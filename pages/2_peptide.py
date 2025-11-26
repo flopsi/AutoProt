@@ -191,49 +191,40 @@ if sp_col != "Not found":
 else:
     sp_col = "Not found"
 
-# ====================== 7. SAVE TO CACHE ======================
-debug("Saving peptide data to session state")
-ss("pept_df", df)
-ss("pept_c1", c1)
-ss("pept_c2", c2)
-ss("pept_seq_col", seq_col)
-ss("pept_sp_col", sp_col)
-ss("reconfig_pept", False)
 
-st.success("Peptide data fully processed and cached!")
 
-# ====================== FINAL DISPLAY ======================
+
+# ====================== FINAL: SAVE EVERYTHING PERMANENTLY ======================
+st.success("Peptide processing complete — data is now permanently saved!")
+
+# These lines make the peptide analysis page work forever
+ss("peptide_data_ready", True)
+ss("pept_final_df", df)
+ss("pept_final_c1", c1)
+ss("pept_final_c2", c2)
+ss("pept_final_seq", df.index.name if not isinstance(df.index, pd.RangeIndex) else "None")
+
+# Beautiful plots
 col1, col2 = st.columns(2)
-with col1: st.metric("**Condition A**", ", ".join(c1))
-with col2: st.metric("**Condition B**", ", ".join(c2))
+with col1:
+    st.subheader("Peptide Intensity Distribution")
+    fig1 = px.violin(df[c1 + c2].melt(), x="variable", y="value", color="", box=True, points=False, height=500)
+    st.plotly_chart(fig1, use_container_width=True)
 
-if sp_col != "Not found":
-    st.markdown("### Peptides Detected per Species")
-    counts = df["Species"].value_counts()
-    st.bar_chart(counts)
+with col2:
+    st.subheader("Top 20 Most Intense Peptides")
+    top_peptides = df[c1 + c2].mean(axis=1).nlargest(20)
+    fig2 = px.bar(x=top_peptides.index.astype(str), y=top_peptides.values, height=500)
+    fig2.update_layout(xaxis_title="Peptide", yaxis_title="Mean Intensity")
+    st.plotly_chart(fig2, use_container_width=True)
 
-# ====================== DEBUG LOG (SAFE) ======================
-if st.session_state.get("debug_log"):
-    with st.expander("Debug Log", expanded=False):
-        for entry in st.session_state.debug_log:
-            if isinstance(entry, tuple):
-                line, data = entry
-                st.markdown(line, unsafe_allow_html=True)
-                if data: st.code(data)
-            else:
-                st.markdown(entry, unsafe_allow_html=True)
-        if st.button("Clear Debug Log"):
-            st.session_state.debug_log = []
-            st.rerun()
-
-# ====================== RESTART & FOOTER ======================
-
-# ====================== GO TO ANALYSIS BUTTON ======================
+# GO TO ANALYSIS BUTTON
 st.markdown("---")
-col_left, col_center, col_right = st.columns([1, 2, 1])
-with col_center:
-    if st.button("Go to Peptide Exploratory Analysis", type="primary", use_container_width=True):
-        st.switch_page("pages/4_Peptide_Analysis.py")
+if st.button("Go to Peptide Exploratory Analysis", type="primary", use_container_width=True):
+    st.switch_page("pages/4_Peptide_Analysis.py")
+
+restart_button()
+
 restart_button()
 
 st.markdown("""
