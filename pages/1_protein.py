@@ -132,35 +132,38 @@ if 'sp_col' in locals() and sp_col != "Not found":
 else:
     ss("prot_sp_col", "Not found")
 
-# ====================== FINAL: SAVE PROCESSED DATA FOREVER ======================
-st.success("Protein processing complete — data permanently saved!")
+# ====================== FINAL: SAVE EVERYTHING PERMANENTLY ======================
+st.success("Protein processing complete — data is now permanently saved!")
 
-# THIS IS THE KEY LINE — makes analysis page work forever
-ss("prot_final_df", df)           # ← This survives everything except Restart
-ss("prot_final_c1", c1)
-ss("prot_final_c2", c2)
-ss("prot_final_pg", df.index.name if isinstance(df.index, pd.RangeIndex) == False else "None")
+# These lines make the analysis page work forever
+ss("protein_data_ready", True)
+ss("prot_final_df", df)                    # Final processed dataframe
+ss("prot_final_c1", c1)                    # ["A1", "A2", ...]
+ss("prot_final_c2", c2)                    # ["B1", "B2", ...]
+ss("prot_final_pg", df.index.name if not isinstance(df.index, pd.RangeIndex) else "None")
 
-# Show plots
+# Beautiful plots
 col1, col2 = st.columns(2)
 with col1:
-    st.subheader("Intensity Distribution")
-    fig = px.box(df[c1+c2].melt(), x="variable", y="value", color="variable", log_y=True)
-    st.plotly_chart(fig, use_container_width=True)
+    st.subheader("Intensity Distribution (log scale)")
+    fig1 = px.box(df[c1 + c2].melt(), x="variable", y="value", color="variable", log_y=True, height=500)
+    st.plotly_chart(fig1, use_container_width=True)
+
 with col2:
     st.subheader("Proteins per Species")
     if "Species" in df.columns:
-        counts = df["Species"].value_counts()
-        fig2 = px.bar(x=counts.index, y=counts.values, color=counts.index)
+        species_counts = df["Species"].value_counts().reset_index()
+        species_counts.columns = ["Species", "Count"]
+        fig2 = px.bar(species_counts, x="Species", y="Count", color="Species", height=500)
         st.plotly_chart(fig2, use_container_width=True)
+    else:
+        st.info("No species column detected")
 
 # GO TO ANALYSIS BUTTON
 st.markdown("---")
-if st.button("Go to Protein Analysis", type="primary", use_container_width=True):
+if st.button("Go to Protein Exploratory Analysis", type="primary", use_container_width=True):
     st.switch_page("pages/3_Protein_Analysis.py")
 
-restart_button()
-        
 restart_button()
 
 st.markdown("""
