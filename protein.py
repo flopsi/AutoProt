@@ -6,6 +6,73 @@ import io
 import re
 from pandas.api.types import is_numeric_dtype   # ← THIS WAS MISSING
 
+import re
+import pandas as pd
+
+def detect_species_column_and_extract(df):
+    """
+    Automatically detect species column and extract species from strings.
+    
+    Logic:
+    1. Scan metadata columns for any containing 'HUMAN' (case-insensitive)
+    2. Identify the delimiter (e.g., _) that flanks HUMAN
+    3. Extract all species at the same position using the same pattern
+    
+    Returns: (species_col_name, extracted_species_col_name, list_of_unique_species)
+    """
+    
+    # Identify metadata (non-numeric) columns
+    metadata_cols = []
+    for col in df.columns:
+        sample = df[col].dropna().head(50)
+        try:
+            pd.to_numeric(sample.replace('#NUM!', pd.NA), errors='raise')
+        except:
+            metadata_cols.append(col)
+    
+    # Step 1: Find column containing HUMAN
+    species_col = None
+    prefix_delim = None
+    
+    for col in metadata_cols:
+        sample_values = df[col].dropna().astype(str).head(100)
+        
+        for val in sample_values:
+            if 'HUMAN' in val.upper():
+                species_col = col
+                
+                # Find prefix delimiter before HUMAN
+                match = re.search(r'([^A-Za-z0-9])HUMAN', val, re.IGNORECASE)
+                prefix_delim = match.group(1) if match else ''
+                break
+        
+        if species_col:
+            break
+    
+    if not species_col:
+        return None, None, []
+    
+    # Step 2: Build extraction pattern
+    if prefix_delim:
+        # Pattern: _SPECIES followed by non-alpha or end
+        prefix_esc = re.escape(prefix_delim)
+        pattern = f'{prefix_esc}([A-Z]+)(?:[^A-Za-z]|$)'
+    else:
+        # Standalone species name
+        pattern = r'^([A-Z]+)$'
+    
+    # Step 3: Extract species
+    def extract_first_species(val):
+        if pd.isna(val):
+            return None
+        val_str = str(val).upper()
+        matches = re.findall(pattern, val_str)
+        return matches[0] if matches else None
+    
+    df['_extracted_species'] = df[species_col].apply(extract_first_species)
+    unique_species = df['_extracted_species'].dropna().unique().tolist()
+    
+    return species_col, '_extracted_species', unique_species
 
 # ─────────────────────────────────────────────────────────────
 # Thermo Fisher CSS
