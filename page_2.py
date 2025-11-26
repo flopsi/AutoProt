@@ -238,47 +238,22 @@ st.markdown("---")
 col1, col2, col3= st.columns([2,2,2])
 
 with col1:
-    if st.button("Protein Upload", use_container_width=True):
+    if st.button("Protein Upload",type="secondary" use_container_width=True):
         st.switch_page("app.py")
         
 with col2:
-    if st.button("Restart Analysis — Clear All Data", key="fixed_restart"):
+    if st.button("Restart Analysis",type="secondary", key="fixed_restart"):
         st.session_state.clear()
         st.rerun()
 
 with col3:
-    if st.button("Data Quality", type="primary", use_container_width=True):
+    if st.button("Data Quality", type="secondary", use_container_width=True):
         if "df" in st.session_state or "df_peptide" in st.session_state:
             st.switch_page("page_4.py")
         else:
             st.error("Please upload data first")
             st.stop()
-
-
-
-# FIXED BOTTOM RESTART BUTTON — NOW USING ST.BUTTON WITH CSS (no HTML onclick issues)
-st.markdown("""
-<style>
-    .fixed-restart {
-        position: fixed;
-        bottom: 20px;
-        left: 50%;
-        transform: translateX(-50%);
-        z-index: 999;
-    }
-    .fixed-restart .stButton > button {
-        background: #E71316;
-        color: white;
-        padding: 14px 32px;
-        font-weight: 600;
-        border-radius: 8px;
-        box-shadow: 0 6px 16px rgba(0,0,0,0.3);
-    }
-</style>
-""", unsafe_allow_html=True)
-
-
-st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
 # Ready
