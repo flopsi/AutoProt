@@ -4,14 +4,21 @@ import pandas as pd
 import re
 import io
 from shared import restart_button
-# ────────────────────── SAFE SESSION STATE HELPER ──────────────────────
+
 def ss(key, default=None):
-    """Safe session_state getter/setter – never raises KeyError"""
     if key not in st.session_state:
         st.session_state[key] = default
     return st.session_state[key]
-st.set_page_config(page_title = "Peptide Import", layout="wide")
 
+# Then use:
+if ss("pept_df") is not None and not ss("reconfig_pept", False):
+    # restore
+
+    # And save with:
+ss("pept_df", df)
+ss("pept_c1", c1)
+ss("pept_peptide_col", peptide_col)
+# etc.
 # ====================== BRANDING ======================
 st.markdown("""
 <style>
