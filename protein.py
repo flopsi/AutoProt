@@ -1,4 +1,4 @@
-# app.py — LFQbench Data Import (Thermo Fisher Design) — 100% WORKING
+# app.py — LFQbench Data Import (Thermo Fisher Design) — 100% WORKING FIXED
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -89,8 +89,6 @@ st.markdown("""
     .nav-item {padding:15px 25px; font-size:14px; font-weight:500; color:#54585A; border-bottom:3px solid transparent; cursor:pointer;}
     .nav-item:hover {background:rgba(231,19,22,0.05);}
     .nav-item.active {border-bottom:3px solid #E71316; color:#E71316;}
-    .module-header {background:linear-gradient(90deg,#E71316 0%,#A6192E 100%); padding:30px; border-radius:8px; margin-bottom:40px; color:white; display:flex; align-items:center; gap:20px;}
-    .module-icon {width:60px; height:60px; background:rgba(255,255,255,0.2); border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:32px;}
     .card {background:white; border:1px solid #E2E3E4; border-radius:8px; padding:25px; box-shadow:0 2px 4px rgba(0,0,0,0.05); margin-bottom:25px;}
     .card:hover {box-shadow:0 4px 12px rgba(0,0,0,0.1); transform:translateY(-2px);}
     .upload-area {border:2px dashed #E2E3E4; border-radius:8px; padding:60px 30px; text-align:center; background:#fafafa; cursor:pointer;}
@@ -161,8 +159,8 @@ with st.container():
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
     # Ensure metadata stays as string
-    metadata_cols = ["Protein.Group", "PG.ProteinNames", "Accession", "Species"]
-    for col in metadata_cols:
+    metadata_cols_list = ["Protein.Group", "PG.ProteinNames", "Accession", "Species"]
+    for col in metadata_cols_list:
         if col in df.columns:
             df[col] = df[col].astype("string")
 
@@ -219,26 +217,23 @@ with st.container():
         key="final_table_fixed_2024"
     )
 
-    # Apply renaming
-    rename_map = {}
-    for _, row in edited.iterrows():
-        new_name = row["Rename"].strip()
-        if new_name and new_name != row["Original Name"]:
-            rename_map[row["Original Name"]] = new_name
+    # ── SAFE extraction with proper validation ──
+    cond1_checked = edited[edited["Cond 1"]]
+    species_checked = edited[edited["Species"]]
+    protein_checked = edited[edited["Protein Group"]]
 
-    if rename_map:
-        df = df.rename(columns=rename_map)
-        # ← UPDATE cond1_cols and cond2_cols with renamed names
-        cond1_cols = [rename_map.get(c, c) for c in cond1_cols]
-        cond2_cols = [rename_map.get(c, c) for c in cond2_cols]
-        st.session_state.df = df
+    cond1_cols_orig = cond1_checked["Original Name"].tolist()
+    cond2_cols_orig = [c for c in numeric_cols if c not in cond1_cols_orig]
+
+    species_cols = species_checked["Original Name"].tolist()
+    protein_cols = protein_checked["Original Name"].tolist()
 
     # ── BULLETPROOF validation ──
     errors = []
 
-    if len(cond1_cols) == 0:
+    if len(cond1_cols_orig) == 0:
         errors.append("❌ Condition 1 must have at least one replicate")
-    if len(cond2_cols) == 0:
+    if len(cond2_cols_orig) == 0:
         errors.append("❌ Condition 2 must have at least one replicate")
 
     if len(species_cols) == 0:
@@ -259,6 +254,24 @@ with st.container():
     # ── Now safe to access [0] ──
     species_col = species_cols[0]
     protein_col = protein_cols[0]
+
+    # Apply renaming
+    rename_map = {}
+    for _, row in edited.iterrows():
+        new_name = row["Rename"].strip()
+        if new_name and new_name != row["Original Name"]:
+            rename_map[row["Original Name"]] = new_name
+
+    if rename_map:
+        df = df.rename(columns=rename_map)
+        # UPDATE cond1_cols and cond2_cols with renamed names
+        cond1_cols = [rename_map.get(c, c) for c in cond1_cols_orig]
+        cond2_cols = [rename_map.get(c, c) for c in cond2_cols_orig]
+    else:
+        cond1_cols = cond1_cols_orig
+        cond2_cols = cond2_cols_orig
+
+    st.session_state.df = df
 
 # ── Save everything ──
 st.session_state.update({
@@ -289,27 +302,7 @@ species_source_col, species_col_extracted, unique_species = detect_species_colum
 if species_col_extracted and len(unique_species) > 1:
     st.markdown("### 📊 Unique Proteins by Species & Condition")
     
-    # Get the actual column names after renaming
-    # Build a mapping of original to actual column names
-    cond1_cols = []
-    cond2_cols = []
-    
-    for col in cond1_cols:
-        # Check if column was renamed
-        new_col_name = rename_map.get(col, col)
-        if new_col_name in df.columns:
-            cond1_cols.append(new_col_name)
-        elif col in df.columns:
-            cond1_cols.append(col)
-    
-    for col in cond2_cols:
-        new_col_name = rename_map.get(col, col)
-        if new_col_name in df.columns:
-            cond2_cols.append(new_col_name)
-        elif col in df.columns:
-            cond2_cols.append(col)
-    
-    # Convert intensity columns to numeric
+    # Convert intensity columns to numeric (ensure they are)
     for col in cond1_cols + cond2_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce')
     
@@ -346,7 +339,6 @@ if species_col_extracted and len(unique_species) > 1:
                 f"- **{row['Species']}**: {row['Total']} total\n"
                 f"  - Cond1: {row['Cond1 (≥2/3 >1)']} | Cond2: {row['Cond2 (≥2/3 >1)']} | Both: {row['Both']}"
             )
-
 
 st.markdown("---")
 
