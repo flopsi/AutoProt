@@ -325,20 +325,6 @@ if species_col_extracted and len(unique_species) > 1:
     species_df = pd.DataFrame(species_counts)
     st.dataframe(species_df, hide_index=True, use_container_width=True)
 
-    # ── Visualization ──
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        chart_data = species_df[["Species", "Cond1 (≥2/3 >1)", "Cond2 (≥2/3 >1)"]].set_index("Species")
-        st.bar_chart(chart_data)
-    
-    with col2:
-        st.write("**Summary:**")
-        for idx, row in species_df.iterrows():
-            st.write(
-                f"- **{row['Species']}**: {row['Total']} total\n"
-                f"  - Cond1: {row['Cond1 (≥2/3 >1)']} | Cond2: {row['Cond2 (≥2/3 >1)']} | Both: {row['Both']}"
-            )
 
 st.markdown("---")
 
