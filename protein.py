@@ -71,7 +71,7 @@ def load_and_parse(file):
     content = file.getvalue().decode("utf-8", errors="replace")
     if content.startswith("\ufeff"): content = content[1:]
     df = pd.read_csv(io.StringIO(content), sep=None, engine="python", dtype=str)
-    intensity_cols = [c for c in df.columns if c not in ["pg", "name"]]
+    intensity_cols = [c for c in df.columns if c not in [["pg", "name", "Protein.Group", "PG.ProteinNames", "Accession", "Species"]]
     for col in intensity_cols:
         df[col] = pd.to_numeric(df[col].str.replace(",", ""), errors="coerce")
     if "name" in df.columns:
