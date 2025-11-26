@@ -2,176 +2,107 @@
 import streamlit as st
 import pandas as pd
 import io
-import plotly.express as px
-from shared import restart_button, get_protein_file, set_protein_file
+from shared import restart_button
 
-# ←←← ONLY THIS PART IS DIFFERENT ←←←
-uploaded_file = get_protein_file()
-if uploaded_file is None:
-    uploaded_file = st.file_uploader("Upload Protein File", type=["csv","tsv","txt"])
-    if uploaded_file:
-        set_protein_file(uploaded_file)          # ← saves it forever
-        st.rerun()
-else:
-    st.success(f"Protein file ready: {uploaded_file.name}")
-
-# Load data exactly once
-@st.cache_data
-def load_df(bytes_data):
-    return pd.read_csv(io.BytesIO(bytes_data), sep=None, engine="python")
-
-df_raw = load_df(uploaded_file.getvalue())
-# ←←← rest of your code stays 100% the same ←←←
-
+# Safe session state helper
 def ss(key, default=None):
     if key not in st.session_state:
         st.session_state[key] = default
     return st.session_state[key]
 
-# Set defaults on first load
-ss("prot_pg_col", ss("prot_pg_col", "Not selected yet"))
-ss("prot_sp_col", ss("prot_sp_col", "Not found"))
-
-
 st.set_page_config(page_title="Protein Import", layout="wide")
-debug("Protein Import page started")
 
+# === HEADER ===
 st.markdown("""
 <style>
-    :root {--red:#E71316; --darkred:#A6192E;}
-    .header {background:linear-gradient(90deg,var(--red),var(--darkred)); padding:20px 40px; color:white; margin:-80px -80px 40px;}
+    .header {background:linear-gradient(90deg,#E71316,#A6192E); padding:20px 40px; color:white; margin:-80px -80px 40px;}
     .header h1,.header p {margin:0;}
-    .module-header {background:linear-gradient(90deg,var(--red),var(--darkred)); padding:30px; border-radius:12px; color:white;}
-    .stButton>button {background:var(--red)!important; color:white!important;}
+    .stButton>button {background:#E71316 !important; color:white !important;}
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="header"><h1>DIA Proteomics Pipeline</h1><p>Protein-Level Import</p></div>', unsafe_allow_html=True)
-st.markdown('<div class="module-header"><h2>Protein Data Import</h2><p>Auto-detect species • Equal replicates • Set Protein Group as index</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="header"><h1>DIA Proteomics Pipeline</h1><p>Protein Import</p></div>', unsafe_allow_html=True)
 
-# Restore
-if ss("prot_df") is not None and not ss("reconfig_prot", False):
-    df = ss("prot_df")
-    c1, c2 = ss("prot_c1"), ss("prot_c2")
-    st.success("Protein data restored")
-    st.metric("Condition A", f"{len(c1)} reps → {', '.join(c1)}")
-    st.metric("Condition B", f"{len(c2)} reps → {', '.join(c2)}")
-    if st.button("Reconfigure"):
-        ss("reconfig_prot", True)
+# === FILE UPLOAD THAT NEVER DIES ===
+uploaded_file = ss("uploaded_protein_file")
+
+if uploaded_file is None:
+    st.markdown("### Upload Protein File")
+    uploaded_file = st.file_uploader("CSV / TSV / TXT", type=["csv","tsv","txt"], key="prot_uploader")
+    if uploaded_file:
+        ss("uploaded_protein_file", uploaded_file)
         st.rerun()
-    restart_button()
-    st.stop()
+else:
+    st.success(f"Protein file ready: **{uploaded_file.name}** ({uploaded_file.size:,} bytes)")
 
-if ss("reconfig_prot", False):
-    st.warning("Reconfiguring — upload the same file")
-
-# Upload
-uploaded = st.file_uploader("Upload Protein File", type=["csv","tsv","txt"], key="prot_up")
-if not uploaded:
-    st.info("Upload file to continue")
-    restart_button()
-    st.stop()
-
-debug("File uploaded", uploaded.name)
-
-@st.cache_data
-def load(f):
-    text = f.getvalue().decode("utf-8", errors="replace")
-    if text.startswith("\ufeff"): text = text[1:]
+# === LOAD DATA (cached) ===
+@st.cache_data(show_spinner="Loading protein data...")
+def load_protein_data(file_obj):
+    bytes_data = file_obj.getvalue()
+    text = bytes_data.decode("utf-8", errors="replace")
+    if text.startswith("\ufeff"):
+        text = text[1:]
     return pd.read_csv(io.StringIO(text), sep=None, engine="python")
 
-df_raw = load(uploaded)
-debug("Loaded", f"{df_raw.shape}")
+df_raw = load_protein_data(uploaded_file)
 
-# Intensity columns
-intensity = []
-for c in df_raw.columns:
-    cleaned = pd.to_numeric(df_raw[c].astype(str).str.replace(r"[,\#NUM!]", "", regex=True), errors='coerce')
+st.write(f"**{len(df_raw):,}** proteins × **{len(df_raw.columns)}** columns")
+
+# === DETECT INTENSITY COLUMNS ===
+intensity_cols = []
+for col in df_raw.columns:
+    cleaned = pd.to_numeric(df_raw[col].astype(str).astype(str).str.replace(r"[,\#NUM!]", "", regex=True), errors='coerce')
     if cleaned.notna().mean() > 0.3:
-        df_raw[c] = cleaned
-        intensity.append(c)
+        df_raw[col] = cleaned
+        intensity_cols.append(col)
 
-edited = st.data_editor(
-    pd.DataFrame([{"Column": c, "A": True, "B": False} for c in intensity]),
-    column_config={"Column": st.column_config.TextColumn(disabled=True),
-                   "A": st.column_config.CheckboxColumn("Condition A"),
-                   "B": st.column_config.CheckboxColumn("Condition B")},
-    hide_index=True, use_container_width=True, num_rows="fixed"
-)
-
-a = edited[edited["A"]]["Column"].tolist()
-b = edited[edited["B"]]["Column"].tolist()
-if len(a) != len(b):
-    st.error("Must have equal replicates!")
+if not intensity_cols:
+    st.error("No quantitative columns found")
     st.stop()
 
-n = len(a)
-df = df_raw.rename(columns={a[i]: f"A{i+1}" for i in range(n)} | {b[i]: f"B{i+1}" for i in range(n)}).copy()
-c1, c2 = [f"A{i+1}" for i in range(n)], [f"B{i+1}" for i in range(n)]
+# === REPLICATE ASSIGNMENT ===
+st.markdown("### Assign Replicates (must be equal count)")
+rows = [{"Column": c, "A": True, "B": False} for c in intensity_cols]
+edited = st.data_editor(
+    pd.DataFrame(rows),
+    column_config={
+        "Column": st.column_config.TextColumn(disabled=True),
+        "A": st.column_config.CheckboxColumn("Condition A → A1,A2,..."),
+        "B": st.column_config.CheckboxColumn("Condition B → B1,B2,..."),
+    },
+    hide_index=True,
+    use_container_width=True,
+    num_rows="fixed"
+)
 
-# Protein group
-pg = st.selectbox("Protein Group column", [c for c in df.columns if "protein" in c.lower() or "pg" in c.lower()])
-if st.button("Set as Index"):
-    df = df.set_index(pg)
-    st.rerun()
+a_cols = edited[edited["A"]]["Column"].tolist()
+b_cols = edited[edited["B"]]["Column"].tolist()
 
-# Species
-species_list = ["HUMAN","MOUSE","RAT","ECOLI","BOVIN","YEAST"]
-sp_col = next((c for c in df.columns if c not in c1+c2 and df[c].astype(str).str.upper().str.contains("|".join(species_list)).any()), "Not found")
-if sp_col != "Not found":
-    df["Species"] = df[sp_col].astype(str).str.upper().apply(lambda x: next((s for s in species_list if s in x), "Other"))
+if len(a_cols) != len(b_cols) or len(a_cols) == 0:
+    st.error(f"Must have equal number of replicates (A={len(a_cols)}, B={len(b_cols)})")
+    st.stop()
 
-# ====================== FINAL SAFE SAVE ======================
-debug("Saving final data to session state...")
+# === RENAME REPLICATES ===
+n = len(a_cols)
+rename_map = {a_cols[i]: f"A{i+1}" for i in range(n)}
+rename_map.update({b_cols[i]: f"B{i+1}" for i in range(n)})
+df = df_raw.rename(columns=rename_map).copy()
 
-# Always save these — they are guaranteed to exist
+c1 = [f"A{i+1}" for i in range(n)]
+c2 = [f"B{i+1}" for i in range(n)]
+
+st.success(f"Renamed → **A**: {', '.join(c1)} | **B**: {', '.join(c2)}")
+
+# === SAVE FINAL DATA ===
 ss("prot_df", df)
 ss("prot_c1", c1)
 ss("prot_c2", c2)
-ss("reconfig_prot", False)
 
-# Safe save for optional columns
-ss("prot_pg_col", pg_col if 'pg_col' in locals() and pg_col else "Not selected")
-ss("prot_sp_col", sp_col if 'sp_col' in locals() and sp_col != "Not found" else "Not found")
+st.success("Protein data fully processed and permanently saved")
 
-st.success("All data cached successfully!")
-
-# Only save pg_col if user has selected one
-if 'pg_col' in locals() and pg_col is not None:
-    ss("prot_pg_col", pg_col)
-    debug("Saved Protein Group column", pg_col)
-else:
-    ss("prot_pg_col", "Not selected yet")
-    debug("Protein Group column not selected yet")
-
-# Same for species
-if 'sp_col' in locals() and sp_col != "Not found":
-    ss("prot_sp_col", sp_col)
-    debug("Saved species column", sp_col)
-else:
-    ss("prot_sp_col", "Not found")
-
-# ====================== FINAL: SAVE EVERYTHING PERMANENTLY ======================
-st.success("Protein processing complete — data is now permanently saved!")
-
-# These lines make the analysis page work forever
-ss("protein_data_ready", True)
-ss("prot_final_df", df)                    # Final processed dataframe
-ss("prot_final_c1", c1)                    # ["A1", "A2", ...]
-ss("prot_final_c2", c2)                    # ["B1", "B2", ...]
-ss("prot_final_pg", df.index.name if not isinstance(df.index, pd.RangeIndex) else "None")
-
-
-
-# GO TO ANALYSIS BUTTON
+# === GO TO ANALYSIS ===
 st.markdown("---")
-if st.button("Go to Protein Exploratory Analysis", type="primary", use_container_width=True):
+if st.button("Go to Protein Analysis", type="primary", use_container_width=True):
     st.switch_page("pages/3_Protein_Analysis.py")
 
 restart_button()
-
-st.markdown("""
-<div class="footer">
-    <strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific
-</div>
-""", unsafe_allow_html=True)
