@@ -70,7 +70,28 @@ fig.update_layout(
 
 st.plotly_chart(fig, use_container_width=True)
 
-st.info("**Violin + Box Overlay** — Standard in proteomics QC (Schessner et al., 2022)\n"
-        "- Violin = full density\n"
-        "- Box = median, IQR, whiskers\n"
-        "- Mean line shown")
+# === DISTRIBUTION TESTING ===
+st.markdown("### Distribution Analysis (Shapiro-Wilk Test)")
+
+results = []
+for rep in c1 + c2:
+    values = data[rep].dropna()
+    if len(values) > 3:  # Shapiro-Wilk requires n > 3
+        stat, p = stats.shapiro(values)
+        normal = "Yes" if p > 0.05 else "No"
+        results.append({"Replicate": rep, "p-value": f"{p:.2e}", "Normal?": normal})
+    else:
+        results.append({"Replicate": rep, "p-value": "N/A", "Normal?": "Too few values"})
+
+results_df = pd.DataFrame(results)
+st.dataframe(results_df, use_container_width=True)
+
+# Interpretation
+st.info("""
+**Interpretation**  
+- **p > 0.05** → data appears normally distributed (rare in proteomics)  
+- **p < 0.05** → non-normal (expected for log-transformed intensities)  
+- In proteomics: **log₂ intensities are usually NOT normal** — they are right-skewed  
+- Use **non-parametric tests** (Mann-Whitney, Wilcoxon) for differential analysis  
+- This confirms correct statistical approach (Schessner et al., 2022)
+""")
