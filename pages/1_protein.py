@@ -56,7 +56,7 @@ if st.session_state.get("reconfig_prot", False):
 
 # ====================== UPLOAD & CACHE ======================
 st.markdown("### 1. Upload Protein-Level File")
-uploaded = st.file_uploader("CSV/TSV/TXT", type=["csv","tsv","txt"], key="prot_upload)
+uploaded = st.file_uploader("CSV/TSV/TXT", type=["csv","tsv","txt"], key="prot_upload")
 
 if not uploaded:
     st.info("Upload your protein quantification file")
