@@ -206,28 +206,66 @@ with st.container():
     species_col = species_cols[0]
     protein_col = protein_cols[0]
 
-    # ── Save everything ──
-    st.session_state.update({
-        "cond1_cols": cond1_cols,
-        "cond2_cols": cond2_cols,
-        "species_col": species_col,
-        "protein_col": protein_col,
-        "df": df
-    })
+# ── Save everything ──
+st.session_state.update({
+    "cond1_cols": cond1_cols,
+    "cond2_cols": cond2_cols,
+    "species_col": species_col,
+    "protein_col": protein_col,
+    "df": df
+})
 
-    st.success("All assignments & renaming applied!")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.metric("**Condition 1**", f"{len(cond1_cols)} replicates")
-        st.write(", ".join(cond1_cols))
-    with c2:
-        st.metric("**Condition 2**", f"{len(cond2_cols)} replicates")
-        st.write(", ".join(cond2_cols))
+st.success("All assignments & renaming applied!")
 
-    st.info(f"**Species** → `{species_col}` | **Protein Group** → `{protein_col}`")
-    st.markdown("</div>", unsafe_allow_html=True)
+# ── Display metrics ──
+c1, c2 = st.columns(2)
+with c1:
+    st.metric("**Condition 1**", f"{len(cond1_cols)} replicates")
+    st.write(", ".join(cond1_cols))
+with c2:
+    st.metric("**Condition 2**", f"{len(cond2_cols)} replicates")
+    st.write(", ".join(cond2_cols))
 
-st.success("Data import complete! Ready for **Module 2: Data Quality**")
+st.info(f"**Species** → `{species_col}` | **Protein Group** → `{protein_col}`")
+
+# ── Add species-level analysis if multiple species ──
+if df[species_col].nunique() > 1:
+    st.markdown("### 📊 Protein Count by Species & Condition")
+    
+    # Extract unique species
+    unique_species = df[species_col].unique()
+    
+    # Create species × condition count table
+    species_condition_counts = []
+    for sp in sorted(unique_species):
+        sp_df = df[df[species_col] == sp]
+        count_cond1 = sp_df[cond1_cols].notna().any(axis=1).sum()  # proteins with data in cond1
+        count_cond2 = sp_df[cond2_cols].notna().any(axis=1).sum()  # proteins with data in cond2
+        count_total = len(sp_df)
+        
+        species_condition_counts.append({
+            "Species": sp,
+            f"{cond1_cols[0].split('_')[0]} (Cond1)": count_cond1,
+            f"{cond2_cols[0].split('_')[0]} (Cond2)": count_cond2,
+            "Total": count_total
+        })
+    
+    species_counts_df = pd.DataFrame(species_condition_counts)
+    st.dataframe(species_counts_df, use_container_width=True)
+    
+    # Optional: Visual representation
+    col1, col2 = st.columns(2)
+    with col1:
+        st.bar_chart(species_counts_df.set_index("Species")[[f"{cond1_cols[0].split('_')[0]} (Cond1)", f"{cond2_cols[0].split('_')[0]} (Cond2)"]])
+    
+    with col2:
+        st.write("**Summary Statistics:**")
+        st.write(f"- Total species: {len(unique_species)}")
+        st.write(f"- Total proteins: {len(df)}")
+        st.write(f"- Species: {', '.join(sorted(unique_species))}")
+
+st.markdown("</div>", unsafe_allow_html=True)
+
 
 # ─────────────────────────────────────────────────────────────
 # FIXED NAVIGATION & RESTART — HIDDEN BUTTON NOW TRULY HIDDEN
