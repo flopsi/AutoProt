@@ -291,26 +291,26 @@ if species_col_extracted and len(unique_species) > 1:
     
     # Get the actual column names after renaming
     # Build a mapping of original to actual column names
-    actual_cond1_cols = []
-    actual_cond2_cols = []
+    cond1_cols = []
+    cond2_cols = []
     
     for col in cond1_cols:
         # Check if column was renamed
         new_col_name = rename_map.get(col, col)
         if new_col_name in df.columns:
-            actual_cond1_cols.append(new_col_name)
+            cond1_cols.append(new_col_name)
         elif col in df.columns:
-            actual_cond1_cols.append(col)
+            cond1_cols.append(col)
     
     for col in cond2_cols:
         new_col_name = rename_map.get(col, col)
         if new_col_name in df.columns:
-            actual_cond2_cols.append(new_col_name)
+            cond2_cols.append(new_col_name)
         elif col in df.columns:
-            actual_cond2_cols.append(col)
+            cond2_cols.append(col)
     
     # Convert intensity columns to numeric
-    for col in actual_cond1_cols + actual_cond2_cols:
+    for col in cond1_cols + cond2_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce')
     
     species_counts = []
@@ -318,8 +318,8 @@ if species_col_extracted and len(unique_species) > 1:
         sp_df = df[df[species_col_extracted] == sp]
         
         # ≥2/3 replicates with intensity >1
-        valid_cond1 = (sp_df[actual_cond1_cols] > 1).sum(axis=1) >= 2
-        valid_cond2 = (sp_df[actual_cond2_cols] > 1).sum(axis=1) >= 2
+        valid_cond1 = (sp_df[cond1_cols] > 1).sum(axis=1) >= 2
+        valid_cond2 = (sp_df[cond2_cols] > 1).sum(axis=1) >= 2
         
         species_counts.append({
             "Species": sp,
