@@ -1,5 +1,34 @@
 
 import streamlit as st
+# ─────────────────────────────────────────────────────────────
+# Session State Summary
+# ─────────────────────────────────────────────────────────────
+if "prot_df" in st.session_state or "pep_df" in st.session_state or "skip_prot" in st.session_state or "skip_pep" in st.session_state:
+    st.markdown("### 📦 Current Session State")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if "prot_df" in st.session_state:
+            st.metric("**Protein Dataframe**", f"{st.session_state.prot_n:,} proteins")
+            st.write(f"- Cond1: {len(st.session_state.prot_c1)} replicates")
+            st.write(f"- Cond2: {len(st.session_state.prot_c2)} replicates")
+            st.write(f"- Species: {', '.join(st.session_state.prot_species)}")
+        elif "skip_prot" in st.session_state:
+            st.warning("⏭️ Protein upload skipped")
+        else:
+            st.info("Protein data not yet loaded")
+    
+    with col2:
+        if "pep_df" in st.session_state:
+            st.metric("**Peptide Dataframe**", f"{st.session_state.pep_n:,} peptides")
+            st.write(f"- Cond1: {len(st.session_state.pep_c1)} replicates")
+            st.write(f"- Cond2: {len(st.session_state.pep_c2)} replicates")
+            st.write(f"- Species: {', '.join(st.session_state.pep_species)}")
+        elif "skip_pep" in st.session_state:
+            st.warning("⏭️ Peptide upload skipped")
+        else:
+            st.info("Peptide data not yet loaded")
 
 # Your Thermo Fisher CSS (same as before)
 st.markdown("""
