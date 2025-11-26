@@ -60,36 +60,26 @@ import streamlit as st
 import pandas as pd
 from io import StringIO
 
-uploaded_file = st.file_uploader("Choose a file")
-if uploaded_file is not None:
-    # To read file as bytes:
-    bytes_data = uploaded_file.getvalue()
-    st.write(bytes_data)
+with st.container():
+    st.markdown('<div class="card"><div class="upload-area"><div style="font-size:64px; opacity:0.5; margin-bottom:20px;">Upload</div><div style="font-size:16px; color:#54585A; margin-bottom:10px;"><strong>Drag and drop your file here</strong></div><div style="font-size:13px; color:#54585A; opacity:0.7;">Supports .csv, .tsv, .txt</div></div></div>', unsafe_allow_html=True)
+    uploaded_file = st.file_uploader("", type=["csv","tsv","txt"], label_visibility="collapsed")
 
-    # To convert to a string based IO:
-    stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
-    st.write(stringio)
-
-    # To read file as string:
-    string_data = stringio.read()
-    st.write(string_data)
-
+if not uploaded_file:
+    st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
+    st.stop()
 
 # ─────────────────────────────────────────────────────────────
 # Load & Parse — FIXED numeric conversion
 # ─────────────────────────────────────────────────────────────
 @st.cache_data
+@st.cache_data
 def load_and_parse(file):
     content = file.getvalue().decode("utf-8", errors="replace")
     if content.startswith("\ufeff"): content = content[1:]
     df = pd.read_csv(io.StringIO(content), sep=None, engine="python", dtype=str)
-    
-    # Force intensity columns to float
     intensity_cols = [c for c in df.columns if c not in ["pg", "name"]]
     for col in intensity_cols:
         df[col] = pd.to_numeric(df[col].str.replace(",", ""), errors="coerce")
-
-    # Extract species
     if "name" in df.columns:
         split = df["name"].str.split(",", n=1, expand=True)
         if split.shape[1] == 2:
