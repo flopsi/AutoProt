@@ -78,35 +78,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────────────────────
-# Getting Started Section (FIXED GRID)
-# ─────────────────────────────────────────────────────────────
-with st.container():
-    st.markdown("""
-    <div class="card">
-        <h3>🚀 Getting Started</h3>
-        <p>Follow these steps to analyze your data:</p>
-        
-        <div class="feature-grid">
-            <div class="feature-box">
-                <h4>1. Protein Import</h4>
-                <p>Upload your protein-level quantification data. Configure conditions, select species and protein group columns. Data is automatically analyzed for multi-species presence.</p>
-            </div>
-            <div class="feature-box">
-                <h4>2. Peptide Import</h4>
-                <p>Upload your peptide-level quantification data. Assign conditions and sequence columns. Peptide counts are calculated per species and condition.</p>
-            </div>
-            <div class="feature-box">
-                <h4>3. Data Quality</h4>
-                <p>Assess reproducibility metrics, missing value patterns, and technical precision across replicates and species.</p>
-            </div>
-            <div class="feature-box">
-                <h4>4. Statistical Analysis</h4>
-                <p>Perform differential abundance analysis, correlation analysis, and clustering to identify regulated proteins/peptides.</p>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
 # Navigation Section
