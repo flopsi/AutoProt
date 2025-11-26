@@ -2,8 +2,24 @@
 import streamlit as st
 import pandas as pd
 import io
-from shared import restart_button, debug
 import plotly.express as px
+
+from shared import restart_button, get_peptide_file, set_peptide_file
+
+uploaded_file = get_peptide_file()
+if uploaded_file is None:
+    uploaded_file = st.file_uploader("Upload Peptide File", type=["csv","tsv","txt"])
+    if uploaded_file:
+        set_peptide_file(uploaded_file)
+        st.rerun()
+else:
+    st.success(f"Peptide file ready: {uploaded_file.name}")
+
+@st.cache_data
+def load_df(bytes_data):
+    return pd.read_csv(io.BytesIO(bytes_data), sep=None, engine="python")
+
+df_raw = load_df(uploaded_file.getvalue())
 # ====================== SAFE SESSION STATE ======================
 def ss(key, default=None):
     if key not in st.session_state:
