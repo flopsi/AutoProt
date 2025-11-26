@@ -1,97 +1,92 @@
-# pages/3_Protein_Analysis.py
-import streamlit as st
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-from scipy import stats
-# In your protein (or peptide) analysis page
-
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+from scipy import stats
 
 # Load data
 df = st.session_state.prot_final_df
 c1 = st.session_state.prot_final_c1
 c2 = st.session_state.prot_final_c2
 
-st.subheader("Replicate Intensity Distribution (Violin + Box)")
+st.subheader("Replicate Intensity Distribution + Full Statistical Diagnosis")
 
-# Scale selection
-scale = st.selectbox(
-    "Intensity scale",
-    ["Raw Intensity", "log₂(Intensity)", "log₁₀(Intensity)"],
-    index=1
-)
+scale = st.selectbox("Intensity scale", ["Raw", "log₂", "log₁₀"], index=1)
 
-# Prepare data
+# Transform
 data = df[c1 + c2].replace(0, np.nan)
-
-if scale == "log₂(Intensity)":
+if scale == "log₂": 
     data = np.log2(data)
     y_label = "log₂(Intensity)"
-elif scale == "log₁₀(Intensity)":
+elif scale == "log₁₀": 
     data = np.log10(data)
     y_label = "log₁₀(Intensity)"
-else:
+else: 
     y_label = "Raw Intensity"
 
+# Melt
 melted = data.melt(var_name="Replicate", value_name=y_label).dropna()
 melted["Condition"] = melted["Replicate"].apply(lambda x: "A" if x in c1 else "B")
-
-# Correct order
 melted["Replicate"] = pd.Categorical(melted["Replicate"], categories=c1 + c2, ordered=True)
 melted = melted.sort_values("Replicate")
 
-# VIOLIN PLOT WITH BOX OVERLAY — ONE LINE FIX
+# Violin + Box
 fig = px.violin(
-    melted,
-    x="Replicate",
-    y=y_label,
-    color="Condition",
+    melted, x="Replicate", y=y_label, color="Condition",
     color_discrete_map={"A": "#E71316", "B": "#1f77b4"},
-    box=True,           # ← draws the box
-    points=False,
-    violinmode="overlay"
+    box=True, points=False, violinmode="overlay"
 )
-
-# This is the key line — turns the box fully visible inside the violin
 fig.update_traces(box_visible=True, meanline_visible=True)
-
-fig.update_layout(
-    height=650,
-    legend_title="",
-    xaxis_title="Replicate",
-    yaxis_title=y_label,
-    plot_bgcolor="white",
-    font=dict(size=14)
-)
-
+fig.update_layout(height=650, yaxis_title=y_label, plot_bgcolor="white")
 st.plotly_chart(fig, use_container_width=True)
 
-# === DISTRIBUTION TESTING ===
-st.markdown("### Distribution Analysis (Shapiro-Wilk Test)")
-
+# === STATISTICAL DIAGNOSIS ===
+st.markdown("### Statistical Diagnosis per Replicate")
 results = []
 for rep in c1 + c2:
     values = data[rep].dropna()
-    if len(values) > 3:  # Shapiro-Wilk requires n > 3
-        stat, p = stats.shapiro(values)
-        normal = "Yes" if p > 0.05 else "No"
-        results.append({"Replicate": rep, "p-value": f"{p:.2e}", "Normal?": normal})
-    else:
-        results.append({"Replicate": rep, "p-value": "N/A", "Normal?": "Too few values"})
+    if len(values) < 4:
+        results.append({"Replicate": rep, "n": len(values), "Skew": "N/A", "Kurtosis": "N/A", "Shapiro p": "N/A", "Normal": "N/A"})
+        continue
+    
+    skew = stats.skew(values)
+    kurt = stats.kurtosis(values)  # excess kurtosis
+    shapiro_stat, shapiro_p = stats.shapiro(values)
+    normal = "Yes" if shapiro_p > 0.05 else "No"
+    
+    results.append({
+        "Replicate": rep,
+        "n": len(values),
+        "Skew": f"{skew:+.3f}",
+        "Kurtosis": f"{kurt:+.3f}",
+        "Shapiro p": f"{shapiro_p:.2e}",
+        "Normal": normal
+    })
 
-results_df = pd.DataFrame(results)
-st.dataframe(results_df, use_container_width=True)
+stats_df = pd.DataFrame(results)
+st.dataframe(stats_df, use_container_width=True)
 
-# Interpretation
+# === AUTOMATIC TRANSFORMATION RECOMMENDATION ===
+st.markdown("### Recommended Transformation")
+high_skew = any(abs(float(r["Skew"].replace("+","").replace("-","") or "0")) > 0.5 for r in results if r["Skew"] != "N/A")
+high_kurt = any(abs(float(r["Kurtosis"].replace("+","").replace("-","") or "0")) > 1.0 for r in results if r["Kurtosis"] != "N/A")
+non_normal = any(r["Normal"] == "No" for r in results if r["Normal"] != "N/A")
+
+if scale == "Raw" and (high_skew or high_kurt):
+    st.warning("**Strongly recommend log₂ transformation**\n"
+               "- High skewness and/or kurtosis detected\n"
+               "- Raw proteomics intensities are almost never normal")
+elif non_normal:
+    st.info("**log₂ transformation recommended**\n"
+            "- Most replicates are non-normal (expected in proteomics)\n"
+            "- Use non-parametric tests (Wilcoxon, Mann-Whitney)")
+else:
+    st.success("**Data appears suitable for parametric tests** (rare!)")
+
 st.info("""
-**Interpretation**  
-- **p > 0.05** → data appears normally distributed (rare in proteomics)  
-- **p < 0.05** → non-normal (expected for log-transformed intensities)  
-- In proteomics: **log₂ intensities are usually NOT normal** — they are right-skewed  
-- Use **non-parametric tests** (Mann-Whitney, Wilcoxon) for differential analysis  
-- This confirms correct statistical approach (Schessner et al., 2022)
+**Interpretation (Schessner et al., 2022)**  
+- **Skewness > |0.5|** → asymmetric → log transform  
+- **Kurtosis > |1|** → heavy tails → log transform  
+- **Shapiro-Wilk p < 0.05** → reject normality → use non-parametric stats  
+- In practice: **always log₂ transform proteomics intensities**
 """)
