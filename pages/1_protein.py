@@ -1,4 +1,4 @@
-# pages/1_protein.py
+# pages/pages/1_protein.py
 import streamlit as st
 import pandas as pd
 import re
@@ -7,23 +7,48 @@ import io
 st.set_page_config(page_title="Protein Import", layout="wide")
 
 # ─────────────────────────────────────────────────────────────
-# STYLING
+# CSS
 # ─────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    .header {background: linear-gradient(90deg, #E71316 0%, #A6192E 100%); padding: 20px 40px; color: white; margin: -60px -60px 40px -60px;}
+    .header {
+        margin: 0; padding: 0; box-sizing: border-box;
+    }
+    .header {
+        background: linear-gradient(90deg, #E71316 0%, #A6192E 100%);
+        padding: 20px 40px;
+        color: white;
+        margin: -60px -60px 40px -60px;
+    }
     .header h1 {margin:0; font-size:28px; font-weight:600;}
-    .stButton>button {background:#E71316 !important; color:white !important; border:none !important; border-radius:8px !important;}
-    .stButton>button:hover {background:#c71a2e !important;}
-    .fixed-restart {position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 999; width: 320px;}
-    .footer {text-align:center; padding:30px; color:#666; font-size:12px; border-top:1px solid #eee; margin-top:60px;}
+    .fixed-restart {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 999;
+        width: 340px;
+    }
+    .stButton>button {
+        background:#E71316 !important;
+        color:white !important;
+        border-radius:8px !important;
+    }
+    .footer {
+        text-align:center;
+        padding:30px;
+        color:#666;
+        font-size:12px;
+        border-top:1px solid #eee;
+        margin-top:80px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="header"><h1>Protein Data Import & Species Detection</h1></div>', unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
-# RESTORE DATA IF EXISTS
+# RESTORE SESSION DATA
 # ─────────────────────────────────────────────────────────────
 if "prot_df" in st.session_state and not st.session_state.get("reconfigure_prot", False):
     df = st.session_state.prot_df
@@ -32,93 +57,94 @@ if "prot_df" in st.session_state and not st.session_state.get("reconfigure_prot"
     sp_col = st.session_state.prot_sp_col
     sp_counts = st.session_state.prot_sp_counts
 
-    st.success("Data restored from previous session")
+    st.success("Data restored from session")
 
     col1, col2, col3 = st.columns([2, 2, 1])
     with col1:
-        st.metric("Condition A", f"{len(c1)} replicates", help="Renamed to A1, A2, ...")
+        st.metric("Condition A", f"{len(c1)} replicates")
         st.write(" | ".join(c1))
     with col2:
-        st.metric("Condition B", f"{len(c2)} replicates", help="Renamed to B1, B2, ...")
+        st.metric("Condition B", f"{len(c2)} replicates")
         st.write(" | ".join(c2))
     with col3:
         if st.button("Reconfigure", type="secondary"):
             st.session_state.reconfigure_prot = True
             st.rerun()
 
-    st.info(f"**Species column**: `{sp_col}`")
-    
+    st.info(f"**Species column**: `{sp_col}` → detected {len(sp_counts)} species")
+
     if not sp_counts.empty:
-        st.markdown("### Proteins Detected per Species")
+        st.markdown("### Proteins per Species")
         st.dataframe(sp_counts, use_container_width=True, hide_index=True)
-        col1, col2 = st.columns(2)
-        with col1:
-            chart_data = sp_counts.set_index("Species")[["A", "B", "Both"]]
-            st.bar_chart(chart_data, use_container_width=True)
-        with col2:
-            st.write("**Summary**")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.bar_chart(sp_counts.set_index("Species")[["A", "B"]], use_container_width=True)
+        with c2:
             for _, row in sp_counts.iterrows():
-                st.write(f"• **{row['Species}**: {row['Total']} proteins ({row['A']} in A • {row['B']} in B • {row['Both']} in both)")
+                st.write(f"• **{row['Species']}**: {row['Total']} proteins ({row['A']} in A • {row['B']} in B)")
 
     # Restart button
     st.markdown('<div class="fixed-restart">', unsafe_allow_html=True)
     if st.button("Restart Full Analysis", type="primary", use_container_width=True):
-        for k in list(st.session_state.keys()):
-            if k.startswith("prot_") or k == "reconfigure_prot":
-                del st.session_state[k]
+        keys = [k for k in st.session_state.keys() if k.startswith("prot_") or k == "reconfigure_prot"]
+        for k in keys:
+            del st.session_state[k]
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
-# ─────────────────────────────────────────────────────────────
-# RE-UPLOAD IF RECONFIGURING
-# ─────────────────────────────────────────────────────────────
+# Allow re-upload during reconfiguration
 if st.session_state.get("reconfigure_prot", False):
-    st.warning("Reconfiguring — please re-upload the same file")
+    st.warning("Reconfiguring — please upload the same file again")
 
-st.markdown("### 1. Upload Your Protein Data")
-uploaded_file = st.file_uploader("Supports .csv, .tsv, .txt", type=["csv", "tsv", "txt"])
+# ─────────────────────────────────────────────────────────────
+# 1. UPLOAD FILE
+# ─────────────────────────────────────────────────────────────
+st.markdown("### 1. Upload Protein Data (.csv, .tsv, .txt)")
+uploaded_file = st.file_uploader("Drag and drop or click to browse", type=["csv", "txt", "tsv"])
 
 if not uploaded_file:
-    st.info("Upload a file to begin")
+    st.info("Please upload a file to continue")
     st.stop()
 
 # ─────────────────────────────────────────────────────────────
-# LOAD DATA
+# 2. LOAD DATA
 # ─────────────────────────────────────────────────────────────
-@st.cache_data(show_spinner="Loading data...")
-def load_data(file):
-    content = file.read().decode("utf-8", errors="replace")
+@st.cache_data(show_spinner="Loading file...")
+def load_file(file):
+    content = file.getvalue().decode("utf-8", errors="replace")
+    if content.startswith("\ufeff"):
+        content = content[1:]
     df = pd.read_csv(io.StringIO(content), sep=None, engine="python")
     return df
 
-df_raw = load_data(uploaded_file)
-st.success(f"Loaded {len(df_raw):,} proteins")
+df_raw = load_file(uploaded_file)
+st.success(f"Loaded {len(df_raw):,} protein rows")
 
-# Convert intensity columns to numeric
+# Detect intensity columns (numeric)
 intensity_cols = []
 for col in df_raw.columns:
-    # Try converting to numeric — if many succeed → it's intensity
-    sample = pd.to_numeric(df_raw[col].astype(str).str.replace(r"[,\#NUM!]", "", regex=True), errors='coerce')
-    if sample.notna().sum() > len(df_raw) * 0.3:  # at least 30% numeric
-        df_raw[col] = sample
+    numeric_series = pd.to_numeric(df_raw[col].astype(str).str.replace(r"[,\#NUM!]", "", regex=True), errors='coerce')
+    if numeric_series.notna().sum() > len(df_raw) * 0.3:  # at least 30% real numbers
+        df_raw[col] = numeric_series
         intensity_cols.append(col)
 
-st.write(f"Detected {len(intensity_cols)} intensity columns")
+if not intensity_cols:
+    st.error("No intensity/replicate columns detected. Check file format.")
+    st.stop()
 
 # ─────────────────────────────────────────────────────────────
-# 2. ASSIGN CONDITIONS
+# 3. ASSIGN REPLICATES TO CONDITION A / B
 # ─────────────────────────────────────────────────────────────
 st.markdown("### 2. Assign Replicates to Conditions")
-
-# Prepare editor
 rows = []
 for col in intensity_cols:
+    preview = df_raw[col].dropna().head(3).astype(str).tolist()
     rows.append({
         "Column": col,
-        "Preview": " | ".join(df_raw[col].dropna().head(3).astype(str).tolist()),
-        "Condition A": True,   # default to A
-        "Condition B": False,
+        "Preview": " | ".join(preview),
+        "Condition A → A1,A2...": True,
+        "Condition B → B1,B2...": False,
     })
 
 edited = st.data_editor(
@@ -126,149 +152,137 @@ edited = st.data_editor(
     column_config={
         "Column": st.column_config.TextColumn(disabled=True),
         "Preview": st.column_config.TextColumn(disabled=True),
-        "Condition A": st.column_config.CheckboxColumn("Condition A → A1, A2, A3..."),
-        "Condition B": st.column_config.CheckboxColumn("Condition B → B1, B2, B3..."),
+        "Condition A → A1,A2...": st.column_config.CheckboxColumn("Condition A"),
+        "Condition B → B1,B2...": st.column_config.CheckboxColumn("Condition B"),
     },
     hide_index=True,
     use_container_width=True,
     num_rows="fixed"
 )
 
-# Extract selections
-cond_a_cols = edited[edited["Condition A"]]["Column"].tolist()
-cond_b_cols = edited[edited["Condition B"]]["Column"].tolist()
+cond_a = edited[edited["Condition A → A1,A2..."]]["Column"].tolist()
+cond_b = edited[edited["Condition B → B1,B2..."]]["Column"].tolist()
 
-if len(cond_a_cols) == 0 or len(cond_b_cols) == 0:
+if len(cond_a) == 0 or len(cond_b) == 0:
     st.error("Both conditions must have at least one replicate")
     st.stop()
 
 # ─────────────────────────────────────────────────────────────
-# 3. RENAME REPLICATES: A1,A2,... B1,B2,...
+# 4. RENAME TO A1/A2... and B1/B2...
 # ─────────────────────────────────────────────────────────────
 rename_map = {}
-new_c1_names = [f"A{i+1}" for i in range(len(cond_a_cols))]
-new_c2_names = [f"B{i+1}" for i in range(len(cond_b_cols))]
-
-for old, new in zip(cond_a_cols, new_c1_names):
-    rename_map[old] = new
-for old, new in zip(cond_b_cols, new_c2_names):
-    rename_map[old] = new
+for i, old_name in enumerate(cond_a):
+    rename_map[old_name] = f"A{i+1}"
+for i, old_name in enumerate(cond_b):
+    rename_map[old_name] = f"B{i+1}"
 
 df = df_raw.rename(columns=rename_map).copy()
-c1_final = new_c1_names
-c2_final = new_c2_names
+final_c1 = [f"A{i+1}" for i in range(len(cond_a))]
+final_c2 = [f"B{i+1}" for i in range(len(cond_b))]
 
-st.success(f"Renamed replicates → Condition A: {', '.join(c1_final)} | Condition B: {', '.join(c2_final)}")
+st.success(f"Renamed → Condition A: {', '.join(final_c1)} | Condition B: {', '.join(final_c2)}")
 
 # ─────────────────────────────────────────────────────────────
-# 4. AUTO DETECT SPECIES COLUMN
+# 5. AUTO DETECT SPECIES COLUMN
 # ─────────────────────────────────────────────────────────────
-st.markdown("### 4. Detecting Species Information")
+st.markdown("### 3. Auto-Detecting Species Column")
 
 def find_species_column(df):
-    candidates = []
+    species_keywords = ["HUMAN", "MOUSE", "RAT", "BOVIN", "YEAST", "RABIT", "CANFA", "PANTR", "MACMU", "CHICK"]
+    pattern = "|".join(species_keywords)
     for col in df.columns:
-        if col in c1_final + c2_final:
-            continue  # skip intensity
-        text_sample = df[col].dropna().astype(str).str.upper()
-        if text_sample.str.contains("HUMAN|MOUSE|RAT|YEAST|BOVIN", regex=True).any():
-            candidates.append((col, text_sample.str.contains("HUMAN|MOUSE|RAT|YEAST|BOVIN", regex=True).sum()))
-    if not candidates:
-        return None
-    # Pick column with most species mentions
-    return max(candidates, key=lambda x: x[1])[0]
+        if col in final_c1 + final_c2:
+            continue
+        if df[col].astype(str).str.upper().str.contains(pattern).any():
+            return col
+    return None
 
 species_column = find_species_column(df)
 
 if not species_column:
-    st.error("Could not find a column containing species names (HUMAN, MOUSE, etc.)")
+    st.error("No column containing species names (HUMAN, MOUSE, etc.) found.")
     st.stop()
 
 st.success(f"Species column detected: `{species_column}`")
 
 # Extract clean species
-def extract_species(text):
-    if pd.isna(text):
+def extract_species(val):
+    if pd.isna(val):
         return "Unknown"
-    text = str(text).upper()
-    matches = re.findall(r"\b(HUMAN|MOUSE|RAT|BOVIN|YEAST|ARATH|ECOLI|DROME|CANFA|XENLA|PANTR|MACMU|PIG|CHICK|RABIT|HORSE)\b", text)
-    return matches[0] if matches else "Other"
+    text = str(val).upper()
+    known = ["HUMAN", "MOUSE", "RAT", "BOVIN", "YEAST", "RABIT", "CANFA", "MACMU", "PANTR", "CHICK", "HORSE", "PIG"]
+    for sp in known:
+        if sp in text:
+            return sp
+    return "Other"
 
-df["Detected_Species"] = df[species_column].apply(extract_species)
-actual_species = df["Detected_Species"].value_counts().index.tolist()
-if "Unknown" in actual_species:
-    actual_species.remove("Unknown")
-if "Other" in actual_species and len(actual_species) > 1:
-    actual_species.remove("Other")
-
-st.write("Species found:", ", ".join(actual_species) or "Only HUMAN")
+df["Species"] = df[species_column].apply(extract_species)
 
 # ─────────────────────────────────────────────────────────────
-# 5. COUNT PROTEINS PER SPECIES & CONDITION
+# 6. COUNT PROTEINS PER SPECIES & CONDITION
 # ─────────────────────────────────────────────────────────────
-st.markdown("### 5. Protein Counts per Species")
+st.markdown("### 4. Protein Counts per Species")
 
-threshold = 1  # minimum intensity to count as "detected"
+threshold = 1  # intensity > 1 counts as detected
 
 counts = []
-for sp in ["HUMAN"] + [s for s in actual_species if s != "HUMAN"]:
-    subset = df[df["Detected_Species"] == sp]
-    in_a = (subset[c1_final] > threshold).any(axis=1).sum()
-    in_b = (subset[c2_final] > threshold).any(axis=1).sum()
-    in_both = (subset[c1_final] > threshold).all(axis=1) | (subset[c2_final] > threshold).all(axis=1)
-    in_both = in_both.sum()
-    total = len(subset)
+for sp in df["Species"].unique():
+    if sp in ["Unknown", "Other"] and len(df["Species"].unique()) > 2:
+        continue
+    sub = df[df["Species"] == sp]
+    detected_in_a = (sub[final_c1] > threshold).any(axis=1).sum()
+    detected_in_b = (sub[final_c2] > threshold).any(axis=1).sum()
+    total = len(sub)
 
     counts.append({
         "Species": sp,
-        "A": in_a,
-        "B": in_b,
-        "Both": in_both,
+        "A": detected_in_a,
+        "B": detected_in_b,
         "Total": total
     })
 
-sp_counts = pd.DataFrame(counts)
+sp_counts = pd.DataFrame(counts).sort_values("Total", ascending=False)
 
 # ─────────────────────────────────────────────────────────────
-# SAVE TO SESSION
+# 7. SAVE TO SESSION STATE
 # ─────────────────────────────────────────────────────────────
 st.session_state.update({
     "prot_df": df,
-    "prot_c1": c1_final,
-    "prot_c2": c2_final,
+    "prot_c1": final_c1,
+    "prot_c2": final_c2,
     "prot_sp_col": species_column,
     "prot_sp_counts": sp_counts,
-    "reconfigure_prot": False,  # reset flag
+    "reconfigure_prot": False,
 })
 
 # ─────────────────────────────────────────────────────────────
-# FINAL DISPLAY
+# 8. FINAL DISPLAY
 # ─────────────────────────────────────────────────────────────
-st.success("All done! Your data is ready for downstream analysis.")
+st.success("All set! Data is ready for analysis.")
 
 col1, col2 = st.columns(2)
 with col1:
-    st.metric("Condition A", ", ".join(c1_final))
+    st.metric("Condition A", ", ".join(final_c1))
 with col2:
-    st.metric("Condition B", ", ".join(c2_final))
+    st.metric("Condition B", ", ".join(final_c2))
 
-st.markdown("### Proteins per Species")
+st.markdown("### Proteins Detected per Species")
 st.dataframe(sp_counts, use_container_width=True, hide_index=True)
 
 col1, col2 = st.columns(2)
 with col1:
-    st.bar_chart(sp_counts.set_index("Species")[["A", "B"]], use_container_width=True)
+    chart_data = sp_counts.set_index("Species")[["A", "B"]]
+    st.bar_chart(chart_data, use_container_width=True)
 with col2:
     st.write("**Legend**")
-    st.write("• **A**: detected in Condition A (any replicate)")
-    st.write("• **B**: detected in Condition B")
-    st.write("• **Both**: detected in all replicates of A or B")
+    st.write("• **A** = detected in any replicate of Condition A")
+    st.write("• **B** = detected in any replicate of Condition B")
 
-# Final restart
+# Final restart button
 st.markdown('<div class="fixed-restart">', unsafe_allow_html=True)
 if st.button("Restart Full Analysis", type="primary", use_container_width=True):
-    keys_to_clear = [k for k in st.session_state.keys() if k.startswith("prot_") or k == "reconfigure_prot"]
-    for k in keys_to_clear:
+    keys = [k for k in st.session_state.keys() if k.startswith("prot_") or k == "reconfigure_prot"]
+    for k in keys:
         del st.session_state[k]
     st.rerun()
 st.markdown('</div>', unsafe_allow_html=True)
