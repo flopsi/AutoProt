@@ -73,7 +73,7 @@ st.dataframe(df.head(8), use_container_width=True)
 
 # ── NEW: Checkbox for sequence information ──
 with st.container():
-    st.markdown("<div class='card'>", unsafeHAS_HTML=True)
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.subheader("Sequence Information")
     
     has_sequence = st.checkbox(
