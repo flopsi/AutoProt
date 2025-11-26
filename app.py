@@ -25,12 +25,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-pg = st.navigation([st.Page("page_2.py",title="Protein Import"), 
-                    st.Page("page_3.py", title="Peptide Import"), 
-                    st.Page("page_4.py", title="Data Quality")]
-    )
+
+page1 = st.Page("protein.py", title="Protein Data Import")
+page2 = st.Page("peptide.py", title="Peptide Data Import")
+page3 =  st.Page("quality.py", title="Data Quality OVerview")
+
 st.set_page_config(page_title="autoProt", page_icon ="🧬")
 
+pg = st.navigation([page1,page2,page3])
 pg.run()
 
 
