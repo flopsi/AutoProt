@@ -8,45 +8,7 @@ from pandas.api.types import is_numeric_dtype
 # ─────────────────────────────────────────────────────────────
 # Check if we already have data in session state (coming back from peptide page)
 # ─────────────────────────────────────────────────────────────
-if "prot_df" in st.session_state:
-    st.info("📂 Data restored from session state")
-    df = st.session_state.prot_df
-    c1 = st.session_state.prot_c1
-    c2 = st.session_state.prot_c2
-    sp_col = st.session_state.prot_sp_col
-    pg_col = st.session_state.prot_pg_col
-    sp_counts = st.session_state.prot_sp_counts
-    
-    # Skip file upload and go to summary
-    st.success("✅ Protein data loaded!")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("**Condition 1**", f"{len(c1)} reps")
-        st.write(", ".join(c1))
-    with col2:
-        st.metric("**Condition 2**", f"{len(c2)} reps")
-        st.write(", ".join(c2))
-    
-    st.info(f"**Species** → `{sp_col}` | **Protein Group** → `{pg_col}`")
-    
-    if sp_counts is not None:
-        st.markdown("### 📊 Proteins by Species & Condition")
-        st.dataframe(sp_counts, hide_index=True, use_container_width=True)
-    
-    st.markdown("---")
-    st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
-    st.stop()  # ← Stop here, don't re-upload
-
-# ─── Otherwise, proceed with file upload ───
-with st.container():
-    st.markdown('<div class="card"><div class="upload-area">...')
-    uploaded_file = st.file_uploader(...)
-
-if not uploaded_file:
-    st.stop()
-
-# ... rest of protein page code ...
+.
 
 # ─────────────────────────────────────────────────────────────
 # Detect Species Column Function
@@ -185,10 +147,45 @@ def load_and_parse(file):
             df = df.drop(columns=["name"])
     return df
 
-df = load_and_parse(uploaded_file)
-st.session_state.df = df
-st.success(f"✅ Data imported — {len(df):,} proteins")
+if "prot_df" in st.session_state:
+    st.info("📂 Data restored from session state")
+    df = st.session_state.prot_df
+    c1 = st.session_state.prot_c1
+    c2 = st.session_state.prot_c2
+    sp_col = st.session_state.prot_sp_col
+    pg_col = st.session_state.prot_pg_col
+    sp_counts = st.session_state.prot_sp_counts
+    
+    # Skip file upload and go to summary
+    st.success("✅ Protein data loaded!")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("**Condition 1**", f"{len(c1)} reps")
+        st.write(", ".join(c1))
+    with col2:
+        st.metric("**Condition 2**", f"{len(c2)} reps")
+        st.write(", ".join(c2))
+    
+    st.info(f"**Species** → `{sp_col}` | **Protein Group** → `{pg_col}`")
+    
+    if sp_counts is not None:
+        st.markdown("### 📊 Proteins by Species & Condition")
+        st.dataframe(sp_counts, hide_index=True, use_container_width=True)
+    
+    st.markdown("---")
+    st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
+    st.stop()  # ← Stop here, don't re-upload
 
+# ─── Otherwise, proceed with file upload ───
+with st.container():
+    st.markdown('<div class="card"><div class="upload-area">...')
+    uploaded_file = st.file_uploader(...)
+
+if not uploaded_file:
+    st.stop()
+
+# ... rest of protein page code ..
 # ─────────────────────────────────────────────────────────────
 # SINGLE UNIFIED TABLE — 100% WORKING
 # ─────────────────────────────────────────────────────────────
