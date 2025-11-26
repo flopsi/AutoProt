@@ -8,7 +8,74 @@ from pandas.api.types import is_numeric_dtype
 # ─────────────────────────────────────────────────────────────
 # Check if we already have data in session state (coming back from peptide page)
 # ─────────────────────────────────────────────────────────────
-.
+# ─────────────────────────────────────────────────────────────
+# CHECK IF DATA EXISTS IN SESSION (coming back from peptide page)
+# ─────────────────────────────────────────────────────────────
+if "prot_df" in st.session_state:
+    st.info("📂 **Data restored from session state** — No need to re-upload")
+    
+    df = st.session_state.prot_df
+    c1 = st.session_state.prot_c1
+    c2 = st.session_state.prot_c2
+    sp_col = st.session_state.prot_sp_col
+    pg_col = st.session_state.prot_pg_col
+    sp_counts = st.session_state.prot_sp_counts
+    
+    st.success("✅ Protein data loaded!")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("**Condition 1**", f"{len(c1)} reps")
+        st.write(", ".join(c1))
+    with col2:
+        st.metric("**Condition 2**", f"{len(c2)} reps")
+        st.write(", ".join(c2))
+    
+    st.info(f"**Species** → `{sp_col}` | **Protein Group** → `{pg_col}`")
+    
+    if sp_counts is not None and len(sp_counts) > 0:
+        st.markdown("### 📊 Proteins by Species & Condition")
+        st.dataframe(sp_counts, hide_index=True, use_container_width=True)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            chart = sp_counts[["species", "c1", "c2"]].set_index("species")
+            st.bar_chart(chart)
+        with col2:
+            st.write("**Summary:**")
+            for _, r in sp_counts.iterrows():
+                st.write(f"- **{r['species']}**: {r['total']} total | C1: {r['c1']} | C2: {r['c2']} | Both: {r['both']}")
+    
+    st.markdown("---")
+    st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
+    st.stop()
+
+
+# ─────────────────────────────────────────────────────────────
+# NORMAL FILE UPLOAD FLOW (if no data in session OR after restart)
+# ─────────────────────────────────────────────────────────────
+st.markdown("### 📤 Upload Protein Data")
+
+with st.container():
+    st.markdown('<div class="card"><div class="upload-area"><div style="font-size:64px; opacity:0.5; margin-bottom:20px;">📤</div><div style="font-size:16px; color:#54585A; margin-bottom:10px;"><strong>Drag and drop your file here</strong></div><div style="font-size:13px; color:#54585A; opacity:0.7;">Supports .csv, .tsv, .txt</div></div></div>', unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([3, 1, 1])
+    with col1:
+        uploaded_file = st.file_uploader("", type=["csv","tsv","txt"], label_visibility="collapsed", key="prot_upload")
+    with col2:
+        skip_upload = st.button("⏭️ Skip", help="Skip protein upload", key="skip_prot")
+    with col3:
+        st.empty()  # Spacer
+
+if skip_upload:
+    st.session_state["skip_prot"] = True
+    st.info("⏭️ Protein upload skipped")
+    st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
+    st.stop()
+
+if not uploaded_file:
+    st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
+    st.stop()
 
 # ─────────────────────────────────────────────────────────────
 # Detect Species Column Function
