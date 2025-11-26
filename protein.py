@@ -235,25 +235,7 @@ st.success("Data import complete! Ready for **Module 2: Data Quality**")
 st.markdown("---")
 
 # Main navigation buttons
-col1, col2, col3= st.columns([2,2,2])
 
-with col1:
-    if st.button("Protein Upload",type="secondary" use_container_width=True):
-        st.switch_page("app.py")
-        
-with col2:
-    if st.button("Restart Analysis",type="secondary", key="fixed_restart"):
-        st.session_state.clear()
-        st.rerun()
-
-with col3:
-    if st.button("Data Quality", type="secondary", use_container_width=True):
-        if "df" in st.session_state or "df_peptide" in st.session_state:
-            st.switch_page("page_4.py")
-        else:
-            st.error("Please upload data first")
-            st.stop()
-            st.markdown("</div>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
 # Ready
