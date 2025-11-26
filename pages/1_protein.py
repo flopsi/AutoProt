@@ -2,7 +2,6 @@
 import streamlit as st
 import pandas as pd
 import io
-from shared import restart_button, debug
 import plotly.express as px
 from shared import restart_button, get_protein_file, set_protein_file
 
