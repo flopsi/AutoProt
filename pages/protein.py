@@ -117,11 +117,21 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
-# Upload
+# NORMAL FILE UPLOAD FLOW (if no data in session)
 # ─────────────────────────────────────────────────────────────
 with st.container():
     st.markdown('<div class="card"><div class="upload-area"><div style="font-size:64px; opacity:0.5; margin-bottom:20px;">📤</div><div style="font-size:16px; color:#54585A; margin-bottom:10px;"><strong>Drag and drop your file here</strong></div><div style="font-size:13px; color:#54585A; opacity:0.7;">Supports .csv, .tsv, .txt</div></div></div>', unsafe_allow_html=True)
-    uploaded_file = st.file_uploader("", type=["csv","tsv","txt"], label_visibility="collapsed")
+    
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        uploaded_file = st.file_uploader("", type=["csv","tsv","txt"], label_visibility="collapsed", key="prot_upload")
+    with col2:
+        skip_upload = st.button("⏭️ Skip", help="Skip protein upload", key="skip_prot")
+
+if skip_upload:
+    st.info("⏭️ Protein upload skipped")
+    st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
+    st.stop()
 
 if not uploaded_file:
     st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
