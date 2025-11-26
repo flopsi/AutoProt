@@ -9,6 +9,11 @@ def ss(key, default=None):
         st.session_state[key] = default
     return st.session_state[key]
 
+# Set defaults on first load
+ss("prot_pg_col", ss("prot_pg_col", "Not selected yet"))
+ss("prot_sp_col", ss("prot_sp_col", "Not found"))
+
+
 st.set_page_config(page_title="Protein Import", layout="wide")
 debug("Protein Import page started")
 
@@ -97,16 +102,37 @@ sp_col = next((c for c in df.columns if c not in c1+c2 and df[c].astype(str).str
 if sp_col != "Not found":
     df["Species"] = df[sp_col].astype(str).str.upper().apply(lambda x: next((s for s in species_list if s in x), "Other"))
 
-# Save
-# Save everything
+# ====================== FINAL SAFE SAVE ======================
+debug("Saving final data to session state...")
+
+# Always save these — they are guaranteed to exist
 ss("prot_df", df)
 ss("prot_c1", c1)
 ss("prot_c2", c2)
-ss("prot_pg_col", pg_col)
-ss("prot_sp_col", sp_col)
 ss("reconfig_prot", False)
 
-st.success("Protein data processed and cached!")
+# Safe save for optional columns
+ss("prot_pg_col", pg_col if 'pg_col' in locals() and pg_col else "Not selected")
+ss("prot_sp_col", sp_col if 'sp_col' in locals() and sp_col != "Not found" else "Not found")
+
+st.success("All data cached successfully!")
+
+# Only save pg_col if user has selected one
+if 'pg_col' in locals() and pg_col is not None:
+    ss("prot_pg_col", pg_col)
+    debug("Saved Protein Group column", pg_col)
+else:
+    ss("prot_pg_col", "Not selected yet")
+    debug("Protein Group column not selected yet")
+
+# Same for species
+if 'sp_col' in locals() and sp_col != "Not found":
+    ss("prot_sp_col", sp_col)
+    debug("Saved species column", sp_col)
+else:
+    ss("prot_sp_col", "Not found")
+
+st.success("Protein data successfully cached!")
 
 # Final metrics
 col1, col2 = st.columns(2)
