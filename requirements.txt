@@ -1,4 +1,4 @@
-alphastats
+
 matplotlib
 scipy
 anndata>=0.9.1
