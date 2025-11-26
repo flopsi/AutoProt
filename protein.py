@@ -316,10 +316,8 @@ if species_col_extracted and len(unique_species) > 1:
         
         species_counts.append({
             "Species": sp,
-            "Cond1 (≥2/3 >1)": valid_cond1.sum(),
-            "Cond2 (≥2/3 >1)": valid_cond2.sum(),
-            "Both": (valid_cond1 & valid_cond2).sum(),
-            "Total": len(sp_df)
+            "Cond1": valid_cond1.sum(),
+            "Cond2": valid_cond2.sum(),
         })
     
     species_df = pd.DataFrame(species_counts)
