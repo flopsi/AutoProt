@@ -10,10 +10,6 @@ def ss(key, default=None):
         st.session_state[key] = default
     return st.session_state[key]
 
-# Then use:
-if ss("pept_df") is not None and not ss("reconfig_pept", False):
-    # restore
-
 
 # ====================== BRANDING ======================
 st.markdown("""
@@ -37,13 +33,13 @@ st.markdown('<div class="nav"><div class="nav-item active">Peptide Import</div><
 st.markdown('<div class="module-header"><div class="module-icon">Peptide</div><div><h2 style="margin:0;color:white;">Peptide Data Import</h2><p style="margin:5px 0 0;opacity:0.9;">Auto-detect species • Equal replicates • Set Peptide Group as index</p></div></div>', unsafe_allow_html=True)
 
 # ====================== RESTORE FROM CACHE ======================
-if "prot_df" in st.session_state and not st.session_state.get("reconfig_prot", False):
-    df = st.session_state.prot_df
-    c1 = st.session_state.prot_c1
-    c2 = st.session_state.prot_c2
+if ss("pept_df") is not None and not ss("reconfig_pept", False):
+    df = st.session_state.pep_df
+    c1 = st.session_state.pep_c1
+    c2 = st.session_state.pep_c2
     peptide_columns = st.session_state.peptide_columns
-    sp_col = st.session_state.prot_sp_col
-    sp_counts = st.session_state.prot_sp_counts
+    sp_col = st.session_state.pep_sp_col
+    sp_counts = st.session_state.pep_sp_counts
 
     st.success("Peptide data loaded from cache")
     col1, col2, col3 = st.columns([2,2,1])
