@@ -14,11 +14,7 @@ def ss(key, default=None):
 if ss("pept_df") is not None and not ss("reconfig_pept", False):
     # restore
 
-    # And save with:
-ss("pept_df", df)
-ss("pept_c1", c1)
-ss("pept_peptide_col", peptide_col)
-# etc.
+
 # ====================== BRANDING ======================
 st.markdown("""
 <style>
@@ -149,19 +145,22 @@ if sp_col != "Not found":
 else:
     sp_counts = pd.DataFrame([{"Species":"All","A":0,"B":0,"Total":len(df)}])
 
-# ====================== SAVE TO GLOBAL CACHE ======================
-st.session_state.update({
-    "prot_df": df,
-    "prot_c1": c1,
-    "prot_c2": c2,
-    "prot_peptide_columns": peptide_columns,
-    "prot_sp_col": sp_col,
-    "prot_sp_counts": sp_counts,
-    "reconfig_prot": False,
-})
+# ====================== FINAL SAVE TO CACHE ======================
+st.success("Peptide processing complete! Data cached for downstream use.")
 
-st.success("Peptide data cached and ready for downstream modules!")
-st.json({k: type(v).__name__ for k, v in st.session_state.items() if k.startswith("prot_")}, expanded=False)
+# ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
+# SAVE BLOCK FOR PEPTIDE PAGE
+ss("pept_df", df)                     # final peptide dataframe
+ss("pept_c1", c1)                     # ["A1","A2",...]
+ss("pept_c2", c2)                     # ["B1","B2",...]
+ss("pept_peptide_col", peptide_col)   # name of the sequence column
+ss("pept_pg_col", pg_col)             # Protein Group column (if present)
+ss("pept_sp_col", sp_col or "Not found")
+ss("pept_sp_counts", sp_counts)
+ss("reconfig_pept", False)
+# ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
+
+restart_button()
 
 restart_button()
 st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
