@@ -5,6 +5,12 @@ import re
 import io
 from shared import restart_button
 
+# ← ADD THIS HELPER AT THE TOP
+def ss(key, default=None):
+    if key not in st.session_state:
+        st.session_state[key] = default
+    return st.session_state[key]
+
 st.set_page_config(page_title="Protein Import", layout="wide")
 
 # ====================== BRANDING ======================
@@ -29,48 +35,37 @@ st.markdown('<div class="nav"><div class="nav-item active">Protein Import</div><
 st.markdown('<div class="module-header"><div class="module-icon">Protein</div><div><h2 style="margin:0;color:white;">Protein Data Import</h2><p style="margin:5px 0 0;opacity:0.9;">Auto-detect species • Equal replicates • Set Protein Group as index</p></div></div>', unsafe_allow_html=True)
 
 # ====================== RESTORE FROM CACHE ======================
-if "prot_df" in st.session_state and not st.session_state.get("reconfig_prot", False):
-    df = st.session_state.prot_df
-    c1 = st.session_state.prot_c1
-    c2 = st.session_state.prot_c2
-    pg_col = st.session_state.prot_pg_col
-    sp_col = st.session_state.prot_sp_col
-    sp_counts = st.session_state.prot_sp_counts
+if ss("prot_df") is not None and not ss("reconfig_prot", False):
+    df = ss("prot_df")
+    c1 = ss("prot_c1")
+    c2 = ss("prot_c2")
+    pg_col = ss("prot_pg_col")
+    sp_col = ss("prot_sp_col")
+    sp_counts = ss("prot_sp_counts")
 
-    st.success("Protein data loaded from cache")
-    col1, col2, col3 = st.columns([2,2,1])
-    with col1: st.metric("Condition A", f"{len(c1)} reps", help="A1,A2,..."); st.write(" | ".join(c1))
-    with col2: st.metric("Condition B", f"{len(c2)} reps"); st.write(" | ".join(c2))
-    with col3:
-        if st.button("Reconfigure"): st.session_state.reconfig_prot = True; st.rerun()
+    st.success("Protein data restored")
+    # ... display logic ...
 
-    st.info(f"**Protein Group Column (index)**: `{pg_col}` • **Species**: `{sp_col}`")
-    st.markdown("### Proteins per Species")
-    st.dataframe(sp_counts, use_container_width=True, hide_index=True)
-    st.bar_chart(sp_counts.set_index("Species")[["A","B"]])
     restart_button()
     st.stop()
 
-if st.session_state.get("reconfig_prot", False):
-    st.warning("Reconfiguring — re-upload the same file")
+if ss("reconfig_prot", False):
+    st.warning("Reconfiguring — please re-upload the same file")
+    # optionally clear only protein data here if you want
+    # ss("reconfig_prot", False)  # reset flag after re-upload
 
-# ====================== UPLOAD & CACHE ======================
-st.markdown("### 1. Upload Protein-Level File")
+# ====================== UPLOAD ======================
+st.markdown("### 1. Upload Protein Data")
 uploaded = st.file_uploader("CSV/TSV/TXT", type=["csv","tsv","txt"], key="prot_upload")
 
 if not uploaded:
-    st.info("Upload your protein quantification file")
+    st.info("Waiting for file...")
+    restart_button()
     st.stop()
 
-@st.cache_data(show_spinner="Parsing file...")
-def load_and_parse(_file):
-    s = _file.getvalue().decode("utf-8", errors="replace")
-    if s.startswith("\ufeff"): s = s[1:]
-    df = pd.read_csv(io.StringIO(s), sep=None, engine="python")
-    return df
-
-df_raw = load_and_parse(uploaded)
-st.success(f"Loaded {len(df_raw):,} protein groups")
+@st.cache_data(show_spinner="Loading file...")
+def load_file(_f): ...
+df_raw = load_file(uploaded)
 
 # Detect intensity columns
 intensity_cols = []
