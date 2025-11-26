@@ -227,34 +227,34 @@ with c2:
 
 st.info(f"**Species** → `{species_col}` | **Protein Group** → `{protein_col}`")
 
-# ── Add species-level analysis if multiple species ──
-if df[species_col].nunique() > 1:
+# Detect species column automatically
+species_source_col, species_col, unique_species = detect_species_column_and_extract(df)
+
+if species_col and len(unique_species) > 1:
     st.markdown("### 📊 Unique Proteins by Species & Condition")
     
-    # Calculate unique proteins per species per condition
-    species_counts = []
+    # Convert intensity columns to numeric
+    for col in cond1_cols + cond2_cols:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
     
-    for sp in sorted(df[species_col].unique()):
+    species_counts = []
+    for sp in sorted(unique_species):
         sp_df = df[df[species_col] == sp]
         
-        # Count proteins with ≥1 valid (>0) value in each condition
-        # Iterate over all replicates to find if ANY replicate has signal
-        cond1_proteins = (sp_df[cond1_cols] > 0).any(axis=1).sum()
-        cond2_proteins = (sp_df[cond2_cols] > 0).any(axis=1).sum()
-        both_proteins = ((sp_df[cond1_cols] > 0).any(axis=1) & 
-                         (sp_df[cond2_cols] > 0).any(axis=1)).sum()
-        total_proteins = len(sp_df)
+        # ≥2/3 replicates with intensity >1
+        valid_cond1 = (sp_df[cond1_cols] > 1).sum(axis=1) >= 2
+        valid_cond2 = (sp_df[cond2_cols] > 1).sum(axis=1) >= 2
         
         species_counts.append({
             "Species": sp,
-            f"Cond1 ({', '.join(cond1_cols)})": cond1_proteins,
-            f"Cond2 ({', '.join(cond2_cols)})": cond2_proteins,
-            "In Both": both_proteins,
-            "Total": total_proteins
+            "Cond1 (≥2/3 >1)": valid_cond1.sum(),
+            "Cond2 (≥2/3 >1)": valid_cond2.sum(),
+            "Both": (valid_cond1 & valid_cond2).sum(),
+            "Total": len(sp_df)
         })
     
-    species_df = pd.DataFrame(species_counts)
-    st.dataframe(species_df, use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(species_counts), hide_index=True)
+
     
     # Visualization
     col1, col2 = st.columns(2)
