@@ -8,6 +8,59 @@ from pandas.api.types import is_numeric_dtype
 st.set_page_config(page_title="Protein Import", layout="wide")
 
 # ─────────────────────────────────────────────────────────────
+# CHECK IF DATA EXISTS IN SESSION
+# ─────────────────────────────────────────────────────────────
+if "prot_df" in st.session_state and not st.session_state.get("allow_reconfigure_prot", False):
+    st.info("📂 **Data restored from session state**")
+    
+    df = st.session_state.prot_df
+    c1 = st.session_state.prot_c1
+    c2 = st.session_state.prot_c2
+    sp_col = st.session_state.prot_sp_col
+    pg_col = st.session_state.prot_pg_col
+    sp_counts = st.session_state.prot_sp_counts
+    
+    st.success("✅ Protein data loaded!")
+    
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col1:
+        st.metric("**Condition 1**", f"{len(c1)} reps")
+        st.write(", ".join(c1))
+    with col2:
+        st.metric("**Condition 2**", f"{len(c2)} reps")
+        st.write(", ".join(c2))
+    with col3:
+        if st.button("🔧 Reconfigure", key="reconfigure_prot"):
+            st.session_state["allow_reconfigure_prot"] = True
+            st.rerun()
+    
+    st.info(f"**Species** → `{sp_col}` | **Protein Group** → `{pg_col}`")
+    
+    if sp_counts is not None and len(sp_counts) > 0:
+        st.markdown("### 📊 Proteins by Species & Condition")
+        st.dataframe(sp_counts, hide_index=True, use_container_width=True)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            chart = sp_counts[["species", "c1", "c2"]].set_index("species")
+            st.bar_chart(chart)
+        with col2:
+            st.write("**Summary:**")
+            for _, r in sp_counts.iterrows():
+                st.write(f"- **{r['species']}**: {r['total']} total | C1: {r['c1']} | C2: {r['c2']} | Both: {r['both']}")
+    
+    st.markdown("---")
+    st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
+    
+    # Restart button on restored page
+    st.markdown("""<style>.fixed-restart {position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 999; width: 300px;}</style><div class="fixed-restart">""", unsafe_allow_html=True)
+    if st.button("🔄 Restart Analysis", use_container_width=True, key="restart_prot"):
+        st.session_state.clear()
+        st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
+    st.stop()
+
+# ─────────────────────────────────────────────────────────────
 # Detect Species Function
 # ─────────────────────────────────────────────────────────────
 def detect_species_column_and_extract(df):
