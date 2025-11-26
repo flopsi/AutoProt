@@ -132,19 +132,39 @@ if sp_col != "Not found":
 else:
     sp_counts = pd.DataFrame([{"Species":"All","A":0,"B":0,"Total":len(df)}])
 
-# ====================== SAVE TO GLOBAL CACHE ======================
-st.session_state.update({
-    "prot_df": df,
-    "prot_c1": c1,
-    "prot_c2": c2,
-    "prot_pg_col": pg_col,
-    "prot_sp_col": sp_col,
-    "prot_sp_counts": sp_counts,
-    "reconfig_prot": False,
-})
+# ====================== FINAL SAVE TO CACHE ======================
+st.success("All processing complete! Protein data is cached and ready for downstream modules.")
 
-st.success("Protein data cached and ready for downstream modules!")
-st.json({k: type(v).__name__ for k, v in st.session_state.items() if k.startswith("prot_")}, expanded=False)
+# ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
+# PUT THIS BLOCK RIGHT HERE – AT THE VERY END OF THE PAGE
+ss
+ss("prot_df", df)                     # the final processed dataframe
+ss("prot_c1", c1)                     # list like ["A1", "A2", ...]
+ss("prot_c2", c2)                     # list like ["B1", "B2", ...]
+ss("prot_pg_col", pg_col)             # name of the Protein Group column (now index)
+ss("prot_sp_col", sp_col)             # species column name (or "Not found")
+ss("prot_sp_counts", sp_counts)       # dataframe with species statistics
+ss("reconfig_prot", False)            # reset the reconfigure flag
+# ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
 
+# Now show the final summary again (optional but nice)
+col1, col2 = st.columns(2)
+with col1:
+    st.metric("Condition A", ", ".join(c1))
+with col2:
+    st.metric("Condition B", ", ".join(c2))
+
+if sp_col != "Not found":
+    st.markdown("### Proteins per Species")
+    st.dataframe(sp_counts, use_container_width=True, hide_index=True)
+    st.bar_chart(sp_counts.set_index("Species")[["A", "B"]])
+
+# Final buttons & footer
 restart_button()
-st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
+
+st.markdown("""
+<div class="footer">
+    <strong>Proprietary & Confidential | For Internal Use Only</strong><br>
+    © 2024 Thermo Fisher Scientific Inc. All rights reserved.
+</div>
+""", unsafe_allow_html=True)
