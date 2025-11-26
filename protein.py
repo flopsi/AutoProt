@@ -4,11 +4,11 @@ import pandas as pd
 import numpy as np
 import io
 import re
-from pandas.api.types import is_numeric_dtype   # ← THIS WAS MISSING
+from pandas.api.types import is_numeric_dtype
 
-import re
-import pandas as pd
-
+# ─────────────────────────────────────────────────────────────
+# Detect Species Column Function
+# ─────────────────────────────────────────────────────────────
 def detect_species_column_and_extract(df):
     """
     Automatically detect species column and extract species from strings.
@@ -70,9 +70,10 @@ def detect_species_column_and_extract(df):
         return matches[0] if matches else None
     
     df['_extracted_species'] = df[species_col].apply(extract_first_species)
-    unique_species = df['_extracted_species'].dropna().unique().tolist()
+    unique_species = sorted(df['_extracted_species'].dropna().unique().tolist())
     
     return species_col, '_extracted_species', unique_species
+
 
 # ─────────────────────────────────────────────────────────────
 # Thermo Fisher CSS
@@ -113,16 +114,11 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-
 # ─────────────────────────────────────────────────────────────
 # Upload
 # ─────────────────────────────────────────────────────────────
-import streamlit as st
-import pandas as pd
-from io import StringIO
-
 with st.container():
-    st.markdown('<div class="card"><div class="upload-area"><div style="font-size:64px; opacity:0.5; margin-bottom:20px;">Upload</div><div style="font-size:16px; color:#54585A; margin-bottom:10px;"><strong>Drag and drop your file here</strong></div><div style="font-size:13px; color:#54585A; opacity:0.7;">Supports .csv, .tsv, .txt</div></div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="card"><div class="upload-area"><div style="font-size:64px; opacity:0.5; margin-bottom:20px;">📤</div><div style="font-size:16px; color:#54585A; margin-bottom:10px;"><strong>Drag and drop your file here</strong></div><div style="font-size:13px; color:#54585A; opacity:0.7;">Supports .csv, .tsv, .txt</div></div></div>', unsafe_allow_html=True)
     uploaded_file = st.file_uploader("", type=["csv","tsv","txt"], label_visibility="collapsed")
 
 if not uploaded_file:
@@ -133,14 +129,14 @@ if not uploaded_file:
 # Load & Parse — FIXED numeric conversion
 # ─────────────────────────────────────────────────────────────
 @st.cache_data
-@st.cache_data
 def load_and_parse(file):
     content = file.getvalue().decode("utf-8", errors="replace")
-    if content.startswith("\ufeff"): content = content[1:]
+    if content.startswith("\ufeff"): 
+        content = content[1:]
     df = pd.read_csv(io.StringIO(content), sep=None, engine="python", dtype=str)
     intensity_cols = [c for c in df.columns if c not in ["pg", "name", "Protein.Group", "PG.ProteinNames", "Accession", "Species"]]
     for col in intensity_cols:
-        df[col] = pd.to_numeric(df[col].str.replace(",", ""), errors="coerce")
+        df[col] = pd.to_numeric(df[col].str.replace(",", "").replace("#NUM!", ""), errors="coerce")
     if "name" in df.columns:
         split = df["name"].str.split(",", n=1, expand=True)
         if split.shape[1] == 2:
@@ -151,14 +147,13 @@ def load_and_parse(file):
 
 df = load_and_parse(uploaded_file)
 st.session_state.df = df
-st.success(f"Data imported — {len(df):,} proteins")
+st.success(f"✅ Data imported — {len(df):,} proteins")
 
 # ─────────────────────────────────────────────────────────────
 # SINGLE UNIFIED TABLE — 100% WORKING
 # ─────────────────────────────────────────────────────────────
-# ── SINGLE UNIFIED TABLE — FINAL FIXED VERSION ──
 with st.container():
-    st.subheader("Column Assignment & Renaming")
+    st.subheader("⚙️ Column Assignment & Renaming")
 
     # Force intensity columns to float — but keep metadata as object
     intensity_cols = [c for c in df.columns if c not in ["pg", "name", "Protein.Group", "PG.ProteinNames", "Accession", "Species"]]
@@ -171,7 +166,7 @@ with st.container():
         if col in df.columns:
             df[col] = df[col].astype("string")
 
-    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    numeric_cols = [c for c in df.columns if is_numeric_dtype(df[c])]
 
     # Auto-detect Condition 1
     ratio_groups = {}
@@ -250,19 +245,19 @@ with st.container():
     errors = []
 
     if len(cond1_cols) == 0:
-        errors.append("Condition 1 must have at least one replicate")
+        errors.append("❌ Condition 1 must have at least one replicate")
     if len(cond2_cols) == 0:
-        errors.append("Condition 2 must have at least one replicate")
+        errors.append("❌ Condition 2 must have at least one replicate")
 
     if len(species_cols) == 0:
-        errors.append("Exactly one Species column must be selected")
+        errors.append("❌ Exactly one Species column must be selected")
     elif len(species_cols) > 1:
-        errors.append("Only one Species column allowed — uncheck the others")
+        errors.append("❌ Only one Species column allowed — uncheck the others")
 
     if len(protein_cols) == 0:
-        errors.append("Exactly one Protein Group column must be selected")
+        errors.append("❌ Exactly one Protein Group column must be selected")
     elif len(protein_cols) > 1:
-        errors.append("Only one Protein Group column allowed")
+        errors.append("❌ Only one Protein Group column allowed")
 
     if errors:
         for e in errors:
@@ -282,7 +277,7 @@ st.session_state.update({
     "df": df
 })
 
-st.success("All assignments & renaming applied!")
+st.success("✅ All assignments & renaming applied!")
 
 c1, c2 = st.columns(2)
 with c1:
@@ -294,10 +289,12 @@ with c2:
 
 st.info(f"**Species** → `{species_col}` | **Protein Group** → `{protein_col}`")
 
-# Detect species column automatically
-species_source_col, species_col, unique_species = detect_species_column_and_extract(df)
+# ─────────────────────────────────────────────────────────────
+# Detect Species & Count Proteins Per Condition
+# ─────────────────────────────────────────────────────────────
+species_source_col, species_col_extracted, unique_species = detect_species_column_and_extract(df)
 
-if species_col and len(unique_species) > 1:
+if species_col_extracted and len(unique_species) > 1:
     st.markdown("### 📊 Unique Proteins by Species & Condition")
     
     # Convert intensity columns to numeric
@@ -305,8 +302,8 @@ if species_col and len(unique_species) > 1:
         df[col] = pd.to_numeric(df[col], errors='coerce')
     
     species_counts = []
-    for sp in sorted(unique_species):
-        sp_df = df[df[species_col] == sp]
+    for sp in unique_species:
+        sp_df = df[df[species_col_extracted] == sp]
         
         # ≥2/3 replicates with intensity >1
         valid_cond1 = (sp_df[cond1_cols] > 1).sum(axis=1) >= 2
@@ -320,41 +317,27 @@ if species_col and len(unique_species) > 1:
             "Total": len(sp_df)
         })
     
-    st.dataframe(pd.DataFrame(species_counts), hide_index=True)
+    species_df = pd.DataFrame(species_counts)
+    st.dataframe(species_df, hide_index=True, use_container_width=True)
 
-    
-    # Visualization
+    # ── Visualization ──
     col1, col2 = st.columns(2)
+    
     with col1:
-        st.bar_chart(
-            species_df.set_index("Species")[
-                [f"Cond1 ({', '.join(cond1_cols)})", 
-                 f"Cond2 ({', '.join(cond2_cols)})"]
-            ]
-        )
+        chart_data = species_df[["Species", "Cond1 (≥2/3 >1)", "Cond2 (≥2/3 >1)"]].set_index("Species")
+        st.bar_chart(chart_data)
+    
     with col2:
         st.write("**Summary:**")
         for idx, row in species_df.iterrows():
-            st.write(f"- **{row['Species']}**: {row['Total']} total → "
-                    f"Cond1: {row[f'Cond1 ({', '.join(cond1_cols)})']}, "
-                    f"Cond2: {row[f'Cond2 ({', '.join(cond2_cols)})']}")
+            st.write(
+                f"- **{row['Species']}**: {row['Total']} total\n"
+                f"  - Cond1: {row['Cond1 (≥2/3 >1)']} | Cond2: {row['Cond2 (≥2/3 >1)']} | Both: {row['Both']}"
+            )
 
-st.markdown("</div>", unsafe_allow_html=True)
-
-
-
-# ─────────────────────────────────────────────────────────────
-# FIXED NAVIGATION & RESTART — HIDDEN BUTTON NOW TRULY HIDDEN
-# ─────────────────────────────────────────────────────────────
 st.markdown("---")
 
-# Main navigation buttons
-
-
 # ─────────────────────────────────────────────────────────────
-# Ready
+# Footer
 # ─────────────────────────────────────────────────────────────
-
 st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
-
-
