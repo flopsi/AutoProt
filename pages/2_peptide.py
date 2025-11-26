@@ -3,16 +3,22 @@ import streamlit as st
 import pandas as pd
 import io
 from shared import restart_button
+# Add this at the very top of your file (after imports)
 
-# ====================== DEBUG MODE ======================
-DEBUG = True  # ← Set to False before production!
+from datetime import datetime
 
-def debug(*args, **kwargs):
-    if DEBUG:
-        st.sidebar.write("**DEBUG:**", *args, **kwargs)
+# ====================== UNIVERSAL DEBUG LOGGER ======================
+def log(msg, data=None):
+    """Shows debug info in the main app — visible on ALL deployments"""
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    st.write(f"<small style='color:#666;'>[{timestamp}] {msg}</small>", unsafe_allow_html=True)
+    if data is not None:
+        with st.expander(f"Details → {msg}", expanded=False):
+            st.code(data, language="python")
 
-debug("Protein Import page loaded")
-debug("Session state keys:", list(st.session_state.keys()))
+# Optional: turn off in production
+DEBUG = True  # ← Set to False when going live
+
 
 # ====================== SAFE SESSION STATE ======================
 def ss(key, default=None):
