@@ -5,7 +5,7 @@ import re
 import io
 from shared import restart_button
 
-st.set_page_config(page_title = "Peptide Import", layout="wide",module_icon = "Peptide")
+st.set_page_config(page_title = "Peptide Import", layout="wide")
 
 # ====================== BRANDING ======================
 st.markdown("""
