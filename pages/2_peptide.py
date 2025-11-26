@@ -33,7 +33,7 @@ if "prot_df" in st.session_state and not st.session_state.get("reconfig_prot", F
     df = st.session_state.prot_df
     c1 = st.session_state.prot_c1
     c2 = st.session_state.prot_c2
-    peptide_columns = st.session_state.prot_columns
+    peptide_columns = st.session_state.peptide_columns
     sp_col = st.session_state.prot_sp_col
     sp_counts = st.session_state.prot_sp_counts
 
