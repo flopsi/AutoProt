@@ -235,20 +235,20 @@ st.success("Data import complete! Ready for **Module 2: Data Quality**")
 st.markdown("---")
 
 # Main navigation buttons
-col1, col2, col3, col4 = st.columns([1.2, 1.2, 1.2, 1.8])
+col1, col2, col3= st.columns([2,2,2,2])
 
 with col1:
     if st.button("Protein Upload", use_container_width=True):
-        st.Page("app.py")
+        st.switch_page("app.py")
 
 with col2:
     if st.button("Peptide Upload", use_container_width=True):
-        st.Navigation("Peptide_Import.py")
+        st.switch_page("page_3.py")
 
 with col3:
     if st.button("Data Quality", type="primary", use_container_width=True):
         if "df" in st.session_state or "df_peptide" in st.session_state:
-            st.Page("Data_Quality.py")
+            st.switch_page("page_4.py")
         else:
             st.error("Please upload data first")
             st.stop()
