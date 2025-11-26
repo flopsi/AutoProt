@@ -153,7 +153,12 @@ if st.session_state.get("debug_log"):
         if st.button("Clear Debug Log"):
             st.session_state.debug_log = []
             st.rerun()
-
+# ====================== GO TO ANALYSIS BUTTON ======================
+st.markdown("---")
+col_left, col_center, col_right = st.columns([1, 2, 1])
+with col_center:
+    if st.button("Go to Protein Exploratory Analysis", type="primary", use_container_width=True):
+        st.switch_page("pages/3_Protein_Analysis.py")
 restart_button()
 
 st.markdown("""
