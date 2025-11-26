@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import re
 import io
-from shared import def_button
+from shared import restart_button
 
 st.set_page_config(page_title="Protein Import", layout="wide")
 
@@ -48,7 +48,7 @@ if "prot_df" in st.session_state and not st.session_state.get("reconfig_prot", F
     st.markdown("### Proteins per Species")
     st.dataframe(sp_counts, use_container_width=True, hide_index=True)
     st.bar_chart(sp_counts.set_index("Species")[["A","B"]])
-    def_button()
+    restart_button()
     st.stop()
 
 if st.session_state.get("reconfig_prot", False):
@@ -151,5 +151,5 @@ st.session_state.update({
 st.success("Protein data cached and ready for downstream modules!")
 st.json({k: type(v).__name__ for k, v in st.session_state.items() if k.startswith("prot_")}, expanded=False)
 
-def_button()
+restart_button()
 st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
