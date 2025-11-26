@@ -4,6 +4,25 @@ import pandas as pd
 import io
 from shared import restart_button, debug
 import plotly.express as px
+from shared import restart_button, get_protein_file, set_protein_file
+
+# ←←← ONLY THIS PART IS DIFFERENT ←←←
+uploaded_file = get_protein_file()
+if uploaded_file is None:
+    uploaded_file = st.file_uploader("Upload Protein File", type=["csv","tsv","txt"])
+    if uploaded_file:
+        set_protein_file(uploaded_file)          # ← saves it forever
+        st.rerun()
+else:
+    st.success(f"Protein file ready: {uploaded_file.name}")
+
+# Load data exactly once
+@st.cache_data
+def load_df(bytes_data):
+    return pd.read_csv(io.BytesIO(bytes_data), sep=None, engine="python")
+
+df_raw = load_df(uploaded_file.getvalue())
+# ←←← rest of your code stays 100% the same ←←←
 
 def ss(key, default=None):
     if key not in st.session_state:
