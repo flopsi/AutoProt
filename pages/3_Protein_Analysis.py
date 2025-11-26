@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import numpay as np
 
 # === Load data from protein upload module ===
 if "prot_final_df" not in st.session_state:
