@@ -149,7 +149,7 @@ if st.session_state.get("debug_log"):
                 if data is not None:
                     st.code(data)
             else:
-                st.markdown(entry, unsafe_allow=True)
+                st.markdown(entry, unsafe_allow_html=True)
         if st.button("Clear Debug Log"):
             st.session_state.debug_log = []
             st.rerun()
