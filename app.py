@@ -32,8 +32,8 @@ st.set_page_config(page_title="autoProt", page_icon ="🧬")
 
 pages = {
     "Data Upload": [
-        st.Page("protein2.py", title="Upload Protein Data"),
-        st.Page("peptide2.py", title="Upload Peptide Data"),
+        st.Page("protein.py", title="Upload Protein Data"),
+        st.Page("peptide.py", title="Upload Peptide Data"),
     ],
     "Resources": [
         st.Page("learn.py", title="Learn about us"),
