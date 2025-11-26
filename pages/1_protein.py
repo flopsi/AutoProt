@@ -1,19 +1,43 @@
 # pages/1_Protein_Import.py
 import streamlit as st
 import pandas as pd
-import re
 import io
+from datetime import datetime
 from shared import restart_button
 
-# ← ADD THIS HELPER AT THE TOP
+# ====================== UNIVERSAL DEBUG LOGGER (ALWAYS VISIBLE) ======================
+def log_container = st.empty()  # We'll update this at the very end
+
+def log(msg, data=None):
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    line = f"<small style='color:#666; font-family:monospace;'>[{timestamp}] {msg}</small>"
+    if data is not None:
+        with st.expander(f"Details → {msg}", expanded=False):
+            st.code(data, language="text")
+        return f"{line} (click to expand)"
+    return line
+
+# Turn on/off debugging
+DEBUG = True  # Set to False before final production if desired
+
+def debug(msg, data=None):
+    if DEBUG:
+        st.session_state.setdefault("debug_log", []).append(log(msg, data))
+
+# Start logging
+st.session_state.setdefault("debug_log", [])
+debug("Protein Import page loaded")
+
+# ====================== SAFE SESSION STATE ======================
 def ss(key, default=None):
     if key not in st.session_state:
         st.session_state[key] = default
+        debug(f"Initialized session_state['{key}']", default)
     return st.session_state[key]
 
+# ====================== PAGE SETUP & BRANDING ======================
 st.set_page_config(page_title="Protein Import", layout="wide")
 
-# ====================== BRANDING ======================
 st.markdown("""
 <style>
     :root {--red:#E71316; --darkred:#A6192E; --gray:#54585A; --light:#E2E3E4;}
@@ -23,19 +47,21 @@ st.markdown("""
     .nav-item {padding:15px 25px; font-weight:500; color:var(--gray); border-bottom:3px solid transparent;}
     .nav-item.active {border-bottom:3px solid var(--red); color:var(--red);}
     .module-header {background:linear-gradient(90deg,var(--red),var(--darkred)); padding:30px; border-radius:8px; color:white; display:flex; align-items:center; gap:20px;}
-    .module-icon {width:60px; height:60px; background:rgba(255,255,255,0.2); border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:32px;}
-    .fixed-restart {position:fixed; bottom:20px; left:50%; transform:translateX(-50%); z-index:999; width:340px;}
+    .module-icon {width:60px;height:60px;background:rgba(255,255,255,0.2);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:32px;}
+    .fixed-restart {position:fixed; bottom:20px; left:50%; transform:translateX(-50%); z-index:9999; width:340px;}
     .stButton>button {background:var(--red)!important; color:white!important; border-radius:6px!important;}
     .footer {text-align:center; padding:40px; color:var(--gray); font-size:12px; border-top:1px solid var(--light); margin-top:80px;}
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="header"><h1>DIA Proteomics Pipeline</h1><p>Module 1 — Protein-Level Import</p></div>', unsafe_allow_html=True)
-st.markdown('<div class="nav"><div class="nav-item active">Protein Import</div><div class="nav-item">Peptide Import</div><div class="nav-item">Analysis</div></div>', unsafe_allow_html=True)
+st.markdown('<div class="header"><h1>DIA Proteomics Pipeline</h1><p>Module — Protein-Level Import</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="nav"><div class="nav-item">Peptide Import</div><div class="nav-item active">Protein Import</div><div class="nav-item">Analysis</div></div>', unsafe_allow_html=True)
 st.markdown('<div class="module-header"><div class="module-icon">Protein</div><div><h2 style="margin:0;color:white;">Protein Data Import</h2><p style="margin:5px 0 0;opacity:0.9;">Auto-detect species • Equal replicates • Set Protein Group as index</p></div></div>', unsafe_allow_html=True)
 
 # ====================== RESTORE FROM CACHE ======================
+debug("Checking for cached protein data...")
 if ss("prot_df") is not None and not ss("reconfig_prot", False):
+    debug("Cache HIT — restoring data")
     df = ss("prot_df")
     c1 = ss("prot_c1")
     c2 = ss("prot_c2")
@@ -43,73 +69,160 @@ if ss("prot_df") is not None and not ss("reconfig_prot", False):
     sp_col = ss("prot_sp_col")
     sp_counts = ss("prot_sp_counts")
 
-    st.success("Protein data restored")
-    # ... display logic ...
+    st.success("Protein data restored from cache")
+    debug("Restored successfully", f"Rows: {len(df)}, A: {c1}, B: {c2}")
 
+    col1, col2, col3 = st.columns([2, 2, 1])
+    with col1:
+        st.metric("**Condition A**", f"{len(c1)} replicates")
+        st.write(" | ".join(c1))
+    with col2:
+        st.metric("**Condition B**", f"{len(c2)} replicates")
+        st.write(" | ".join(c2))
+    with col3:
+        if st.button("Reconfigure", type="secondary"):
+            ss("reconfig_prot", True)
+            debug("Reconfigure requested")
+            st.rerun()
+
+    st.info(f"**Index**: `{pg_col}` • **Species column**: `{sp_col}`")
+    st.markdown("### Proteins Detected per Species")
+    st.dataframe(sp_counts, use_container_width=True, hide_index=True)
+    st.bar_chart(sp_counts.set_index("Species")[["A", "B"]])
     restart_button()
     st.stop()
 
 if ss("reconfig_prot", False):
-    st.warning("Reconfiguring — please re-upload the same file")
-    # optionally clear only protein data here if you want
-    # ss("reconfig_prot", False)  # reset flag after re-upload
+    st.warning("Reconfiguring — please upload the same file again")
+    debug("Reconfigure mode active")
 
-# ====================== UPLOAD ======================
-st.markdown("### 1. Upload Protein Data")
-uploaded = st.file_uploader("CSV/TSV/TXT", type=["csv","tsv","txt"], key="prot_upload")
+# ====================== 1. FILE UPLOAD ======================
+st.markdown("### 1. Upload Protein-Level File")
+uploaded_file = st.file_uploader(
+    "Drag & drop CSV/TSV/TXT (Spectronaut, DIA-NN, MaxQuant, FragPipe)",
+    type=["csv", "tsv", "txt"],
+    key="prot_upload"
+)
 
-if not uploaded:
-    st.info("Waiting for file...")
+if uploaded_file is None:
+    debug("No file uploaded yet")
+    st.info("Waiting for file upload...")
     restart_button()
     st.stop()
 
+debug("File uploaded", f"{uploaded_file.name} — {uploaded_file.size:,} bytes")
+
+# ====================== 2. SAFE FILE LOADER ======================
 @st.cache_data(show_spinner="Loading file...")
-def load_file(_f): ...
-df_raw = load_file(uploaded)
+def load_protein_file(file_obj):
+    debug("Entered load_protein_file()")
+    try:
+        content = file_obj.getvalue()
+        if len(content) == 0:
+            st.error("File is empty")
+            return None
+        text = content.decode("utf-8", errors="replace")
+        if text.startswith("\ufeff"):
+            text = text[1:]
+        df = pd.read_csv(io.StringIO(text), sep=None, engine="python", on_bad_lines="skip")
+        debug("File parsed successfully", f"{df.shape[0]} rows × {df.shape[1]} columns")
+        return df
+    except Exception as e:
+        debug("File loading FAILED", str(e))
+        st.error(f"Could not read file: {e}")
+        return None
 
-# Detect intensity columns
+df_raw = load_protein_file(uploaded_file)
+
+if df_raw is None or df_raw.empty:
+    debug("df_raw is None or empty — stopping")
+    st.stop()
+
+st.success(f"Loaded {len(df_raw):,} protein entries")
+
+# ====================== 3. DETECT INTENSITY COLUMNS ======================
+debug("Detecting quantitative columns...")
 intensity_cols = []
-for c in df_raw.columns:
-    cleaned = pd.to_numeric(df_raw[c].astype(str).str.replace(r"[,\#NUM!]", "", regex=True), errors='coerce')
-    if cleaned.notna().mean() > 0.3:
-        df_raw[c] = cleaned
-        intensity_cols.append(c)
+for col in df_raw.columns:
+    try:
+        cleaned = pd.to_numeric(
+            df_raw[col].astype(str)
+            .str.replace(r"[,\#NUM!]", "", regex=True)
+            .str.strip(),
+            errors='coerce'
+        )
+        valid_ratio = cleaned.notna().mean()
+        if valid_ratio > 0.3:
+            df_raw[col] = cleaned
+            intensity_cols.append(col)
+            debug(f"Column '{col}' → quantitative ({valid_ratio:.0%} valid)")
+    except:
+        continue
 
-# ====================== REPLICATE ASSIGNMENT ======================
-st.markdown("### 2. Assign Replicates (must have equal count)")
-rows = [{"Column": c, "Preview": " | ".join(map(str, df_raw[c].dropna().head(3))), "A": True, "B": False} for c in intensity_cols]
-edited = st.data_editor(pd.DataFrame(rows), column_config={
-    "Column": st.column_config.TextColumn(disabled=True),
-    "Preview": st.column_config.TextColumn(disabled=True),
-    "A": st.column_config.CheckboxColumn("Condition A → A1,A2,..."),
-    "B": st.column_config.CheckboxColumn("Condition B → B1,B2,...")
-}, hide_index=True, use_container_width=True, num_rows="fixed")
+if len(intensity_cols) == 0:
+    st.error("No quantitative columns found — check file format")
+    debug("No intensity columns detected")
+    st.stop()
 
-a_cols = edited[edited["A"]]["Column"].tolist()
-b_cols = edited[edited["B"]]["Column"].tolist()
+debug("Intensity columns found", intensity_cols)
+
+# ====================== 4. REPLICATE ASSIGNMENT ======================
+st.markdown("### 2. Assign Replicates — Must Have Equal Count")
+rows = []
+for col in intensity_cols:
+    preview = df_raw[col].dropna().head(3).astype(str).tolist()
+    rows.append({
+        "Column": col,
+        "Preview": " | ".join(preview),
+        "Condition A": True,
+        "Condition B": False
+    })
+
+edited = st.data_editor(
+    pd.DataFrame(rows),
+    column_config={
+        "Column": st.column_config.TextColumn(disabled=True),
+        "Preview": st.column_config.TextColumn(disabled),
+        "Condition A": st.column_config.CheckboxColumn("Condition A → A1,A2,..."),
+        "Condition B": st.column_config.CheckboxColumn("Condition B → B1,B2,..."),
+    },
+    hide_index=True,
+    use_container_width=True,
+    num_rows="fixed"
+)
+
+a_cols = edited[edited["Condition A"]]["Column"].tolist()
+b_cols = edited[edited["Condition B"]]["Column"].tolist()
+
+debug("User selection", f"A: {a_cols} | B: {b_cols}")
 
 if len(a_cols) != len(b_cols):
-    st.error(f"A: {len(a_cols)} ≠ B: {len(b_cols)} → Must be equal!")
+    st.error(f"Replicate count must be equal! A={len(a_cols)}, B={len(b_cols)}")
     st.stop()
 
 n = len(a_cols)
-rename_map = {old: f"A{i+1}" for i, old in enumerate(a_cols)}
-rename_map.update({old: f"B{i+1}" for i, old in enumerate(b_cols)})
-df = df_raw.rename(columns=rename_map)
-c1, c2 = [f"A{i+1}" for i in range(n)], [f"B{i+1}" for i in range(n)]
+rename_map = {a_cols[i]: f"A{i+1}" for i in range(n)}
+rename_map.update({b_cols[i]: f"B{i+1}" for i in range(n)})
+df = df_raw.rename(columns=rename_map).copy()
+c1 = [f"A{i+1}" for i in range(n)]
+c2 = [f"B{i+1}" for i in range(n)]
 
-st.success(f"Renamed → A: {', '.join(c1)} | B: {', '.join(c2)}")
+st.success(f"Replicates renamed → **A**: {', '.join(c1)} | **B**: {', '.join(c2)}")
+debug("Renaming complete", {"c1": c1, "c2": c2})
 
-# ====================== PROTEIN GROUP COLUMN + INDEX ======================
-st.markdown("### 3. Select Protein Group Column (will become index)")
-pg_candidates = [c for c in df.columns if any(k in c.lower() for k in ["protein.group","pg","leading","accession"])]
-pg_col = st.selectbox("Protein Group ID column", pg_candidates)
-if st.button("Set as Index"):
+# ====================== 5. PROTEIN GROUP COLUMN ======================
+st.markdown("### 3. Select Protein Group Column")
+pg_candidates = [c for c in df.columns if any(k in c.lower() for k in ["protein.group","pg","leading","accession","protein"])]
+pg_col = st.selectbox("Protein Group ID (will be index)", pg_candidates or df.columns.tolist())
+
+if st.button("Set as Index", type="primary"):
     df = df.set_index(pg_col)
     st.success(f"Index set to `{pg_col}`")
+    debug("Index set", pg_col)
+    st.rerun()
 
-# ====================== SPECIES DETECTION (incl. ECOLI) ======================
-st.markdown("### 4. Auto-Detect Species Column")
+# ====================== 6. SPECIES DETECTION ======================
+st.markdown("### 4. Auto-Detect Species")
 species_list = ["HUMAN","MOUSE","RAT","ECOLI","BOVIN","YEAST","RABIT","CANFA","MACMU","PANTR"]
 
 def find_species_col(df):
@@ -121,50 +234,59 @@ def find_species_col(df):
     return None
 
 sp_col = find_species_col(df) or "Not found"
+debug("Species detection", sp_col)
+
 if sp_col != "Not found":
-    df["Species"] = df[sp_col].astype(str).str.upper().apply(lambda x: next((s for s in species_list if s in x), "Other"))
-    counts = []
-    for sp in df["Species"].unique():
-        if sp == "Other" and df["Species"].nunique() > 2: continue
-        sub = df[df["Species"] == sp]
-        counts.append({"Species": sp, "A": (sub[c1]>1).any(axis=1).sum(), "B": (sub[c2]>1).any(axis=1).sum(), "Total": len(sub)})
-    sp_counts = pd.DataFrame(counts).sort_values("Total", ascending=False)
+    def get_sp(x):
+        x = str(x).upper()
+        return next((s for s in species_list if s in x), "Other")
+    df["Species"] = df[sp_col].apply(get_sp)
+    sp_counts = df.groupby("Species")[c1 + c2].apply(lambda g: pd.Series({
+        "A": (g[c1] > 1).any(axis=1).sum(),
+        "B": (g[c2] > 1).any(axis=1).sum(),
+        "Total": len(g)
+    })).reset_index()
 else:
-    sp_counts = pd.DataFrame([{"Species":"All","A":0,"B":0,"Total":len(df)}])
+    sp_counts = pd.DataFrame([{"Species": "All", "A": 0, "B": 0, "Total": len(df)}])
 
-# ====================== FINAL SAVE TO CACHE ======================
-st.success("All processing complete! Protein data is cached and ready for downstream modules.")
+# ====================== 7. SAVE TO CACHE ======================
+debug("Saving all data to session state...")
+ss("prot_df", df)
+ss("prot_c1", c1)
+ss("prot_c2", c2)
+ss("prot_pg_col", pg_col)
+ss("prot_sp_col", sp_col)
+ss("prot_sp_counts", sp_counts)
+ss("reconfig_prot", False)
 
-# ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
-# PUT THIS BLOCK RIGHT HERE – AT THE VERY END OF THE PAGE
-ss
-ss("prot_df", df)                     # the final processed dataframe
-ss("prot_c1", c1)                     # list like ["A1", "A2", ...]
-ss("prot_c2", c2)                     # list like ["B1", "B2", ...]
-ss("prot_pg_col", pg_col)             # name of the Protein Group column (now index)
-ss("prot_sp_col", sp_col)             # species column name (or "Not found")
-ss("prot_sp_counts", sp_counts)       # dataframe with species statistics
-ss("reconfig_prot", False)            # reset the reconfigure flag
-# ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
+st.success("All processing complete — data cached!")
 
-# Now show the final summary again (optional but nice)
+# ====================== FINAL DISPLAY ======================
 col1, col2 = st.columns(2)
-with col1:
-    st.metric("Condition A", ", ".join(c1))
-with col2:
-    st.metric("Condition B", ", ".join(c2))
+with col1: st.metric("Condition A", ", ".join(c1))
+with col2: st.metric("Condition B", ", ".join(c2))
 
 if sp_col != "Not found":
-    st.markdown("### Proteins per Species")
+    st.markdown("### Proteins Detected per Species")
     st.dataframe(sp_counts, use_container_width=True, hide_index=True)
     st.bar_chart(sp_counts.set_index("Species")[["A", "B"]])
 
-# Final buttons & footer
+# ====================== DEBUG LOG DISPLAY (ALWAYS VISIBLE) ======================
+if DEBUG and st.session_state.debug_log:
+    with log_container:
+        st.markdown("### Debug Log")
+        for line in st.session_state.debug_log:
+            st.markdown(line, unsafe_allow_html=True)
+        if st.button("Clear Debug Log"):
+            st.session_state.debug_log = []
+            st.rerun()
+
+# ====================== RESTART & FOOTER ======================
 restart_button()
 
 st.markdown("""
 <div class="footer">
     <strong>Proprietary & Confidential | For Internal Use Only</strong><br>
-    © 2024 Thermo Fisher Scientific Inc. All rights reserved.
+    © 2024 Thermo Fisher Scientific Inc.
 </div>
 """, unsafe_allow_html=True)
