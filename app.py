@@ -26,9 +26,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-page1 = st.Page("protein.py", title="Protein Data Import")
-page2 = st.Page("peptide.py", title="Peptide Data Import")
-page3 =  st.Page("quality.py", title="Data Quality OVerview")
 
 st.set_page_config(page_title="autoProt", page_icon ="🧬")
 
