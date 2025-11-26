@@ -40,7 +40,6 @@ with col2:
     col_a, col_b = st.columns(2)
     with col_a:
         if st.button("Protein Import", type="primary", use_container_width=True):
-            ):
             st.switch_page("pages/1_Protein_Import.py")
     with col_b:
         if st.button("Peptide Import", type="primary", use_container_width=True):
