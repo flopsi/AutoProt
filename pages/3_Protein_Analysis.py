@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-
+from scipy import stats
 # In your protein (or peptide) analysis page
 
 import streamlit as st
