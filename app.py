@@ -71,50 +71,6 @@ st.markdown("""
 # ─────────────────────────────────────────────────────────────
 # Main Content
 # ─────────────────────────────────────────────────────────────
-st.markdown("""
-<div class="card">
-    <h2>📊 Welcome to LFQbench</h2>
-    <p>A comprehensive platform for analyzing and validating label-free quantification (LFQ) proteomics data at both protein and peptide levels.</p>
-</div>
-""", unsafe_allow_html=True)
-
-
-# ─────────────────────────────────────────────────────────────
-# Navigation Section
-# ─────────────────────────────────────────────────────────────
-with st.container():
-    st.markdown("""
-    <div class="card">
-        <h3>📍 Navigation</h3>
-        <p>Use the <strong>sidebar menu</strong> to navigate between modules:</p>
-        <ul style="line-height: 1.8;">
-            <li><strong>Protein Import</strong> — Upload and configure your protein-level data</li>
-            <li><strong>Peptide Import</strong> — Upload and configure your peptide-level data</li>
-            <li><strong>Data Quality</strong> — Assess quality metrics and reproducibility</li>
-            <li><strong>Analysis</strong> — Perform statistical analysis and visualization</li>
-        </ul>
-        <p><strong>Session State:</strong> All uploaded data and configurations are automatically stored and persist as you navigate between pages. You can switch between modules without losing your data.</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-# ─────────────────────────────────────────────────────────────
-# Features Section
-# ─────────────────────────────────────────────────────────────
-with st.container():
-    st.markdown("""
-    <div class="card">
-        <h3>✨ Key Features</h3>
-        <ul style="line-height: 1.8;">
-            <li><strong>Multi-species support</strong> — Automatically detects and analyzes human, yeast, E. coli, and other species</li>
-            <li><strong>Flexible column mapping</strong> — Rename and reassign columns on-the-fly for different file formats</li>
-            <li><strong>Condition assignment</strong> — Define your experimental conditions with multiple replicates</li>
-            <li><strong>Automatic species extraction</strong> — Parses protein/peptide names to identify species (e.g., _HUMAN, _YEAST)</li>
-            <li><strong>Real-time statistics</strong> — Counts proteins/peptides meeting intensity thresholds per species</li>
-            <li><strong>Session persistence</strong> — Switch between modules without data loss</li>
-            <li><strong>Skip option</strong> — Choose to analyze only protein or only peptide data</li>
-        </ul>
-    </div>
-    """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────
 # Session State Summary
