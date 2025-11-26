@@ -115,11 +115,20 @@ ss("pept_seq_col", seq_col)
 ss("reconfig_pept", False)
 
 st.success("Peptide data ready!")
-restart_button()
 
-# Debug log
+# Debug log block — put here
 if st.session_state.get("debug_log"):
-    with st.expander("Debug Log"):
-        for line, data in st.session_state.debug_log:
-            st.markdown(line, unsafe_allow_html=True)
-            if data: st.code(data)
+    with st.expander("Debug Log", expanded=False):
+        for entry in st.session_state.debug_log:
+            if isinstance(entry, tuple):
+                line, data = entry
+                st.markdown(line, unsafe_allow_html=True)
+                if data is not None:
+                    st.code(data)
+            else:
+                st.markdown(entry, unsafe_allow_html=True)
+        if st.button("Clear Debug Log"):
+            st.session_state.debug_log = []
+            st.rerun()
+
+restart_button()
