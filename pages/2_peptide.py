@@ -4,7 +4,12 @@ import pandas as pd
 import re
 import io
 from shared import restart_button
-
+# ────────────────────── SAFE SESSION STATE HELPER ──────────────────────
+def ss(key, default=None):
+    """Safe session_state getter/setter – never raises KeyError"""
+    if key not in st.session_state:
+        st.session_state[key] = default
+    return st.session_state[key]
 st.set_page_config(page_title = "Peptide Import", layout="wide")
 
 # ====================== BRANDING ======================
