@@ -47,8 +47,44 @@ df_raw = load_peptide_data(st.session_state.uploaded_peptide_bytes)
 
 st.write(f"**{len(df_raw):,}** peptides × **{len(df_raw.columns)}** columns")
 
-# === INTENSITY + REPLICATES (same as protein) ===
-# ... copy the exact same block from protein page ...
+# === INTENSITY COLUMNS ===
+intensity_cols = []
+for col in df_raw.columns:
+    cleaned = pd.to_numeric(df_raw[col].astype(str).str.replace(r"[,\#NUM!]", "", regex=True), errors='coerce')
+    if cleaned.notna().mean() > 0.3:
+        df_raw[col] = cleaned
+        intensity_cols.append(col)
+
+if not intensity_cols:
+    st.error("No quantitative columns found")
+    st.stop()
+
+# === REPLICATES ===
+st.markdown("### Assign Replicates (must be equal)")
+rows = [{"Column": c, "A": True, "B": False} for c in intensity_cols]
+edited = st.data_editor(
+    pd.DataFrame(rows),
+    column_config={
+        "Column": st.column_config.TextColumn(disabled=True),
+        "A": st.column_config.CheckboxColumn("Condition A"),
+        "B": st.column_config.CheckboxColumn("Condition B"),
+    },
+    hide_index=True, use_container_width=True, num_rows="fixed"
+)
+
+a_cols = edited[edited["A"]]["Column"].tolist()
+b_cols = edited[edited["B"]]["Column"].tolist()
+
+if len(a_cols) != len(b_cols) or len(a_cols) == 0:
+    st.error("Must have equal replicates")
+    st.stop()
+
+n = len(a_cols)
+df = df_raw.rename(columns={a_cols[i]: f"A{i+1}" for i in range(n)} | {b_cols[i]: f"B{i+1}" for i in range(n)}).copy()
+c1 = [f"A{i+1}" for i in range(n)]
+c2 = [f"B{i+1}" for i in range(n)]
+
+st.success(f"Renamed → A: {', '.join(c1)} | B: {', '.join(c2)}")
 
 # === SAVE FINAL DATA ===
 st.session_state.pept_df = df
