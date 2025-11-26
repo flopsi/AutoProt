@@ -4,22 +4,6 @@ import pandas as pd
 import io
 from shared import restart_button, debug
 
-# At the very bottom of both pages — replace your debug log section with this:
-if st.session_state.get("debug_log"):
-    with st.expander("Debug Log", expanded=False):
-        for entry in st.session_state.debug_log:
-            if isinstance(entry, tuple):
-                line, data = entry
-                st.markdown(line, unsafe_allow_html=True)
-                if data is not None:
-                    st.code(data)
-            else:
-                # Old format (just string)
-                st.markdown(entry, unsafe_allow_html=True)
-        if st.button("Clear Debug Log"):
-            st.session_state.debug_log = []
-            st.rerun()
-
 def ss(key, default=None):
     if key not in st.session_state:
         st.session_state[key] = default
@@ -114,19 +98,40 @@ if sp_col != "Not found":
     df["Species"] = df[sp_col].astype(str).str.upper().apply(lambda x: next((s for s in species_list if s in x), "Other"))
 
 # Save
-ss("prot_df", df); ss("prot_c1", c1); ss("prot_c2", c2); ss("reconfig_prot", False)
+# Save everything
+ss("prot_df", df)
+ss("prot_c1", c1)
+ss("prot_c2", c2)
+ss("prot_pg_col", pg_col)
+ss("prot_sp_col", sp_col)
+ss("reconfig_prot", False)
 
-st.success("Protein data ready!")
-st.metric("Condition A", ", ".join(c1))
-st.metric("Condition B", ", ".join(c2))
+st.success("Protein data processed and cached!")
 
-if "Species" in df.columns:
-    st.bar_chart(df["Species"].value_counts())
+# Final metrics
+col1, col2 = st.columns(2)
+with col1: st.metric("Condition A", ", ".join(c1))
+with col2: st.metric("Condition B", ", ".join(c2))
+
+# THIS IS THE CORRECT PLACE — RIGHT BEFORE RESTART BUTTON
+if st.session_state.get("debug_log"):
+    with st.expander("Debug Log", expanded=False):
+        for entry in st.session_state.debug_log:
+            if isinstance(entry, tuple):
+                line, data = entry
+                st.markdown(line, unsafe_allow_html=True)
+                if data is not None:
+                    st.code(data)
+            else:
+                st.markdown(entry, unsafe_allow=True=True)
+        if st.button("Clear Debug Log"):
+            st.session_state.debug_log = []
+            st.rerun()
 
 restart_button()
 
-if st.session_state.get("debug_log"):
-    with st.expander("Debug Log"):
-        for line, data in st.session_state.debug_log:
-            st.markdown(line, unsafe_allow_html=True)
-            if data: st.code(data)
+st.markdown("""
+<div class="footer">
+    <strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific
+</div>
+""", unsafe_allow_html=True)
