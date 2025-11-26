@@ -235,7 +235,7 @@ st.success("Data import complete! Ready for **Module 2: Data Quality**")
 st.markdown("---")
 
 # Main navigation buttons
-col1, col2, col3= st.columns([2,2,2,2])
+col1, col2, col3,col4= st.columns([2,2,2,2])
 
 with col1:
     if st.button("Protein Upload", use_container_width=True):
