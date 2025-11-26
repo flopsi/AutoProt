@@ -228,18 +228,10 @@ with st.container():
 
     if rename_map:
         df = df.rename(columns=rename_map)
+        # ← UPDATE cond1_cols and cond2_cols with renamed names
+        cond1_cols = [rename_map.get(c, c) for c in cond1_cols]
+        cond2_cols = [rename_map.get(c, c) for c in cond2_cols]
         st.session_state.df = df
-
-    # ── SAFE extraction with proper validation ──
-    cond1_checked = edited[edited["Cond 1"]]
-    species_checked = edited[edited["Species"]]
-    protein_checked = edited[edited["Protein Group"]]
-
-    cond1_cols = cond1_checked["Original Name"].tolist()
-    cond2_cols = [c for c in numeric_cols if c not in cond1_cols]
-
-    species_cols = species_checked["Original Name"].tolist()
-    protein_cols = protein_checked["Original Name"].tolist()
 
     # ── BULLETPROOF validation ──
     errors = []
