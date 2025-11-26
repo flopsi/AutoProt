@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 from scipy import stats
 from scipy.stats import boxcox, yeojohnson
 
@@ -11,36 +12,45 @@ df = st.session_state.prot_final_df
 c1 = st.session_state.prot_final_c1
 c2 = st.session_state.prot_final_c2
 
-st.title("Protein-Level QC: Choose Best Transformation")
+st.title("Protein-Level QC & Transformation")
 
-# === STEP 1: SHOW RAW DISTRIBUTION + STATISTICS FIRST ===
-st.subheader("1. Raw Intensity Distribution (No Transformation)")
+# === 1. INTENSITY HISTOGRAMS (Schessner Figure 4A) ===
+st.subheader("1. Raw Intensity Histograms (Before Transformation)")
 
 raw_data = df[c1 + c2].replace(0, np.nan)
-raw_melted = raw_data.melt(var_name="Replicate", value_name="Raw Intensity").dropna()
-raw_melted["Condition"] = raw_melted["Replicate"].apply(lambda x: "A" if x in c1 else "B")
-raw_melted["Replicate"] = pd.Categorical(raw_melted["Replicate"], c1 + c2, ordered=True)
+fig_hist = go.Figure()
 
-fig_raw = px.violin(
-    raw_melted, x="Replicate", y="Raw Intensity", color="Condition",
-    color_discrete_map={"A": "#E71316", "B": "#1f77b4"},
-    box=True, points=False, violinmode="overlay"
+for i, rep in enumerate(c1 + c2):
+    vals = raw_data[rep].dropna()
+    fig_hist.add_trace(go.Histogram(
+        x=np.log2(vals),
+        name=rep,
+        opacity=0.6,
+        nbinsx=100,
+        marker_color="#E71316" if rep in c1 else "#1f77b4"
+    ))
+
+fig_hist.update_layout(
+    barmode="overlay",
+    height=500,
+    xaxis_title="log₂(Intensity)",
+    yaxis_title="Number of Proteins",
+    legend_title="Replicate",
+    plot_bgcolor="white"
 )
-fig_raw.update_traces(box_visible=True, meanline_visible=True)
-fig_raw.update_layout(height=600, yaxis_type="log")
-st.plotly_chart(fig_raw, use_container_width=True)
+st.plotly_chart(fig_hist, use_container_width=True)
 
-# === STATISTICS ON RAW DATA ===
-st.markdown("### Raw Data Statistics (Before Any Transformation)")
+# === 2. RAW DATA STATISTICS ===
+st.markdown("### 2. Raw Data Distribution Diagnosis")
 stats_raw = []
 for rep in c1 + c2:
     vals = raw_data[rep].dropna()
     if len(vals) < 4:
         stats_raw.append({"Replicate": rep, "n": len(vals), "Skew": "N/A", "Kurtosis": "N/A", "Shapiro p": "N/A"})
         continue
-    skew = stats.skew(vals)
-    kurt = stats.kurtosis(vals)
-    _, p = stats.shapiro(vals)
+    skew = stats.skew(np.log2(vals))
+    kurt = stats.kurtosis(np.log2(vals))
+    _, p = stats.shapiro(np.log2(vals))
     stats_raw.append({
         "Replicate": rep,
         "n": len(vals),
@@ -51,21 +61,11 @@ for rep in c1 + c2:
 
 st.dataframe(pd.DataFrame(stats_raw), use_container_width=True)
 
-# === RECOMMENDATION BASED ON RAW DATA ===
-high_skew = any(abs(float(r["Skew"].replace("N/A","0"))) > 1.0 for r in stats_raw if r["Skew"] != "N/A")
-high_kurt = any(abs(float(r["Kurtosis"].replace("N/A","0"))) > 3.0 for r in stats_raw if r["Kurtosis"] != "N/A")
-
-if high_skew or high_kurt:
-    st.error("**Raw data is highly skewed and leptokurtic — transformation REQUIRED**")
-    st.info("→ Try **log₂** first (standard in proteomics)")
-else:
-    st.warning("Raw data may be usable — but log₂ is still recommended")
-
-# === STEP 2: LET USER CHOOSE TRANSFORMATION ===
-st.markdown("### 2. Apply Transformation")
+# === 3. TRANSFORMATION SELECTION ===
+st.markdown("### 3. Apply Transformation")
 transform = st.selectbox(
     "Choose transformation",
-    ["log₂ (recommended)", "log₁₀", "Box-Cox", "Yeo-Johnson", "None (keep raw)"],
+    ["log₂ (recommended)", "log₁₀", "Box-Cox", "Yeo-Johnson", "None"],
     index=0
 )
 
@@ -89,12 +89,7 @@ else:
     transformed = raw_data
     y_label = "Raw Intensity"
 
-# Save both
-st.session_state.intensity_raw = raw_data
-st.session_state.intensity_transformed = transformed
-st.session_state.transform_applied = transform
-
-# === FINAL PLOT AFTER TRANSFORMATION ===
+# === 4. FINAL VIOLIN + BOX PLOT ===
 melted = transformed.melt(var_name="Replicate", value_name=y_label).dropna()
 melted["Condition"] = melted["Replicate"].apply(lambda x: "A" if x in c1 else "B")
 melted["Replicate"] = pd.Categorical(melted["Replicate"], c1 + c2, ordered=True)
@@ -108,15 +103,37 @@ fig.update_traces(box_visible=True, meanline_visible=True)
 fig.update_layout(height=650, yaxis_title=y_label)
 st.plotly_chart(fig, use_container_width=True)
 
-# Final verdict
-if transform.startswith("log₂"):
-    st.success("**log₂ transformation applied — this is the gold standard in proteomics**")
-    st.info("Ready for PCA, volcano plot, t-tests, etc.")
-else:
-    st.info(f"Transformation applied: {transform}")
+# === 5. BLUE BOX: TRANSFORMATION + RETEST RESULT ===
+st.markdown("### Current Transformation & Post-Test Result")
+with st.container():
+    st.markdown(f"""
+    <div style="background:#1e88e5;padding:15px;border-radius:10px;color:white;">
+        <h4>Applied: <strong>{transform}</strong></h4>
+        <p>After transformation:</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-st.markdown("**Data saved:** `st.session_state.intensity_transformed` (for analysis) | `intensity_raw` (original)")
+    # Retest
+    post_stats = []
+    for rep in c1 + c2:
+        vals = transformed[rep].dropna()
+        if len(vals) < 4: continue
+        skew = stats.skew(vals)
+        kurt = stats.kurtosis(vals)
+        _, p = stats.shapiro(vals)
+        post_stats.append({"Replicate": rep, "Skew": f"{skew:+.3f}", "Kurtosis": f"{kurt:+.3f}", "p": f"{p:.2e}"})
 
-st.markdown("---")
-if st.button("Go to Differential Analysis", type="primary", use_container_width=True):
-    st.switch_page("pages/4_Differential_Analysis.py")
+    st.dataframe(pd.DataFrame(post_stats), use_container_width=True)
+
+    # Final verdict
+    if transform.startswith("log₂"):
+        st.success("**log₂ transformation applied — gold standard in proteomics**")
+    else:
+        st.info(f"Transformation applied: {transform}")
+
+# === SAVE DATA ===
+st.session_state.intensity_raw = raw_data
+st.session_state.intensity_transformed = transformed
+st.session_state.transform_applied = transform
+
+st.info("Data saved: `intensity_raw` and `intensity_transformed` ready for downstream analysis")
