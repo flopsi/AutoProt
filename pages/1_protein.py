@@ -4,6 +4,22 @@ import pandas as pd
 import io
 from shared import restart_button, debug
 
+# At the very bottom of both pages — replace your debug log section with this:
+if st.session_state.get("debug_log"):
+    with st.expander("Debug Log", expanded=False):
+        for entry in st.session_state.debug_log:
+            if isinstance(entry, tuple):
+                line, data = entry
+                st.markdown(line, unsafe_allow_html=True)
+                if data is not None:
+                    st.code(data)
+            else:
+                # Old format (just string)
+                st.markdown(entry, unsafe_allow_html=True)
+        if st.button("Clear Debug Log"):
+            st.session_state.debug_log = []
+            st.rerun()
+
 def ss(key, default=None):
     if key not in st.session_state:
         st.session_state[key] = default
