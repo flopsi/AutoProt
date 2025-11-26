@@ -241,7 +241,7 @@ with col1:
     if st.button("Protein Upload", use_container_width=True):
         st.switch_page("app.py")
         
-with st.col2:
+with col2:
     if st.button("Restart Analysis — Clear All Data", key="fixed_restart"):
         st.session_state.clear()
         st.rerun()
