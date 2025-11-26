@@ -32,7 +32,19 @@ page3 =  st.Page("quality.py", title="Data Quality OVerview")
 
 st.set_page_config(page_title="autoProt", page_icon ="🧬")
 
-pg = st.navigation([page1,page2,page3])
+
+pages = {
+    "Data Upload": [
+        st.Page("protein2.py", title="Upload Protein Data"),
+        st.Page("peptide2.py", title="Upload Peptide Data"),
+    ],
+    "Resources": [
+        st.Page("learn.py", title="Learn about us"),
+        st.Page("trial.py", title="Try it out"),
+    ],
+}
+
+pg = st.navigation(pages)
 pg.run()
 
 
