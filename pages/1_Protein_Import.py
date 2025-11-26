@@ -41,7 +41,7 @@ def load_protein_data(_bytes):
     text = _bytes.decode("utf-8", errors="replace")
     if text.startswith("\ufeff"):
         text = text[1:]
-    return pd.read_csv(io.StringIO(text), sep=None, engine="python)
+    return pd.read_csv(io.StringIO(text), sep=None, engine="python")
 
 df_raw = load_protein_data(st.session_state.uploaded_protein_bytes)
 
