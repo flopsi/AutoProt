@@ -1,4 +1,4 @@
-# pages/1_Protein_Import.py
+# pages/1_Peptide_Import.py
 import streamlit as st
 import pandas as pd
 import re
@@ -24,9 +24,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="header"><h1>DIA Proteomics Pipeline</h1><p>Module 1 — Protein-Level Import</p></div>', unsafe_allow_html=True)
-st.markdown('<div class="nav"><div class="nav-item active">Protein Import</div><div class="nav-item">Peptide Import</div><div class="nav-item">Analysis</div></div>', unsafe_allow_html=True)
-st.markdown('<div class="module-header"><div class="module-icon">Protein</div><div><h2 style="margin:0;color:white;">Protein Data Import</h2><p style="margin:5px 0 0;opacity:0.9;">Auto-detect species • Equal replicates • Set Protein Group as index</p></div></div>', unsafe_allow_html=True)
+st.markdown('<div class="header"><h1>DIA Proteomics Pipeline</h1><p>Module 1 — Peptide-Level Import</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="nav"><div class="nav-item active">Peptide Import</div><div class="nav-item">Peptide Import</div><div class="nav-item">Analysis</div></div>', unsafe_allow_html=True)
+st.markdown('<div class="module-header"><div class="module-icon">Peptide</div><div><h2 style="margin:0;color:white;">Peptide Data Import</h2><p style="margin:5px 0 0;opacity:0.9;">Auto-detect species • Equal replicates • Set Peptide Group as index</p></div></div>', unsafe_allow_html=True)
 
 # ====================== RESTORE FROM CACHE ======================
 if "prot_df" in st.session_state and not st.session_state.get("reconfig_prot", False):
@@ -37,15 +37,15 @@ if "prot_df" in st.session_state and not st.session_state.get("reconfig_prot", F
     sp_col = st.session_state.prot_sp_col
     sp_counts = st.session_state.prot_sp_counts
 
-    st.success("Protein data loaded from cache")
+    st.success("Peptide data loaded from cache")
     col1, col2, col3 = st.columns([2,2,1])
     with col1: st.metric("Condition A", f"{len(c1)} reps", help="A1,A2,..."); st.write(" | ".join(c1))
     with col2: st.metric("Condition B", f"{len(c2)} reps"); st.write(" | ".join(c2))
     with col3:
         if st.button("Reconfigure"): st.session_state.reconfig_prot = True; st.rerun()
 
-    st.info(f"**Protein Group Column (index)**: `{peptide_columns}` • **Species**: `{sp_col}`")
-    st.markdown("### Proteins per Species")
+    st.info(f"**Peptide Group Column (index)**: `{peptide_columns}` • **Species**: `{sp_col}`")
+    st.markdown("### Peptides per Species")
     st.dataframe(sp_counts, use_container_width=True, hide_index=True)
     st.bar_chart(sp_counts.set_index("Species")[["A","B"]])
     def_button()
@@ -55,11 +55,11 @@ if st.session_state.get("reconfig_prot", False):
     st.warning("Reconfiguring — re-upload the same file")
 
 # ====================== UPLOAD & CACHE ======================
-st.markdown("### 1. Upload Protein-Level File")
-uploaded = st.file_uploader("CSV/TSV/TXT", type=["csv","tsv","txt"], key="prot_upload)
+st.markdown("### 1. Upload Peptide-Level File")
+uploaded = st.file_uploader("CSV/TSV/TXT", type=["csv","tsv","txt"], key="pep_upload")
 
 if not uploaded:
-    st.info("Upload your protein quantification file")
+    st.info("Upload your peptide quantification file")
     st.stop()
 
 @st.cache_data(show_spinner="Parsing file...")
@@ -70,7 +70,7 @@ def load_and_parse(_file):
     return df
 
 df_raw = load_and_parse(uploaded)
-st.success(f"Loaded {len(df_raw):,} protein groups")
+st.success(f"Loaded {len(df_raw):,} Peptide groups")
 
 # Detect intensity columns
 intensity_cols = []
@@ -105,8 +105,8 @@ c1, c2 = [f"A{i+1}" for i in range(n)], [f"B{i+1}" for i in range(n)]
 
 st.success(f"Renamed → A: {', '.join(c1)} | B: {', '.join(c2)}")
 
-# ====================== PROTEIN GROUP COLUMN + INDEX ======================
-st.markdown("### 3. Select Protein Group Column (will become index)")
+# ====================== Peptide GROUP COLUMN + INDEX ======================
+st.markdown("### 3. Select Peptide Group Column (will become index)")
 peptide_candidates = [c for c in df.columns if any(k in c.lower() for k in ["sequence","peptide","seq","stripped","Precursor"])]
 peptide_col = st.selectbox("Peptide Sequence Column", peptide_candidates)
 if st.button("Set as Index"):
@@ -148,7 +148,7 @@ st.session_state.update({
     "reconfig_prot": False,
 })
 
-st.success("Protein data cached and ready for downstream modules!")
+st.success("Peptide data cached and ready for downstream modules!")
 st.json({k: type(v).__name__ for k, v in st.session_state.items() if k.startswith("prot_")}, expanded=False)
 
 def_button()
