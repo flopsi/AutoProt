@@ -35,9 +35,9 @@ pages = {
         st.Page("protein.py", title="Upload Protein Data"),
         st.Page("peptide.py", title="Upload Peptide Data"),
     ],
-    "Resources": [
-        st.Page("learn.py", title="Learn about us"),
-        st.Page("trial.py", title="Try it out"),
+    "Data Quality": [
+        st.Page("quality.py", title="Exploratory Data Analysis"),
+
     ],
 }
 
