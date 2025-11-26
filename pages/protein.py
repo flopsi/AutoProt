@@ -128,10 +128,13 @@ with st.container():
     with col2:
         skip_upload = st.button("⏭️ Skip", help="Skip protein upload", key="skip_prot")
 
+# In pages/1_protein.py (replace the skip_upload section):
 if skip_upload:
+    st.session_state["skip_prot"] = True  # ← Add this
     st.info("⏭️ Protein upload skipped")
     st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
     st.stop()
+
 
 if not uploaded_file:
     st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
