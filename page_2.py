@@ -6,15 +6,6 @@ import io
 import re
 from pandas.api.types import is_numeric_dtype   # ← THIS WAS MISSING
 
-# ─────────────────────────────────────────────────────────────
-# Page Config
-# ─────────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="LFQbench Data Import | Thermo Fisher Scientific",
-    page_icon="https://www.thermofisher.com/etc.clientlibs/fe-dam/clientlibs/fe-dam-site/resources/images/favicons/favicon-32x32.png",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
 
 # ─────────────────────────────────────────────────────────────
 # Thermo Fisher CSS
