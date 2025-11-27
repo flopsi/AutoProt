@@ -112,4 +112,35 @@ elif transform == "Box-Cox":
     transformed = pd.DataFrame(boxcox(intensity_data.values.flatten())[0].reshape(intensity_data.shape),
                                index=intensity_data.index, columns=intensity_data.columns)
 elif transform == "Yeo-Johnson":
-    transformed = pd.DataFrame
+    transformed = pd.DataFrame(yeojohnson(intensity_data.values.flatten())[0].reshape(intensity_data.shape),
+                               index=intensity_data.index, columns=intensity_data.columns)
+else:
+    transformed = intensity_data
+
+# === 5. POST-TRANSFORMATION TABLE (LIVE) ===
+st.markdown("### 5. After Transformation")
+post_stats = []
+for rep in all_reps:
+    vals = transformed[rep]
+    skew = stats.skew(vals)
+    kurt = stats.kurtosis(vals)
+    _, p = stats.shapiro(vals)
+    normal = "Yes" if p > 0.05 else "No"
+    post_stats.append({
+        "Replicate": rep,
+        "Skew": f"{skew:+.3f}",
+        "Kurtosis": f"{kurt:+.3f}",
+        "Shapiro p": f"{p:.2e}",
+        "Normal": normal
+    })
+st.dataframe(pd.DataFrame(post_stats), use_container_width=True)
+
+# === 6. ACCEPT ===
+st.markdown("### 6. Confirm Transformation")
+if st.button("Accept This Transformation", type="primary"):
+    st.session_state.intensity_transformed = transformed
+    st.session_state.transform_applied = transform
+    st.session_state.qc_accepted = True
+    st.success(f"**{transform} accepted**")
+
+st.info("More plots coming soon...")
