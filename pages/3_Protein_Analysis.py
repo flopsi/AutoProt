@@ -30,7 +30,7 @@ if "log10_cache" not in st.session_state:
     st.session_state.log10_cache = cache
     st.session_state.species_options = ["All proteins", "HUMAN", "ECOLI", "YEAST"]
 
-# === DEFAULT SELECTION ===
+# Default
 if "selected_species" not in st.session_state:
     st.session_state.selected_species = "All proteins"
 
@@ -64,14 +64,14 @@ for i, rep in enumerate(all_reps):
         fig.add_vline(x=mean, line_dash="dash", line_color="black")
         fig.update_layout(
             height=380,
-            title=f"<b>{rep}</b>",
+            title=f"<b>{rep}</b><br>{st.session_state.selected_species}",
             xaxis_title="log₁₀(Intensity)",
             yaxis_title="Density",
             showlegend=False
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # === TABLE UNDER EACH PLOT — ONLY FIRST HAS CHECKBOX ===
+        # === TABLE UNDER EACH PLOT ===
         table_data = []
         for sp in st.session_state.species_options:
             sp_data = st.session_state.log10_cache[sp]
@@ -83,44 +83,23 @@ for i, rep in enumerate(all_reps):
                 variance_str = f"{sp_vals.var():.3f}"
                 std_str = f"{sp_vals.std():.3f}"
             
-            row = {
+            table_data.append({
                 "Species": sp,
-                "Mean": mean_str,
+                "Mean": meaned mean_str,
                 "Variance": variance_str,
                 "Std Dev": std_str
-            }
-            if i == 0:  # Only first plot has checkbox
-                row["Show"] = sp == st.session_state.selected_species
-            table_data.append(row)
+            })
 
+        # Only top-left has radio buttons
         if i == 0:
-            edited = st.data_editor(
-                pd.DataFrame(table_data),
-                column_config={
-                    "Show": st.column_config.CheckboxColumn("Show", default=False),
-                    "Species": st.column_config.TextColumn("Species", disabled=True),
-                    "Mean": st.column_config.TextColumn("Mean", disabled=True),
-                    "Variance": st.column_config.TextColumn("Variance", disabled=True),
-                    "Std Dev": st.column_config.TextColumn("Std Dev", disabled=True),
-                },
-                use_container_width=True,
-                hide_index=True
+            selected = st.radio(
+                "Select species to display",
+                options=st.session_state.species_options,
+                index=st.session_state.species_options.index(st.session_state.selected_species),
+                key="species_radio"
             )
-            # Detect change
-            selected_row = edited[edited["Show"]]
-            if not selected_row.empty:
-                new_sp = selected_row["Species"].iloc[0]
-                if new_sp != st.session_state.selected_species:
-                    st.session_state.selected_species = new_sp
-                    st.experimental_rerun()
+            if selected != st.session_state.selected_species:
+                st.session_state.selected_species = selected
+                st.experimental_rerun()
         else:
-            st.table(pd.DataFrame(table_data)[["Species", "Mean", "Variance", "Std Dev"]].set_index("Species"))
-
-# === FILTERING & ACCEPT (unchanged) ===
-# ... [your filtering code here] ...
-
-st.markdown("### Confirm Setup")
-if st.button("Accept This Filtering", type="primary"):
-    st.session_state.df_filtered = df_filtered
-    st.session_state.qc_accepted = True
-    st.success("**Filtering accepted** — ready for next step")
+            st.table(pd.DataFrame(table_data).set_index("Species"))
