@@ -33,4 +33,16 @@ data_df=pd.DataFrame(
                     }
 )
 
-
+st.data_editor(
+    data_df,
+    column_config={
+        "widgets": st.column_config.Column(
+            "Streamlit Widgets",
+            help="Streamlit **widget** commands 🎈",
+            width="medium",
+            required=True,
+        )
+    },
+    hide_index=True,
+    num_rows="dynamic",
+)
