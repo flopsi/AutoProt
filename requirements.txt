@@ -32,7 +32,7 @@ st_cytoscape>=0.0.5
 stqdm>=0.0.5
 tiktoken>=0.7.0
 plotnine
-
+streamlit-tags
 # TODO without these the 3.10 CI runner runs into "Dependency resolution exceeded maximum depth" for matplotlib
 click>=8.0.1; python_version >= "3.10"
 data_cache>=0.1.6; python_version >= "3.10"
