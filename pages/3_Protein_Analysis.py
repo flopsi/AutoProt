@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from scipy import stats
+from itertools import combinations
 
 # Load data
 if "prot_final_df" not in st.session_state:
@@ -15,56 +16,64 @@ c1 = st.session_state.prot_final_c1
 c2 = st.session_state.prot_final_c2
 all_reps = c1 + c2
 
-st.title("Protein-Level QC & Manual Intensity Filtering")
+st.title("Protein-Level QC & Replicate Difference Testing")
 
-# === SPECIES SELECTION ===
-if "Species" not in df.columns:
-    st.error("Species column missing — please re-upload")
-    st.stop()
-
-species_counts = df["Species"].value_counts()
-selected_species = st.selectbox(
-    "Select species for QC",
-    options=species_counts.index.tolist(),
-    index=0,
-    format_func=lambda x: f"{x} ({species_counts[x]:,} proteins)"
-)
-
-df_species = df[df["Species"] == selected_species].copy()
-
-# === 1. MANUAL LOG10 INTENSITY SLIDER — ABOVE PLOTS ===
+# === 1. MANUAL LOG10 INTENSITY RANGE (ABOVE PLOTS) ===
 st.subheader("1. Manual log₁₀ Intensity Range Selection")
 
-raw_data = df_species[all_reps].replace(0, np.nan)
-log10_data = np.log10(raw_data)
+raw_data_all = df[all_reps].replace(0, np.nan)
+log10_all = np.log10(raw_data_all)
 
-global_min = log10_data.min().min()
-global_max = log10_data.max().max()
-
-# Default: cut off the low-intensity noise you observed
-default_min = 1.5
-default_max = global_max
+global_min = log10_all.min().min()
+global_max = log10_all.max().max()
 
 min_val, max_val = st.slider(
-    "Select log₁₀ intensity range to keep (per replicate)",
+    "Select log₁₀ intensity range to keep",
     min_value=float(global_min),
     max_value=float(global_max),
-    value=(default_min, float(global_max)),
+    value=(1.5, float(global_max)),
     step=0.05,
-    help="Remove low-intensity noise and failed quantifications"
+    help="Removes low-intensity noise (common in proteomics)"
 )
 
 st.info(f"**Keeping proteins with log₁₀ intensity between {min_val:.2f} and {max_val:.2f}** in ALL replicates")
 
-# === 2. 6 LOG10 DENSITY PLOTS WITH WHITE SHADOW OVERLAY ===
-st.subheader("2. Intensity Density Plots (log₁₀) — Selected Range Highlighted")
+# === 2. SPECIES SELECTION & FILTERING ===
+st.subheader("2. Select Data for Replicate Testing")
+
+test_scope = st.radio(
+    "Test replicate differences on:",
+    ["All proteins (after intensity filter)", "Only the most frequent species (constant proteome)"],
+    index=1
+)
+
+# Apply intensity filter first
+mask = pd.Series(True, index=df.index)
+for rep in all_reps:
+    mask &= (log10_all[rep] >= min_val) & (log10_all[rep] <= max_val)
+df_intensity_filtered = df[mask].copy()
+
+if test_scope == "Only the most frequent species (constant proteome)":
+    if "Species" not in df_intensity_filtered.columns:
+        st.error("Species column missing")
+        st.stop()
+    most_common = df_intensity_filtered["Species"].value_counts().index[0]
+    df_test = df_intensity_filtered[df_intensity_filtered["Species"] == most_common].copy()
+    st.write(f"Using **{len(df_test):,}** {most_common} proteins (constant proteome)")
+else:
+    df_test = df_intensity_filtered.copy()
+    st.write(f"Using **{len(df_test):,}** proteins (all after intensity filter)")
+
+# === 3. 6 LOG10 DENSITY PLOTS WITH WHITE SHADOW ===
+st.subheader("3. Intensity Density Plots (log₁₀) — Selected Range Highlighted")
+
+log10_test = np.log10(df_test[all_reps].replace(0, np.nan))
 
 row1, row2 = st.columns(3), st.columns(3)
 for i, rep in enumerate(all_reps):
     col = row1[i] if i < 3 else row2[i-3]
     with col:
-        vals = log10_data[rep].dropna()
-        
+        vals = log10_test[rep].dropna()
         fig = go.Figure()
         fig.add_trace(go.Histogram(
             x=vals,
@@ -74,39 +83,37 @@ for i, rep in enumerate(all_reps):
             marker_color="#E71316" if rep in c1 else "#1f77b4",
             opacity=0.75
         ))
-        
-        # WHITE SHADOW OVERLAY — exactly as requested
-        fig.add_vrect(
-            x0=min_val, x1=max_val,
-            fillcolor="white", opacity=0.4,
-            line_width=2, line_color="black"
-        )
-        
+        # WHITE SHADOW OVERLAY
+        fig.add_vrect(x0=min_val, x1=max_val, fillcolor="white", opacity=0.4, line_width=2, line_color="black")
         fig.update_layout(
             height=380,
             title=f"<b>{rep}</b>",
             xaxis_title="log₁₀(Intensity)",
             yaxis_title="Density",
-            showlegend=False,
-            plot_bgcolor="white"
+            showlegend=False
         )
         st.plotly_chart(fig, use_container_width=True)
 
-# === 3. APPLY FILTER ===
-filter_manual = st.checkbox("Apply this manual intensity filter?", value=True)
+# === 4. REPLICATE DIFFERENCE TESTING (KS TEST) ===
+st.subheader("4. Replicate Difference Testing (Kolmogorov-Smirnov)")
 
-if filter_manual:
-    mask = pd.Series(True, index=df_species.index)
-    for rep in all_reps:
-        mask &= (log10_data[rep] >= min_val) & (log10_data[rep] <= max_val)
-    df_filtered = df_species[mask].copy()
-    retained_pct = len(df_filtered) / len(df_species) * 100
-    st.write(f"**Retained**: {len(df_filtered):,} proteins ({retained_pct:.1f}%)")
+significant_pairs = []
+for r1, r2 in combinations(all_reps, 2):
+    d1 = df_test[r1].replace(0, np.nan).dropna()
+    d2 = df_test[r2].replace(0, np.nan).dropna()
+    if len(d1) > 1 and len(d2) > 1:
+        _, p = stats.ks_2samp(d1, d2)
+        if p < 0.05:
+            significant_pairs.append(f"{r1} vs {r2}")
+
+if significant_pairs:
+    st.error(f"**Significant differences detected** (p < 0.05):\n" + " • ".join(significant_pairs))
+    st.info("Consider normalization or batch correction")
 else:
-    df_filtered = df_species.copy()
+    st.success("**All replicates have statistically similar distributions** — excellent technical quality")
 
-# === 4. NORMALITY & TRANSFORMATION ===
-st.markdown("### 4. Apply Transformation")
+# === 5. NORMALITY & TRANSFORMATION ===
+st.markdown("### 5. Apply Transformation")
 transform = st.selectbox(
     "Choose transformation",
     ["log₂", "log₁₀", "Yeo-Johnson", "None"],
@@ -114,18 +121,18 @@ transform = st.selectbox(
 )
 
 if transform == "log₂":
-    transformed = np.log2(df_filtered[all_reps].replace(0, np.nan))
+    transformed = np.log2(df_test[all_reps].replace(0, np.nan))
 elif transform == "log₁₀":
-    transformed = np.log10(df_filtered[all_reps].replace(0, np.nan))
+    transformed = np.log10(df_test[all_reps].replace(0, np.nan))
 elif transform == "Yeo-Johnson":
     from scipy.stats import yeojohnson
-    transformed = pd.DataFrame(yeojohnson(df_filtered[all_reps].values.flatten())[0].reshape(df_filtered[all_reps].shape),
-                               index=df_filtered.index, columns=all_reps)
+    transformed = pd.DataFrame(yeojohnson(df_test[all_reps].values.flatten())[0].reshape(df_test[all_reps].shape),
+                               index=df_test.index, columns=all_reps)
 else:
-    transformed = df_filtered[all_reps].replace(0, np.nan)
+    transformed = df_test[all_reps].replace(0, np.nan)
 
-# === 5. POST-TRANSFORMATION TABLE ===
-st.markdown("### 5. After Transformation")
+# === 6. POST-TRANSFORMATION TABLE ===
+st.markdown("### 6. After Transformation")
 post_stats = []
 for rep in all_reps:
     vals = transformed[rep].dropna()
@@ -143,10 +150,14 @@ for rep in all_reps:
     })
 st.dataframe(pd.DataFrame(post_stats), use_container_width=True)
 
-# === 6. ACCEPT ===
-st.markdown("### 6. Confirm Setup")
+# === 7. ACCEPT ===
+st.markdown("### 7. Confirm Setup")
 if st.button("Accept This Filtering & Transformation", type="primary"):
     st.session_state.intensity_transformed = transformed
-    st.session_state.df_filtered = df_filtered
+    st.session_state.df_filtered = df_test
     st.session_state.qc_accepted = True
     st.success("**Accepted** — ready for analysis")
+
+if st.session_state.get("qc_accepted", False):
+    if st.button("Go to Differential Analysis", type="primary", use_container_width=True):
+        st.switch_page("pages/4_Differential_Analysis.py")
