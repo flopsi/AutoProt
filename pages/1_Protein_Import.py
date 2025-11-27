@@ -140,7 +140,7 @@ species_keywords = {
 selected = st.multiselect(
     "Which species are present?",
     options=list(species_keywords.keys()),
-    default=["HUMAN", "ECOLI"]
+    default=["HUMAN", "ECOLI","YEAST"]
 )
 
 species_lookup = {}
