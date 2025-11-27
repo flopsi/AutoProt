@@ -305,7 +305,6 @@ for rep in all_reps:
     
     for name, func in transform_options.items():
         try:
-        try:
             t_vals = func(raw_vals)
             if t_vals is None or np.any(np.isnan(t_vals)): continue
             w, _ = stats.shapiro(t_vals)
