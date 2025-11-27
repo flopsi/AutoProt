@@ -34,13 +34,12 @@ if "uploaded_peptide_bytes" not in st.session_state:
 else:
     st.success(f"Peptide file ready: **{st.session_state.uploaded_peptide_name}**")
 
-# === LOAD FROM BYTES ===
 @st.cache_data(show_spinner="Loading peptide data...")
 def load_peptide_data(_bytes):
     text = _bytes.decode("utf-8", errors="replace")
     if text.startswith("\ufeff"):
         text = text[1:]
-    return pd.read_csv(io.StringIO(text), sep=None, engine="python", low_memory=False)
+    return pd.read_csv(io.StringIO(text), sep=None, engine="python")  # ← Removed low_memory=False
 
 df_raw = load_peptide_data(st.session_state.uploaded_peptide_bytes)
 st.write(f"**{len(df_raw):,}** rows × **{len(df_raw.columns)}** columns (raw)")
