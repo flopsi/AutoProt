@@ -116,7 +116,39 @@ def detect_peptide_sequence_column(df):
     return None
 
 auto_seq_col = detect_peptide_sequence_column(df)
+# === SPECIES DETECTION FROM PROTEIN NAME ===
 
+st.subheader("Species Assignment")
+species_keywords = {
+    "HUMAN": ["HUMAN", "HOMO", "HSA"],
+    "MOUSE": ["MOUSE", "MUS", "MMU"],
+    "RAT":   ["RAT", "RATTUS", "RNO"],
+    "ECOLI": ["ECOLI", "ESCHERICHIA"],
+    "YEAST": ["YEAST", "SACCHA", "CEREVISIAE"],
+    "BOVIN": ["BOVIN", "BOVINE", "BOS"],
+}
+
+selected = st.multiselect(
+    "Which species are present?",
+    options=list(species_keywords.keys()),
+    default=["HUMAN", "ECOLI","YEAST"]
+)
+
+species_lookup = {}
+for sp in selected:
+    for kw in species_keywords[sp]:
+        species_lookup[kw] = sp
+
+def get_species(name):
+    if pd.isna(name):
+        return "Other"
+    name_up = str(name).upper()
+    for kw, sp in species_lookup.items():
+        if kw in name_up:
+            return sp
+    return "Other"
+
+df["Species"] = df["Name"].apply(get_species)
 # === USER COLUMN ASSIGNMENT ===
 st.subheader("Column Assignment")
 
