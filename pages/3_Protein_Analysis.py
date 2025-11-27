@@ -197,7 +197,7 @@ with col1:
         fig = go.Figure()
         for i, label in enumerate(labels_all):
             fig.add_trace(go.Scatter(
-                x=[pc[i, 0]], y=[pc[i, 1]],
+                x=[pc[i, 0]], y=[pc[i, 0]],
                 mode='markers+text',
                 name=label,
                 marker=dict(color=colors_all[i], size=16),
