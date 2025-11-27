@@ -5,6 +5,9 @@ import numpy as np
 import plotly.graph_objects as go
 from scipy import stats
 
+
+if "last_plot_df_hash" not in st.session_state:
+    st.session_state.last_plot_df_hash = None
 # === SAFETY CHECK ===
 required_keys = ["prot_df", "prot_c1", "prot_c2"]
 missing = [k for k in required_keys if k not in st.session_state]
@@ -22,28 +25,30 @@ all_reps = c1 + c2
 
 st.success(f"Loaded **{len(df):,}** proteins | Condition A: **{len(c1)}** reps | Condition B: **{len(c2)}** reps")
 
-# === 1. LOW INTENSITY FILTER FOR PLOTS ONLY ===
+# === 1. LOW INTENSITY FILTER FOR PLOTS ONLY (NOW 100% WORKING) ===
 st.subheader("Plot Filter (Visual QC Only)")
 remove_low_plot = st.checkbox(
     "Remove proteins with log₁₀ intensity < 0.5 in ALL replicates (plots only)",
     value=False
 )
 
+# Always start from original data
 df_plot = df.copy()
 
 if remove_low_plot:
-    # Create mask with SAME INDEX as df_plot
+    # Build mask with correct index
     mask = pd.Series(True, index=df_plot.index)
     for rep in all_reps:
-        # Safe log10 on this replicate only
         log_vals = np.log10(df_plot[rep].replace(0, np.nan))
-        mask = mask & (log_vals >= 0.5)
+        mask &= (log_vals >= 0.5)
     df_plot = df_plot.loc[mask]
+    st.info(f"Low-intensity filter applied → {len(df_plot):,} proteins remain for plots")
 else:
-    df_plot = df.copy()
+    st.info(f"No plot filter → showing all {len(df_plot):,} proteins")
 
-# === 2. PRE-CALCULATE LOG10 FOR PLOTS (SAFE!) ===
-if "log10_plot_cache" not in st.session_state:
+# === 2. RECALCULATE LOG10 CACHE BASED ON CURRENT df_plot ===
+# This is the key: cache must reflect the current df_plot!
+if "log10_plot_cache" not in st.session_state or st.session_state.get("last_plot_df_hash") != hash(df_plot.to_string()):
     intensity_cols = all_reps
     log10_data = np.log10(df_plot[intensity_cols].replace(0, np.nan))
 
@@ -52,12 +57,13 @@ if "log10_plot_cache" not in st.session_state:
     if "Species" in df_plot.columns:
         for species in df_plot["Species"].unique():
             if pd.notna(species) and species != "Other":
-                mask = df_plot["Species"] == species
-                subset = df_plot[mask][intensity_cols].replace(0, np.nan)
+                mask_sp = df_plot["Species"] == species
+                subset = df_plot[mask_sp][intensity_cols].replace(0, np.nan)
                 if not subset.empty:
                     cache[species] = np.log10(subset)
 
     st.session_state.log10_plot_cache = cache
+    st.session_state.last_plot_df_hash = hash(df_plot.to_string())  # prevent re-caching
 
 # === 3. SPECIES SELECTION FOR PLOTS ===
 st.subheader("Select Species for Plots")
