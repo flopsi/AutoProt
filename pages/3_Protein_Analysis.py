@@ -6,70 +6,76 @@ import plotly.express as px
 import plotly.graph_objects as go
 from scipy import stats
 from scipy.stats import boxcox, yeojohnson
+import scikit_posthocs as sp
 
 # Load data
 df = st.session_state.prot_final_df
 c1 = st.session_state.prot_final_c1
 c2 = st.session_state.prot_final_c2
+all_reps = c1 + c2
 
 st.title("Protein-Level QC & Transformation")
 
-# === 1. INTENSITY HISTOGRAMS (Schessner Figure 4A) ===
-st.subheader("1. Raw Intensity Histograms (Before Transformation)")
+# === 1. INDIVIDUAL DENSITY PLOTS (Figure 4A style) ===
+st.subheader("1. Individual Intensity Density Plots (Raw → log₂)")
 
-raw_data = df[c1 + c2].replace(0, np.nan)
-fig_hist = go.Figure()
+raw_data = df[all_reps].replace(0, np.nan)
+log2_data = np.log2(raw_data)
 
-for i, rep in enumerate(c1 + c2):
-    vals = raw_data[rep].dropna()
-    fig_hist.add_trace(go.Histogram(
-        x=np.log2(vals),
+fig = go.Figure()
+
+colors = ["#E71316"] * len(c1) + ["#1f77b4"] * len(c2)
+
+for i, rep in enumerate(all_reps):
+    vals = log2_data[rep].dropna()
+    fig.add_trace(go.Violin(
+        y=vals,
         name=rep,
-        opacity=0.6,
-        nbinsx=100,
-        marker_color="#E71316" if rep in c1 else "#1f77b4"
+        box_visible=True,
+        meanline_visible=True,
+        line_color=colors[i],
+        fillcolor=colors[i] + "40",
+        opacity=0.8
     ))
 
-fig_hist.update_layout(
-    barmode="overlay",
-    height=500,
-    xaxis_title="log₂(Intensity)",
-    yaxis_title="Number of Proteins",
-    legend_title="Replicate",
+fig.update_layout(
+    height=600,
+    yaxis_title="log₂(Intensity)",
+    xaxis_title="Replicate",
+    showlegend=False,
     plot_bgcolor="white"
 )
-st.plotly_chart(fig_hist, use_container_width=True)
 
-# === 2. RAW DATA STATISTICS ===
-st.markdown("### 2. Raw Data Distribution Diagnosis")
-stats_raw = []
-for rep in c1 + c2:
-    vals = raw_data[rep].dropna()
-    if len(vals) < 4:
-        stats_raw.append({"Replicate": rep, "n": len(vals), "Skew": "N/A", "Kurtosis": "N/A", "Shapiro p": "N/A"})
-        continue
-    skew = stats.skew(np.log2(vals))
-    kurt = stats.kurtosis(np.log2(vals))
-    _, p = stats.shapiro(np.log2(vals))
-    stats_raw.append({
-        "Replicate": rep,
-        "n": len(vals),
-        "Skew": f"{skew:+.3f}",
-        "Kurtosis": f"{kurt:+.3f}",
-        "Shapiro p": f"{p:.2e}"
-    })
+st.plotly_chart(fig, use_container_width=True)
 
-st.dataframe(pd.DataFrame(stats_raw), use_container_width=True)
+# === 2. TEST FOR SIGNIFICANT DIFFERENCES ===
+st.markdown("### Statistical Test: Are Replicates Significantly Different?")
 
-# === 3. TRANSFORMATION SELECTION ===
-st.markdown("### 3. Apply Transformation")
+# Kruskal-Wallis (non-parametric ANOVA)
+kruskal = stats.kruskal(*[log2_data[rep].dropna() for rep in all_reps])
+st.write(f"**Kruskal-Wallis test**: H = {kruskal.statistic:.2f}, p = {kruskal.pvalue:.2e}")
+
+if kruskal.pvalue < 0.05:
+    st.error("Replicates are significantly different (p < 0.05) — check for technical bias!")
+
+    # Dunn's post-hoc test
+    dunn = sp.posthoc_dunn([log2_data[rep].dropna() for rep in all_reps], p_adjust="holm")
+    dunn.columns = all_reps
+    dunn.index = all_reps
+    st.write("**Dunn's post-hoc test (Holm-adjusted p-values)**")
+    st.dataframe(dunn.style.format("{:.2e}").background_gradient(cmap="Reds"))
+else:
+    st.success("No significant differences between replicates (p ≥ 0.05) — good reproducibility!")
+
+# === 3. TRANSFORMATION + RETEST ===
+st.markdown("### Apply Transformation")
 transform = st.selectbox(
     "Choose transformation",
     ["log₂ (recommended)", "log₁₀", "Box-Cox", "Yeo-Johnson", "None"],
     index=0
 )
 
-# Apply transformation
+# Apply
 if transform == "log₂ (recommended)":
     transformed = np.log2(raw_data)
     y_label = "log₂(Intensity)"
@@ -80,60 +86,41 @@ elif transform == "Box-Cox":
     shifted = raw_data - raw_data.min().min() + 1
     transformed = pd.DataFrame(boxcox(shifted.values.flatten())[0].reshape(shifted.shape),
                                index=raw_data.index, columns=raw_data.columns)
-    y_label = "Box-Cox(Intensity)"
+    y_label = "Box-Cox"
 elif transform == "Yeo-Johnson":
     transformed = pd.DataFrame(yeojohnson(raw_data.values.flatten())[0].reshape(raw_data.shape),
                                index=raw_data.index, columns=raw_data.columns)
-    y_label = "Yeo-Johnson(Intensity)"
+    y_label = "Yeo-Johnson"
 else:
     transformed = raw_data
-    y_label = "Raw Intensity"
+    y_label = "Raw"
 
-# === 4. FINAL VIOLIN + BOX PLOT ===
-melted = transformed.melt(var_name="Replicate", value_name=y_label).dropna()
-melted["Condition"] = melted["Replicate"].apply(lambda x: "A" if x in c1 else "B")
-melted["Replicate"] = pd.Categorical(melted["Replicate"], c1 + c2, ordered=True)
+# === BLUE BOX: RESULT ===
+st.markdown(f"""
+<div style="background:#1976d2;padding:20px;border-radius:12px;color:white;">
+    <h4>Applied Transformation: <strong>{transform}</strong></h4>
+    <p>Post-transformation retest (Shapiro-Wilk on log₂ values):</p>
+</div>
+""", unsafe_allow_html=True)
 
-fig = px.violin(
-    melted, x="Replicate", y=y_label, color="Condition",
-    color_discrete_map={"A": "#E71316", "B": "#1f77b4"},
-    box=True, points=False, violinmode="overlay"
-)
-fig.update_traces(box_visible=True, meanline_visible=True)
-fig.update_layout(height=650, yaxis_title=y_label)
-st.plotly_chart(fig, use_container_width=True)
+post_stats = []
+for rep in all_reps:
+    vals = np.log2(raw_data[rep].dropna())
+    _, p = stats.shapiro(vals)
+    post_stats.append({"Replicate": rep, "Shapiro-Wilk p": f"{p:.2e}"})
 
-# === 5. BLUE BOX: TRANSFORMATION + RETEST RESULT ===
-st.markdown("### Current Transformation & Post-Test Result")
-with st.container():
-    st.markdown(f"""
-    <div style="background:#1e88e5;padding:15px;border-radius:10px;color:white;">
-        <h4>Applied: <strong>{transform}</strong></h4>
-        <p>After transformation:</p>
-    </div>
-    """, unsafe_allow_html=True)
+st.dataframe(pd.DataFrame(post_stats), use_container_width=True)
 
-    # Retest
-    post_stats = []
-    for rep in c1 + c2:
-        vals = transformed[rep].dropna()
-        if len(vals) < 4: continue
-        skew = stats.skew(vals)
-        kurt = stats.kurtosis(vals)
-        _, p = stats.shapiro(vals)
-        post_stats.append({"Replicate": rep, "Skew": f"{skew:+.3f}", "Kurtosis": f"{kurt:+.3f}", "p": f"{p:.2e}"})
+if transform.startswith("log₂"):
+    st.success("**log₂ transformation applied — gold standard**")
+else:
+    st.info(f"Transformation: {transform}")
 
-    st.dataframe(pd.DataFrame(post_stats), use_container_width=True)
-
-    # Final verdict
-    if transform.startswith("log₂"):
-        st.success("**log₂ transformation applied — gold standard in proteomics**")
-    else:
-        st.info(f"Transformation applied: {transform}")
-
-# === SAVE DATA ===
+# Save
 st.session_state.intensity_raw = raw_data
-st.session_state.intensity_transformed = transformed
-st.session_state.transform_applied = transform
+st.session_state.intensity_log2 = np.log2(raw_data)
 
-st.info("Data saved: `intensity_raw` and `intensity_transformed` ready for downstream analysis")
+st.info("Data saved: `intensity_raw` and `intensity_log2` ready for analysis")
+
+if st.button("Go to Differential Analysis", type="primary", use_container_width=True):
+    st.switch_page("pages/4_Differential_Analysis.py")
