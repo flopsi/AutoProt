@@ -122,4 +122,45 @@ st.markdown("### Assign Replicates (must be equal number in A and B)")
 rows = [{"Column": c, "A": False, "B": False} for c in intensity_cols]
 edited = st.data_editor(
     pd.DataFrame(rows),
-   
+    column_config={
+        "Column": st.column_config.TextColumn("Intensity Column", disabled=True),
+        "A": st.column_config.CheckboxColumn("Condition A", default=False),
+        "B": st.column_config.CheckboxColumn("Condition B", default=False),
+    },
+    hide_index=True,
+    use_container_width=True,
+    num_rows="fixed"
+)
+
+a_cols = edited[edited["A"]]["Column"].tolist()
+b_cols = edited[edited["B"]]["Column"].tolist()
+
+if len(a_cols) != len(b_cols) or len(a_cols) == 0:
+    st.error(f"Must assign equal number of replicates! Currently: A={len(a_cols)}, B={len(b_cols)}")
+    st.stop()
+
+# === RENAME TO A1, A2, ..., B1, B2... ===
+n = len(a_cols)
+rename_map = {a_cols[i]: f"A{i+1}" for i in range(n)}
+rename_map.update({b_cols[i]: f"B{i+1}" for i in range(n)})
+
+df = df_raw.rename(columns=rename_map).copy()
+c1 = [f"A{i+1}" for i in range(n)]
+c2 = [f"B{i+1}" for i in range(n)]
+
+st.success(f"Renamed replicates → **A**: {', '.join(c1)} | **B**: {', '.join(c2)}")
+
+# Optional: Replace 0 and NaN with small value (common in peptide data)
+df[c1 + c2] = df[c1 + c2].replace([0, np.nan], 1.0)
+
+# === SAVE TO SESSION STATE ===
+st.session_state.pept_df = df
+st.session_state.pept_c1 = c1
+st.session_state.pept_c2 = c2
+
+st.success("Peptide data successfully loaded and formatted!")
+
+if st.button("Go to Peptide Analysis", type="primary", use_container_width=True):
+    st.switch_page("pages/4_Peptide_Analysis.py")
+
+restart_button()
