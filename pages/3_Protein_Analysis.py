@@ -4,7 +4,6 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from scipy import stats
-from scipy.stats import boxcox, yeojohnson
 
 # Load data
 if "prot_final_df" not in st.session_state:
@@ -91,15 +90,19 @@ for rep in all_reps:
 
 st.dataframe(pd.DataFrame(stats_raw), use_container_width=True)
 
-# === 3. TRANSFORMATION SELECTION ===
+# === 3. TRANSFORMATION SELECTION (SAFE) ===
 st.markdown("### 3. Apply Transformation")
+
+# Check if data allows Box-Cox
+has_negative_or_zero = (raw_data <= 0).any().any()
+
 transform = st.selectbox(
     "Choose transformation",
-    ["log₂", "log₁₀", "Box-Cox", "Yeo-Johnson", "None"],
+    ["log₂", "log₁₀"] + (["Box-Cox"] if not has_negative_or_zero else []) + ["Yeo-Johnson", "None"],
     index=1
 )
 
-# Apply transformation — FIXED Yeo-Johnson & Box-Cox
+# Apply transformation
 if transform == "log₂":
     transformed = np.log2(raw_data)
     y_label = "log₂(Intensity)"
@@ -107,18 +110,16 @@ elif transform == "log₁₀":
     transformed = np.log10(raw_data)
     y_label = "log₁₀(Intensity)"
 elif transform == "Box-Cox":
-    # Box-Cox requires strictly positive values
-    shifted = raw_data + 1  # simple shift
+    shifted = raw_data + 1
     transformed = pd.DataFrame(
-        boxcox(shifted.values.flatten())[0].reshape(shifted.shape),
+        stats.boxcox(shifted.values.flatten())[0].reshape(shifted.shape),
         index=raw_data.index, columns=raw_data.columns
     )
     y_label = "Box-Cox(Intensity)"
 elif transform == "Yeo-Johnson":
-    # Yeo-Johnson handles negative/zero — but must be finite
-    clean_data = raw_data.replace([np.inf, -np.inf], np.nan).fillna(0)
+    # Yeo-Johnson handles negative/zero
     transformed = pd.DataFrame(
-        yeojohnson(clean_data.values.flatten())[0].reshape(clean_data.shape),
+        stats.yeojohnson(raw_data.values.flatten())[0].reshape(raw_data.shape),
         index=raw_data.index, columns=raw_data.columns
     )
     y_label = "Yeo-Johnson(Intensity)"
@@ -126,8 +127,9 @@ else:
     transformed = raw_data
     y_label = "Raw Intensity"
 
-# === 4. POST-TRANSFORMATION STATISTICS ===
+# === 4. POST-TRANSFORMATION STATISTICS (REAL-TIME) ===
 st.markdown("### 4. After Transformation")
+
 post_stats = []
 for rep in all_reps:
     vals = transformed[rep].dropna()
