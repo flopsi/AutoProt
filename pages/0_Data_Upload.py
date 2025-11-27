@@ -17,7 +17,7 @@ st.markdown("""
 
 # === UPLOAD ===
 uploaded_prot = st.file_uploader("Upload Intensity Table (wide format)", type=["csv", "tsv", "txt"])
-if not uploaded_prot or not uploaded_pep:
+if not uploaded_prot:
     st.info("Please upload either protein or peptide file to continue.")
     st.stop()
 
