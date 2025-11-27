@@ -127,82 +127,42 @@ for i, rep in enumerate(all_reps):
                 table_data.append({"Species": sp, "Mean": mean_s, "Var": var_s, "Std": std_s})
         st.table(pd.DataFrame(table_data).set_index("Species"))
 
-# === FINAL FILTER STRATEGY (100% FIXED) ===
-st.subheader("Final Filter Strategy")
+# === FINAL FILTER STRATEGY (DYNAMICALLY UPDATES COUNT TABLE & KS TEST) ===
+st.subheader("Final Filter Strategy (for Downstream Analysis)")
+
 filter_strategy = st.radio(
-    "Choose filtering strategy for downstream analysis:",
+    "Choose filtering strategy:",
     ["Raw data", "Low intensity filtered", "±2σ filtered", "Combined"],
-    index=0
+    index=0,
+    key="final_filter_strategy_radio"
 )
 
+# === RECALCULATE FINAL DATASET BASED ON FILTER STRATEGY ===
 df_final = df.copy()
 log10_full = np.log10(df_final[all_reps].replace(0, np.nan))
 
-# Start with full mask
-mask = pd.Series(True, index=df_final.index)
-
-if filter_strategy in ["Low intensity filtered", "Combined"]:
-    # Must have ≥0.5 in ALL replicates
-    low_intensity_mask = (log10_full >= 0.5).all(axis=1)
-    mask &= low_intensity_mask
+if filter_strategy in ["Low intensity filtered", "±2σ filtered", "Combined"]:
+    # Apply low-intensity filter first
+    mask = pd.Series(True, index=df_final.index)
+    for rep in all_reps:
+        mask &= (log10_full[rep] >= 0.5)
+    df_final = df_final[mask]
+    log10_full = log10_full.loc[mask]
 
 if filter_strategy in ["±2σ filtered", "Combined"]:
-    # ±2σ per replicate
-    sigma_mask = pd.Series(True, index=df_final.index)
+    # Apply ±2σ per replicate
+    mask = pd.Series(True, index=df_final.index)
     for rep in all_reps:
         vals = log10_full[rep].dropna()
-        if len(vals) == 0:
-            continue
-        m, s = vals.mean(), vals.std()
-        rep_mask = (log10_full[rep] >= m - 2*s) & (log10_full[rep] <= m + 2*s)
-        sigma_mask &= rep_mask
-    mask &= sigma_mask
+        if len(vals) == 0: continue
+        mean = vals.mean()
+        std = vals.std()
+        mask &= (log10_full[rep] >= mean - 2*std) & (log10_full[rep] <= mean + 2*std)
+    df_final = df_final[mask]
 
-df_final = df_final.loc[mask]
-
-# === 6. REPLICATE DIFFERENCE TESTING (KS TEST) ===
-st.subheader("Replicate Difference Testing (Kolmogorov–Smirnov)")
-
-test_mode = st.radio(
-    "Test using:",
-    ["All proteins", "Constant proteome only"],
-    index=1
-)
-
-if test_mode == "Constant proteome only":
-    if "Species" not in df_final.columns:
-        st.error("Species column missing")
-        st.stop()
-    constant_species = st.selectbox("Reference proteome", ["HUMAN", "ECOLI", "YEAST"], index=0)
-    ref_df = df_final[df_final["Species"] == constant_species]
-    ref_label = constant_species
-else:
-    ref_df = df_final
-    ref_label = "All proteins"
-
-ks_results = []
-for rep in all_reps:
-    ref_vals = np.log10(ref_df[rep].replace(0, np.nan).dropna())
-    rep_vals = np.log10(df_final[rep].replace(0, np.nan).dropna())
-
-    if len(ref_vals) < 10 or len(rep_vals) < 10:
-        ks_results.append({"Replicate": rep, "vs": ref_label, "p-value": "—", "Different?": "—"})
-        continue
-
-    _, p = stats.ks_2samp(ref_vals, rep_vals)
-    different = "Yes" if p < 0.05 else "No"
-    ks_results.append({"Replicate": rep, "vs": ref_label, "p-value": f"{p:.2e}", "Different?": different})
-
-ks_df = pd.DataFrame(ks_results)
-
-
-if any(r["Different?"] == "Yes" for r in ks_results if r["Different?"] != "—"):
-    st.error("**Significant differences detected** — check technical reproducibility")
-else:
-    st.success("**Excellent technical reproducibility** — all replicates similar")
-
-# === 7. PROTEIN COUNTS AFTER FILTER ===
+# === DYNAMIC PROTEIN COUNT TABLE (UPDATES INSTANTLY) ===
 st.subheader("Protein Counts After Final Filter")
+
 count_data = []
 species_list = ["All proteins", "HUMAN", "ECOLI", "YEAST"]
 for sp in species_list:
@@ -212,10 +172,76 @@ for sp in species_list:
     else:
         unfiltered = len(df[df["Species"] == sp]) if "Species" in df.columns else 0
         filtered = len(df_final[df_final["Species"] == sp]) if "Species" in df_final.columns else 0
-    count_data.append({"Species": sp, "Before Filter": unfiltered, "After Filter": filtered})
+    count_data.append({
+        "Species": sp,
+        "Before Filter": unfiltered,
+        "After Final Filter": filtered
+    })
 
 st.table(pd.DataFrame(count_data).set_index("Species"))
 
+# === REPLICATE DIFFERENCE TESTING (ON FINAL FILTERED DATA) ===
+st.subheader("Replicate Difference Testing (Kolmogorov–Smirnov Test)")
+
+test_mode = st.radio(
+    "Test using:",
+    ["All proteins", "Constant proteome only"],
+    index=1,
+    key="ks_test_mode_radio"
+)
+
+if test_mode == "Constant proteome only":
+    if "Species" not in df_final.columns:
+        st.error("Species column missing in filtered data")
+        st.stop()
+    constant_species = st.selectbox(
+        "Select constant proteome (reference)",
+        options=["HUMAN", "ECOLI", "YEAST"],
+        index=0,
+        key="constant_species_select"
+    )
+    reference_df = df_final[df_final["Species"] == constant_species]
+    ref_label = constant_species
+else:
+    reference_df = df_final
+    ref_label = "All proteins"
+
+# KS test on final filtered data
+ks_results = []
+for rep in all_reps:
+    ref_vals = np.log10(reference_df[rep].replace(0, np.nan).dropna())
+    rep_vals = np.log10(df_final[rep].replace(0, np.nan).dropna())
+    
+    if len(ref_vals) < 10 or len(rep_vals) < 10:
+        ks_results.append({
+            "Replicate": rep,
+            "vs": ref_label,
+            "p-value": "—",
+            "Different?": "—"
+        })
+        continue
+    
+    _, p = stats.ks_2samp(ref_vals, rep_vals)
+    different = "Yes" if p < 0.05 else "No"
+    ks_results.append({
+        "Replicate": rep,
+        "vs": ref_label,
+        "p-value": f"{p:.2e}",
+        "Different?": different
+    })
+
+ks_df = pd.DataFrame(ks_results)
+st.table(ks_df.style.apply(
+    lambda x: ["background: #ffcccc" if v == "Yes" else "background: #ccffcc" for v in x],
+    subset=["Different?"]
+))
+
+if any(r["Different?"] == "Yes" for r in ks_results if r["Different?"] != "—"):
+    st.error("Significant differences detected — check technical bias")
+else:
+    st.success("Excellent technical reproducibility — all replicates similar")
+
+st.info("Kolmogorov–Smirnov test — Schessner et al., 2022, Figure 4B")
 # === ACCEPT FILTERING ===
 if st.button("Accept Final Filtering & Proceed", type="primary"):
     st.session_state.df_filtered = df_final
