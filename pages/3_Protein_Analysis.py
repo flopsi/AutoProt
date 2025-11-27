@@ -5,6 +5,7 @@ import numpy as np
 import plotly.graph_objects as go
 
 # Load data
+if "prot_final_df" must exist
 if "prot_final_df" not in st.session_state:
     st.error("No protein data found! Please go to Protein Import first.")
     st.stop()
@@ -16,11 +17,11 @@ all_reps = c1 + c2
 
 st.title("Protein-Level QC & Species-Specific Visualization")
 
-# === PRE-CALCULATE LOG10 DATA FOR SPEED ===
+# === PRE-CALCULATE LOG10 DATA ===
 if "log10_cache" not in st.session_state:
-    raw = df[all_reps].replace(0, np.nan)
+    raw = df[all_reps].replace(replace(0, np.nan))
     log10_all = np.log10(raw)
-    
+
     cache = {"All proteins": log10_all}
     if "Species" in df.columns:
         for sp in ["HUMAN", "ECOLI", "YEAST"]:
@@ -30,7 +31,7 @@ if "log10_cache" not in st.session_state:
     st.session_state.log10_cache = cache
     st.session_state.species_options = ["All proteins", "HUMAN", "ECOLI", "YEAST"]
 
-# Default
+# Default selection
 if "selected_species" not in st.session_state:
     st.session_state.selected_species = "All proteins"
 
@@ -64,7 +65,7 @@ for i, rep in enumerate(all_reps):
         fig.add_vline(x=mean, line_dash="dash", line_color="black")
         fig.update_layout(
             height=380,
-            title=f"<b>{rep}</b><br>{st.session_state.selected_species}",
+            title=f"<b>{rep}</b>",
             xaxis_title="log₁₀(Intensity)",
             yaxis_title="Density",
             showlegend=False
@@ -84,22 +85,35 @@ for i, rep in enumerate(all_reps):
                 std_str = f"{sp_vals.std():.3f}"
             
             table_data.append({
+                "": sp if i == 0 else "",  # Only top-left gets radio
                 "Species": sp,
                 "Mean": mean_str,
                 "Variance": variance_str,
                 "Std Dev": std_str
             })
 
-        # Only top-left has radio buttons
+        df_table = pd.DataFrame(table_data)
+
+        # Only top-left plot gets radio buttons in column 0
         if i == 0:
             selected = st.radio(
                 "Select species to display",
                 options=st.session_state.species_options,
                 index=st.session_state.species_options.index(st.session_state.selected_species),
-                key="species_radio"
+                format_func=lambda x: x,
+                key="species_selector"
             )
             if selected != st.session_state.selected_species:
                 st.session_state.selected_species = selected
                 st.experimental_rerun()
         else:
-            st.table(pd.DataFrame(table_data).set_index("Species"))
+            st.table(df_table[["Species", "Mean", "Variance", "Std Dev"]].set_index("Species"))
+
+# === FILTERING & ACCEPT (unchanged) ===
+# ... [your filtering code here] ...
+
+st.markdown("### Confirm Setup")
+if st.button("Accept This Filtering", type="primary"):
+    st.session_state.df_filtered = df_filtered
+    st.session_state.qc_accepted = True
+    st.success("**Filtering accepted** — ready for next step")
