@@ -37,6 +37,9 @@ from scipy.cluster.hierarchy import linkage, leaves_list
 from scipy.spatial.distance import pdist
 
 # Z-score across proteins
+# Standardize across proteins
+from sklearn.preprocessing import StandardScaler
+
 z_data = pd.DataFrame(
     StandardScaler().fit_transform(data_for_clustermap),
     index=data_for_clustermap.index,
