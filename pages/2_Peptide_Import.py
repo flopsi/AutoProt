@@ -44,61 +44,59 @@ def load_peptide_data(_bytes):
 df_raw = load_peptide_data(st.session_state.uploaded_peptide_bytes)
 st.write(f"**{len(df_raw):,}** rows × **{len(df_raw.columns)}** columns (raw)")
 
-# === DETECT LONG FORMAT (e.g., Spectronaut, DIA-NN long export) ===
+# === DETECT LONG FORMAT ===
 sample_col_candidates = [c for c in df_raw.columns if any(x in c.lower() for x in ["file", "run", "sample", "raw"])]
 quantity_col_candidates = [c for c in df_raw.columns if any(x in c.lower() for x in ["quantity", "intensity", "area", "fg.", "pg."])]
 peptide_col_candidates = [c for c in df_raw.columns if any(x in c.lower() for x in ["peptide", "sequence", "modified", "stripped", "eg.", "pep"])]
 
-is_long_format = (
-    len(sample_col_candidates) > 0 and
-    len(quantity_col_candidates) >= 1 and
-    len(peptide_col_candidates) > 0
-)
+is_long_format = len(sample_col_candidates) > 0 and len(quantity_col_candidates) >= 1 and len(peptide_col_candidates) > 0
 
 if is_long_format:
-    sample_col = sample_col_candidates[0]
+    # Pre-select the most likely columns
+    sample_col   = sample_col_candidates[0]
     quantity_col = quantity_col_candidates[0]
-    peptide_col = peptide_col_candidates[0]
+    peptide_col  = peptide_col_candidates[0]
 
-    st.info(f"Detected long-format peptide file!\n"
-            f"→ Sample column: `{sample_col}`\n"
-            f"→ Quantity column: `{quantity_col}`\n"
-            f"→ Peptide column: `{peptide_col}`")
+    st.info(f"Long-format peptide file detected!\n"
+            f"Sample column: `{sample_col}` | Quantity: `{quantity_col}` | Peptide: `{peptide_col}`")
 
-    # Optional: Let user confirm or correct column choices
     col1, col2, col3 = st.columns(3)
     with col1:
-        sample_col = st.selectbox("Sample/Run column", df_raw.columns, index=df_raw.columns.get_loc(sample_col))
+        sample_col   = st.selectbox("Sample / Run column",   df_raw.columns, index=df_raw.columns.get_loc(sample_col))
     with col2:
-        quantity_col = st.selectbox("Quantity/Intensity column", df_raw.columns, index=df_raw.columns.get_loc(quantity_col))
+        quantity_col = st.selectbox("Quantity / Intensity column", df_raw.columns, index=df_raw.columns.get_loc(quantity_col))
     with col3:
-        peptide_col = st.selectbox("Peptide sequence column", df_raw.columns, index=df_raw.columns.get_loc(peptide_col))
+        peptide_col  = st.selectbox("Peptide sequence column", df_raw.columns, index=df_raw.columns.get_loc(peptide_col))
 
-    if st.button("Pivot Long → Wide Format", type="secondary"):
-        with st.spinner("Pivoting peptide data..."):
-            # Keep metadata columns (everything except sample/quantity)
+    if st.button("Pivot Long to Wide Format", type="primary"):
+        with st.spinner("Pivoting..."):
+            df_clean = df_raw.drop_duplicates(subset=[peptide_col, sample_col])
             meta_cols = [c for c in df_raw.columns if c not in [sample_col, quantity_col]]
 
-            # Drop duplicates per peptide+sample if any (safety)
-            df_clean = df_raw.drop_duplicates(subset=[peptide_col, sample_col])
-
-            # Pivot: peptides → rows, samples → columns
-            df_pivot = df_clean.pivot_table(
+            pivoted = df_clean.pivot_table(
                 values=quantity_col,
-                index=[peptide_col] + [c for c in meta_cols if c != sample_col],
+                index=[peptide_col] + meta_cols,
                 columns=sample_col,
-                aggfunc='mean'  # or 'sum' depending on your data
-            ).reset_index()
+                aggfunc="mean",
+                dropna=False
+            )
 
-            # Flatten multi-level columns
-            if isinstance(df_pivot.columns, pd.MultiIndex):
-                df_pivot.columns = [str(c[1]) if c[0] == quantity_col.split('.')[-1] or c[0] == '' else c[0] for c in df_pivot.columns.values]
-                df_pivot.columns = [c if c != peptide_col else "Peptide" for c in df_pivot.columns]
+            # Safe column flattening
+            pivoted.columns = [str(col) if col != quantity_col else str(sample) for col, sample in pivoted.columns]
 
-            df_raw = df_pivot
-            st.success(f"Pivoted successfully! Now {len(df_raw):,} peptides × {len(df_raw.columns)} columns")
-            st.write("First few columns after pivot:", list(df_raw.columns[:10]))
+            # Resolve any name clashes
+            run_cols = [c for c in pivoted.columns if c not in meta_cols + [peptide_col]]
+            rename_dict = {}
+            for rc in run_cols:
+                if rc in pivoted.columns.tolist() + meta_rc:
+                    rename_dict[rc] = f"{rc}_intensity"
+            if rename_dict:
+                pivoted = pivoted.rename(columns=rename_dict)
 
+            df_raw = pivoted.reset_index().rename(columns={peptide_col: "Peptide"})
+            st.success(f"Pivoted → {df_raw.shape[0]:,} peptides × {df_raw.shape[1]} columns")
+else:
+    st.info("Wide-format file detected – no pivoting needed.")
 # === FIND INTENSITY COLUMNS (after possible pivot) ===
 intensity_cols = []
 for col in df_raw.columns:
