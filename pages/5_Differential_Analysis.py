@@ -35,11 +35,10 @@ st.subheader("Sample Clustering (Dendrogram & Clustermap)")
 
 # Use final log2 data
 data_for_clustering = intensity_final[all_reps].copy()
-
-# Remove proteins with missing values
 data_for_clustering = data_for_clustering.dropna()
 
 # Standardize across proteins
+from sklearn.preprocessing import StandardScaler
 X = StandardScaler().fit_transform(data_for_clustering.values)
 
 # Hierarchical clustering
@@ -49,11 +48,9 @@ linkage_matrix = linkage(X.T, method='average', metric='euclidean')
 # === DENDROGRAM ===
 fig_dend = go.Figure()
 
-# Create dendrogram
 dendro = dendrogram(linkage_matrix, labels=all_reps, no_plot=True)
 order = dendro['leaves']
 
-# Plot
 for i in range(len(dendro['icoord'])):
     x = dendro['icoord'][i]
     y = dendro['dcoord'][i]
@@ -65,7 +62,6 @@ for i in range(len(dendro['icoord'])):
         hoverinfo='none'
     ))
 
-# Color by condition
 colors = ['#E71316' if rep in c1 else '#1f77b4' for rep in all_reps]
 
 fig_dend.add_trace(go.Scatter(
@@ -87,14 +83,12 @@ fig_dend.update_layout(
 )
 st.plotly_chart(fig_dend, use_container_width=True)
 
-# === CLUSTERMAP (alphastats style) ===
+# === CLUSTERMAP ===
 st.subheader("Clustermap of Replicate Profiles")
 
-# Reorder data by dendrogram
 ordered_samples = [all_reps[i] for i in order]
 data_clustermap = data_for_clustering[ordered_samples]
 
-# Z-score across proteins
 z_data = pd.DataFrame(
     StandardScaler().fit_transform(data_clustermap),
     index=data_clustermap.index,
@@ -104,7 +98,7 @@ z_data = pd.DataFrame(
 fig = go.Figure(data=go.Heatmap(
     z=z_data.values,
     x=z_data.columns,
-    y=[""] * len(z_data),  # Hide protein IDs for clean look
+    y=[""] * len(z_data),
     colorscale="RdBu_r",
     zmid=0,
     showscale=True
