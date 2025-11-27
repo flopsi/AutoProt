@@ -1,6 +1,7 @@
 # pages/1_Import.py
 import streamlit as st
 import pandas as pd
+import numpy as np
 
 st.set_page_config(page_title="Import", layout="wide")
 st.title("Proteomics Data Import — Professional Mode (Schessner et al., 2022)")
@@ -21,7 +22,7 @@ if not uploaded_prot:
 
 @st.cache_data  # 👈 Add the caching decorator
 def load_prot(file):
-    df = pd.read_csv(file, sep=None, engine="python", header=0,index_col=0)
+    df = pd.read_csv(file, sep=None, engine="python", header=0,index_col=0,dtype=np.float64)
     return df
 
 df_prot=load_prot(uploaded_prot)
