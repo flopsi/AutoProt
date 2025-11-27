@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 from streamlit_tags import st_tags, st_tags_sidebar
 
-proteomes = st.tags(label="#Type the proteomes in your sample:",
+proteomes = st_tags(label="#Type the proteomes in your sample:",
                     text = "Press enter to add more",
                     value = ["HUMAN","YEAST","ECOLI","RAT"],
                     maxtags=maxtags,
