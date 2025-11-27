@@ -60,7 +60,7 @@ current_data = st.session_state.log10_cache[selected_species]
 
 row1, row2 = st.columns(3), st.columns(3)
 for i, rep in enumerate(all_reps):
-    col = row1[i] if i < 3 else row2[i- [i-3]
+    col = row1[i] if i < 3 else row2[i- [i-3]]
     with col:
         vals = current_data[rep].dropna()
         mean = vals.mean()
