@@ -1,3 +1,11 @@
+  2 import streamlit as st                                                   
+
+     3 import pandas as pd                                                      
+
+     4 import io                                                                
+
+     5 import numpy as np  
+
 # === LOAD DATA ===
 @st.cache_data(show_spinner="Loading data...")
 def load_df(b):
