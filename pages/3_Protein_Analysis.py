@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from scipy import stats
+from scipy.stats import boxcox, yeojohnson
 
 # Load data
 if "prot_final_df" not in st.session_state:
@@ -15,7 +16,7 @@ c1 = st.session_state.prot_final_c1
 c2 = st.session_state.prot_final_c2
 all_reps = c1 + c2
 
-st.title("Protein-Level QC & Dynamic Outlier Filtering")
+st.title("Protein-Level QC & Transformation")
 
 # === SPECIES SELECTION ===
 if "Species" not in df.columns:
@@ -32,13 +33,9 @@ selected_species = st.selectbox(
 
 df_species = df[df["Species"] == selected_species].copy()
 
-# === 1. 6 LOG10 DENSITY PLOTS + DYNAMIC σ BOX ===
-st.subheader("1. Intensity Density Plots (log₁₀)")
+# === 1. 6 LOG10 DENSITY PLOTS + DYNAMIC σ SLIDER ===
+st.subheader("1. Intensity Density Plots (log₁₀) with Dynamic ±σ Bounds")
 
-raw_data = df_species[all_reps].replace(0, np.nan)
-log10_data = np.log10(raw_data)
-
-# Dynamic sigma slider
 sigma_factor = st.slider(
     "Select confidence interval (±σ)",
     min_value=1.0,
@@ -47,6 +44,9 @@ sigma_factor = st.slider(
     step=0.1,
     help="2.0σ ≈ 95%, 3.0σ ≈ 99.7% of normal data"
 )
+
+raw_data = df_species[all_reps].replace(0, np.nan)
+log10_data = np.log10(raw_data)
 
 row1, row2 = st.columns(3), st.columns(3)
 
@@ -71,7 +71,7 @@ for i, rep in enumerate(all_reps):
             opacity=0.75
         ))
         # White background box
-        fig.add_vrect(x0=lower, x1=upper, fillcolor="white", opacity=0.3, line_width=2, line_color="black")
+        fig.add_vrect(x0=lower, x1=upper, fillcolor="white", opacity=0.35, line_width=2, line_color="black")
         fig.add_vline(x=mean, line_dash="dash", line_color="black")
         
         fig.update_layout(
@@ -84,10 +84,8 @@ for i, rep in enumerate(all_reps):
         )
         st.plotly_chart(fig, use_container_width=True)
 
-# === 2. FILTERING BASED ON σ ===
+# === 2. FILTERING OPTION ===
 st.subheader("2. Outlier Filtering")
-st.info(f"**±{sigma_factor:.1f}σ** = white box on each plot above")
-
 filter_sigma = st.checkbox(
     f"Keep only proteins within ±{sigma_factor:.1f}σ in ALL replicates?",
     value=False
@@ -99,19 +97,17 @@ if filter_sigma:
         lower, upper = bounds[rep]
         mask &= (log10_data[rep] >= lower) & (log10_data[rep] <= upper)
     df_filtered = df_species[mask].copy()
-    retained_pct = len(df_filtered) / len(df_species) * 100
-    st.write(f"**Retained**: {len(df_filtered):,} proteins ({retained_pct:.1f}% of original)")
+    st.write(f"**Retained**: {len(df_filtered):,} proteins ({len(df_filtered)/len(df_species)*100:.1f}%)")
 else:
     df_filtered = df_species.copy()
-    st.write("**No filtering applied** — all proteins kept")
 
-# === 3. NORMALITY ON FILTERED DATA ===
-st.subheader("3. Raw Data Diagnosis (Filtered)")
+# === 3. NORMALITY ON RAW ===
+st.subheader("3. Raw Data Diagnosis")
 stats_raw = []
 for rep in all_reps:
     vals = df_filtered[rep].replace(0, np.nan).dropna()
     if len(vals) < 8:
-        stats_raw.append({"Replicate": rep, "n": len(vals), "Skew": "N/A", "Kurtosis": "N/A", "Shapiro p": "N/A"})
+        stats_raw.append({"Replicate": rep, "n": len(vals), "Skew": "N/A", "Kurtosis": "N/A", "Shapiro p": "N/A", "Normal": "N/A"})
         continue
     skew = stats.skew(vals)
     kurt = stats.kurtosis(vals)
@@ -127,11 +123,11 @@ for rep in all_reps:
     })
 st.dataframe(pd.DataFrame(stats_raw), use_container_width=True)
 
-# === 4. TRANSFORMATION ===
+# === 4. TRANSFORMATION SELECTION ===
 st.markdown("### 4. Apply Transformation")
 transform = st.selectbox(
     "Choose transformation",
-    ["log₂", "log₁₀", "Yeo-Johnson", "None"],
+    ["log₂", "log₁₀", "Box-Cox", "Yeo-Johnson", "None"],
     index=1
 )
 
@@ -140,20 +136,44 @@ if transform == "log₂":
     transformed = np.log2(df_filtered[all_reps].replace(0, np.nan))
 elif transform == "log₁₀":
     transformed = np.log10(df_filtered[all_reps].replace(0, np.nan))
+elif transform == "Box-Cox":
+    shifted = df_filtered[all_reps] + 1
+    transformed = pd.DataFrame(boxcox(shifted.values.flatten())[0].reshape(shifted.shape),
+                               index=shifted.index, columns=shifted.columns)
 elif transform == "Yeo-Johnson":
-    from scipy.stats import yeojohnson
     transformed = pd.DataFrame(yeojohnson(df_filtered[all_reps].values.flatten())[0].reshape(df_filtered[all_reps].shape),
                                index=df_filtered.index, columns=all_reps)
 else:
     transformed = df_filtered[all_reps].replace(0, np.nan)
 
-# === 5. ACCEPT ===
-st.markdown("### 5. Confirm Transformation")
+# === 5. POST-TRANSFORMATION TABLE (LIVE) ===
+st.markdown("### 5. After Transformation")
+post_stats = []
+for rep in all_reps:
+    vals = transformed[rep].dropna()
+    if len(vals) < 8:
+        post_stats.append({"Replicate": rep, "Skew": "N/A", "Kurtosis": "N/A", "Shapiro p": "N/A", "Normal": "N/A"})
+        continue
+    skew = stats.skew(vals)
+    kurt = stats.kurtosis(vals)
+    _, p = stats.shapiro(vals)
+    normal = "Yes" if p > 0.05 else "No"
+    post_stats.append({
+        "Replicate": rep,
+        "Skew": f"{skew:+.3f}",
+        "Kurtosis": f"{kurt:+.3f}",
+        "Shapiro p": f"{p:.2e}",
+        "Normal": normal
+    })
+st.dataframe(pd.DataFrame(post_stats), use_container_width=True)
+
+# === 6. ACCEPT ===
+st.markdown("### 6. Confirm Transformation")
 if st.button("Accept This Transformation", type="primary"):
     st.session_state.intensity_transformed = transformed
     st.session_state.df_filtered = df_filtered
     st.session_state.qc_accepted = True
-    st.success(f"**{transform} + filtering accepted**")
+    st.success("**Accepted** — ready for next step")
 
 if st.session_state.get("qc_accepted", False):
     if st.button("Go to Differential Analysis", type="primary", use_container_width=True):
