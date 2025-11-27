@@ -208,22 +208,26 @@ rep_colors = []
 for rep in all_reps:
     vals = df_processed[rep].replace(0, np.nan).dropna()
     if len(vals) == 0:
+        st.warning(f"No valid values in replicate: {rep}")
         continue
     mean_intensities.append(vals.mean())
     rep_labels.append(rep)
     rep_colors.append("#E71316" if rep in c1 else "#1f77b4")
 
 if len(mean_intensities) < 2:
-    st.write("Not enough replicates for PCA")
+    st.error("Not enough valid replicates for PCA (need at least 2)")
 else:
-    # Create dummy features to allow PCA with 2 components (trick for 1D data)
-    X = np.array(mean_intensities).reshape(-1, 1)
-    X_extended = np.hstack([X, np.zeros_like(X)])  # Add dummy column
+    # Create dummy 2D data: [mean_intensity, 0] — forces 2D space
+    X = np.array([[val, 0] for val in mean_intensities])  # shape: (n_replicates, 2)
 
-    # PCA with 2 components
+    # Standardize
+    X_scaled = StandardScaler().fit_transform(X)
+
+    # PCA (now safe: n_features = 2, n_samples >= 2)
     pca = PCA(n_components=2)
-    pc = pca.fit_transform(StandardScaler().fit_transform(X_extended))
+    pc = pca.fit_transform(X_scaled)
 
+    # Plot
     fig = go.Figure()
 
     for i, label in enumerate(rep_labels):
@@ -232,31 +236,27 @@ else:
             y=[pc[i, 1]],
             mode='markers+text',
             name=label,
-            marker=dict(color=rep_colors[i], size=16, line=dict(width=2, color='black')),
+            marker=dict(
+                color=rep_colors[i],
+                size=18,
+                line=dict(width=3, color='black')
+            ),
             text=label,
             textposition="top center",
-            textfont=dict(size=14, color="black")
+            textfont=dict(size=14, color="black", family="Arial Black")
         ))
 
     fig.update_layout(
         title="PCA of Replicate Mean Intensities<br>"
-              f"PC1: {pca.explained_variance_ratio_[0]:.1%} | PC2: {pca.explained_variance_ratio_[1]:.1%}",
+              f"<sub>PC1: {pca.explained_variance_ratio_[0]:.1%} • PC2: {pca.explained_variance_ratio_[1]:.1%}</sub>",
         xaxis_title=f"PC1 ({pca.explained_variance_ratio_[0]:.1%} variance)",
         yaxis_title=f"PC2 ({pca.explained_variance_ratio_[1]:.1%} variance)",
         height=600,
         showlegend=False,
         template="simple_white",
-        xaxis=dict(showgrid=True, gridcolor='lightgray'),
-        yaxis=dict(showgrid=True, gridcolor='lightgray')
+        plot_bgcolor="white",
+        xaxis=dict(showgrid=True, gridcolor='lightgray', zeroline=True, zerolinecolor='black'),
+        yaxis=dict(showgrid=True, gridcolor='lightgray', zeroline=True, zerolinecolor='black')
     )
 
     st.plotly_chart(fig, use_container_width=True)
-
-# === 6. ACCEPT ===
-if st.button("Accept & Proceed to Differential Analysis", type="primary"):
-    st.session_state.intensity_transformed = df_processed[all_reps]
-    st.session_state.df_filtered = df_processed
-    st.session_state.transform_applied = best_transform
-    st.session_state.qc_accepted = True
-    st.success("Ready for differential analysis!")
-    st.balloons()
