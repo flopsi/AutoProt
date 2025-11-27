@@ -14,27 +14,62 @@ c1 = st.session_state.prot_final_c1
 c2 = st.session_state.prot_final_c2
 all_reps = c1 + c2
 
-st.title("Protein-Level QC & Advanced Filtering")
+st.title("Protein-Level QC & Species-Specific Visualization")
 
-# === 1. VIEW MODE ===
-st.subheader("2. Intensity Density Plots (log₁₀)")
-view_species = st.selectbox(
-    "Show density plots for:",
-    ["All proteins", "HUMAN", "ECOLI", "YEAST"],
-    index=0
+# === 1. INTERACTIVE SPECIES TABLE WITH CHECKBOXES ===
+st.subheader("1. Select Species to Display (Click Checkbox)")
+
+# Prepare species list
+species_list = ["All proteins", "HUMAN", "ECOLI", "YEAST"]
+if "Species" not in df.columns:
+    st.error("Species column missing")
+    st.stop()
+
+# Build table data
+table_data = []
+selected_species = []
+
+for sp in species_list:
+    if sp == "All proteins":
+        subset = df
+    else:
+        subset = df[df["Species"] == sp]
+    
+    row = {"Select": sp == "All proteins"}  # default: All proteins checked
+    for rep in all_reps:
+        vals = subset[rep].replace(0, np.nan).dropna()
+        if len(vals) == 0:
+            row[rep] = "—"
+        else:
+            log_vals = np.log10(vals)
+            row[rep] = f"{log_vals.mean():.3f} ± {log_vals.std():.3f}"
+    table_data.append(row)
+    if row["Select"]:
+        selected_species.append(sp)
+
+# Display editable table with checkbox
+edited_df = st.data_editor(
+    pd.DataFrame(table_data),
+    column_config={
+        "Select": st.column_config.CheckboxColumn("Show", default=True)
+    },
+    use_container_width=True,
+    hide_index=True
 )
 
-# Prepare data for selected view
-if view_species == "All proteins":
+# Extract selected species
+selected_species = edited_df[edited_df["Select"]]["Select"].apply(lambda x: x).index.tolist()
+if "All proteins" in selected_species:
+    selected_species = ["All proteins"]  # override others
+
+# === 2. 6 LOG10 DENSITY PLOTS — SPECIES-SPECIFIC MEAN & ±2σ ===
+st.subheader("2. Intensity Density Plots (log₁₀)")
+
+# Prepare data based on selection
+if "All proteins" in selected_species:
     df_plot = df.copy()
 else:
-    if "Species" not in df.columns:
-        st.error("Species column missing")
-        st.stop()
-    df_plot = df[df["Species"] == view_species].copy()
-
-
-
+    df_plot = df[df["Species"].isin(selected_species)].copy()
 
 raw_plot = df_plot[all_reps].replace(0, np.nan)
 log10_plot = np.log10(raw_plot)
@@ -49,7 +84,6 @@ for i, rep in enumerate(all_reps):
         lower = mean - 2*std
         upper = mean + 2*std
 
-        # Plot
         fig = go.Figure()
         fig.add_trace(go.Histogram(
             x=vals,
@@ -59,8 +93,9 @@ for i, rep in enumerate(all_reps):
             marker_color="#E71316" if rep in c1 else "#1f77b4",
             opacity=0.75
         ))
+        # WHITE ±2σ SHADOW (based on selected species)
         fig.add_vrect(x0=lower, x1=upper, fillcolor="white", opacity=0.35, line_width=2)
-        fig.add_vline(x=mean, line_dash="dash")
+        fig.add_vline(x=mean, line_dash="dash", line_color="black")
         fig.update_layout(
             height=380,
             title=f"<b>{rep}</b>",
@@ -70,35 +105,11 @@ for i, rep in enumerate(all_reps):
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # === SMALL 4×3 TABLE BELOW EACH PLOT ===
-        table_data = []
-        for sp in ["All proteins", "HUMAN", "ECOLI", "YEAST"]:
-            if sp == "All proteins":
-                subset = df
-            else:
-                subset = df[df["Species"] == sp] if "Species" in df.columns else pd.DataFrame()
-            if len(subset) == 0:
-                table_data.append({"Species": sp, "Mean": "—", "Variance": "—", "Std Dev": "—"})
-                continue
-            rep_vals = np.log10(subset[rep].replace(0, np.nan).dropna())
-            if len(rep_vals) == 0:
-                table_data.append({"Species": sp, "Mean": "—", "Variance": "—", "Std Dev": "—"})
-            else:
-                table_data.append({
-                    "Species": sp,
-                    "Mean": f"{rep_vals.mean():.3f}",
-                    "Variance": f"{rep_vals.var():.3f}",
-                    "Std Dev": f"{rep_vals.std():.3f}"
-                })
-        st.table(pd.DataFrame(table_data).set_index("Species"))
-
-# === 3. FILTERING (unchanged from previous version) ===
-st.subheader("3. Filtering Options (Choose One)")
+# === 3. FILTERING & ACCEPT (unchanged) ===
 # ... [your filtering code here] ...
 
-# === 4. ACCEPT ===
 st.markdown("### Confirm Setup")
-if st.button("Accept This Filtering", type="primary"):
-    st.session_state.df_filtered = df_filtered
+if st.button("Accept This Selection & Filtering", type="primary"):
+    st.session_state.df_filtered = df_plot
     st.session_state.qc_accepted = True
-    st.success("**Filtering accepted** — ready for next step")
+    st.success("**Accepted** — ready for analysis")
