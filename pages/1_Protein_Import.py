@@ -1,5 +1,3 @@
-
-# pages/1_Protein_Import.py
 import streamlit as st
 import pandas as pd
 import io
@@ -12,7 +10,6 @@ def ss(key, default=None):
     return st.session_state[key]
 
 st.set_page_config(page_title="Protein Import", layout="wide")
-
 st.markdown("""
 <style>
     .header {background:linear-gradient(90deg,#E71316,#A6192E); padding:20px 40px; color:white; margin:-80px -80px 40px;}
@@ -20,7 +17,6 @@ st.markdown("""
     .stButton>button {background:#E71316 !important; color:white !important;}
 </style>
 """, unsafe_allow_html=True)
-
 st.markdown('<div class="header"><h1>DIA Proteomics Pipeline</h1><p>Protein Import</p></div>', unsafe_allow_html=True)
 
 # === UPLOAD ONCE, KEEP FOREVER ===
@@ -37,7 +33,7 @@ if "uploaded_protein_bytes" not in st.session_state:
 else:
     st.success(f"Protein file ready: **{st.session_state.uploaded_protein_name}**")
 
-# === LOAD FROM BYTES (safe ===
+# === LOAD FROM BYTES (safe) ===
 @st.cache_data(show_spinner="Loading protein data...")
 def load_protein_data(_bytes):
     text = _bytes.decode("utf-8", errors="replace")
@@ -46,8 +42,43 @@ def load_protein_data(_bytes):
     return pd.read_csv(io.StringIO(text), sep=None, engine="python")
 
 df_raw = load_protein_data(st.session_state.uploaded_protein_bytes)
+st.write(f"**{len(df_raw):,}** rows × **{len(df_raw.columns)}** columns (raw)")
 
-st.write(f"**{len(df_raw):,}** proteins × **{len(df_raw.columns)}** columns")
+# NEW: Detect if this is long format (e.g., like test5_pg.tsv)
+# - Look for a 'sample' column (contains "File" or "Sample" in name)
+# - Look for a single 'quantity' column (contains "Quantity" or "Intensity")
+# - Look for a 'protein' column (contains "Protein" in name, e.g., PG.ProteinGroups)
+sample_col_candidates = [c for c in df_raw.columns if "file" in c.lower() or "sample" in c.lower()]
+quantity_col_candidates = [c for c in df_raw.columns if "quantity" in c.lower() or "intensity" in c.lower() or "abundance" in c.lower()]
+protein_col_candidates = [c for c in df_raw.columns if "protein" in c.lower()]
+
+is_long_format = len(sample_col_candidates) > 0 and len(quantity_col_candidates) == 1 and len(protein_col_candidates) > 0
+
+if is_long_format:
+    sample_col = sample_col_candidates[0]  # Take first match (e.g., "R.FileName")
+    quantity_col = quantity_col_candidates[0]  # e.g., "PG.Quantity"
+    protein_col = protein_col_candidates[0]  # e.g., "PG.ProteinGroups"
+    
+    st.info(f"Detected long format. Pivoting on sample column '**{sample_col}**', quantity '**{quantity_col}**', protein '**{protein_col}**'.")
+    
+    # Pivot to wide format: Proteins as rows, samples as columns, quantities as values
+    # Aggregate with mean if duplicates (rare, but safe)
+    # Keep other columns (e.g., PG.ProteinNames, PG.Qvalue) by merging back the unique ones
+    other_cols = [c for c in df_raw.columns if c not in [sample_col, quantity_col, protein_col]]
+    df_unique_meta = df_raw[[protein_col] + other_cols].drop_duplicates(subset=[protein_col])
+    
+    df_pivot = pd.pivot_table(
+        df_raw,
+        values=quantity_col,
+        index=protein_col,
+        columns=sample_col,
+        aggfunc='mean'  # Or 'first' if no duplicates expected
+    ).reset_index()
+    
+    # Merge back metadata columns (e.g., PG.ProteinNames)
+    df_raw = pd.merge(df_pivot, df_unique_meta, on=protein_col, how='left')
+    
+    st.write(f"After pivot: **{len(df_raw):,}** proteins × **{len(df_raw.columns)}** columns")
 
 # === INTENSITY COLUMNS ===
 intensity_cols = []
@@ -73,10 +104,8 @@ edited = st.data_editor(
     },
     hide_index=True, use_container_width=True, num_rows="fixed"
 )
-
 a_cols = edited[edited["A"]]["Column"].tolist()
 b_cols = edited[edited["B"]]["Column"].tolist()
-
 if len(a_cols) != len(b_cols) or len(a_cols) == 0:
     st.error("Must have equal replicates")
     st.stop()
@@ -86,10 +115,8 @@ n = len(a_cols)
 rename_map = {a_cols[i]: f"A{i+1}" for i in range(n)}
 rename_map.update({b_cols[i]: f"B{i+1}" for i in range(n)})
 df = df_raw.rename(columns=rename_map).copy()
-
 c1 = [f"A{i+1}" for i in range(n)]
 c2 = [f"B{i+1}" for i in range(n)]
-
 st.success(f"Renamed → A: {', '.join(c1)} | B: {', '.join(c2)}")
 
 # === CRITICAL: REPLACE 0 AND NaN WITH 1.0 ===
@@ -138,11 +165,11 @@ st.write("Detected species:", df["Species"].value_counts().to_dict())
 # === SAVE SPECIES COLUMN NAME ===
 st.session_state.species_column_name = species_col
 st.session_state.prot_final_df = df
+
 # === SAVE FINAL DATA ===
 st.session_state.prot_df = df
 st.session_state.prot_c1 = c1
 st.session_state.prot_c2 = c2
-
 st.success("Protein data saved — ready for analysis")
 
 # === GO TO ANALYSIS ===
