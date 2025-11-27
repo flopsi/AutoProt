@@ -96,46 +96,75 @@ if transformation_choice == f"Recommended ({best_transform})":
     func = transform_options[best_transform]
     df_transformed[all_reps] = df_transformed[all_reps].apply(func)
 
+
+# === 5. DENSITY PLOTS ===
+st.subheader("Intensity Density Plots (log₁₀)")
+# [Your existing 6 density plots code here]
+
+# === 6. PROTEIN COUNT TABLE ===
+st.subheader("Protein Counts After Filtering")
+count_data = [{"Species": "Total", "Count": len(df_right)}]
+if "Species" in df_right.columns:
+    for sp in df_right["Species"].value_counts().index:
+        count_data.append({"Species": sp, "Count": df_right["Species"].value_counts()[sp]})
+st.table(pd.DataFrame(count_data))
+
 # === 4. TWO PCA PLOTS — EXACTLY LIKE SCHESSNER ET AL., 2022 FIGURE 4 ===
-st.subheader("PCA: Transformed Data — Without vs With Filtering")
+st.subheader("PCA: Mean Intensity per Replicate (Schessner et al., 2022 Figure 4)")
 
 col_left, col_right = st.columns(2)
 
-# Left: Without filtering
+# Helper function to compute mean per replicate
+def get_mean_intensity(df_subset):
+    mean_vals = []
+    labels = []
+    colors = []
+    for rep in all_reps:
+        vals = df_subset[rep].replace(0, np.nan).dropna()
+        if len(vals) == 0:
+            continue
+        mean_intensity = vals.mean()
+        mean_vals.append(mean_intensity)
+        labels.append(rep)
+        colors.append("#E71316" if rep in c1 else "#1f77b4")
+    return np.array(mean_vals).reshape(-1, 1), labels, colors
+
+# Left: Transformed data — WITHOUT filtering
 with col_left:
     st.markdown("**Without Filtering**")
     df_left = df_transformed.copy()
     if species_choice != "All proteins":
         df_left = df_left[df_left["Species"] == species_choice]
     
-    # Average over proteins → one value per replicate
-    X_left = df_left[all_reps].mean()  # mean across proteins
-    X_left = X_left.values.reshape(1, -1)
+    X_left, labels_left, colors_left = get_mean_intensity(df_left)
     
-    pca_left = PCA(n_components=2)
-    pc_left = pca_left.fit_transform(X_left)
-    
-    fig_left = go.Figure()
-    for i, rep in enumerate(all_reps):
-        color = "#E71316" if rep in c1 else "#1f77b4"
-        fig_left.add_trace(go.Scatter(
-            x=[pc_left[0, 0]], y=[pc_left[0, 1]],
-            mode='markers+text',
-            name=rep,
-            marker=dict(color=color, size=14),
-            text=rep,
-            textposition="top center"
-        ))
-    fig_left.update_layout(
-        title="PCA (Without Filtering)",
-        xaxis_title="PC1",
-        yaxis_title="PC2",
-        height=500,
-        showlegend=False
-    )
-    st.plotly_chart(fig_left, use_container_width=True, key="pca_no_filter")
+    if len(X_left) < 2:
+        st.write("Not enough data")
+    else:
+        pca_left = PCA(n_components=2)
+        pc_left = pca_left.fit_transform(StandardScaler().fit_transform(X_left))
+        
+        fig_left = go.Figure()
+        for i, label in enumerate(labels_left):
+            fig_left.add_trace(go.Scatter(
+                x=[pc_left[i, 0]], y=[pc_left[i, 1]],
+                mode='markers+text',
+                name=label,
+                marker=dict(color=colors_left[i], size=16),
+                text=label,
+                textposition="top center",
+                textfont=dict(size=14)
+            ))
+        fig_left.update_layout(
+            title="PCA (Without Filtering)",
+            xaxis_title=f"PC1 ({pca_left.explained_variance_ratio_[0]:.1%})",
+            yaxis_title=f"PC2 ({pca_left.explained_variance_ratio_[1]:.1%})",
+            height=500,
+            showlegend=False
+        )
+        st.plotly_chart(fig_left, use_container_width=True, key="pca_no_filter")
 
-# Right: With filtering
+# Right: Transformed data — WITH filtering
 with col_right:
     st.markdown("**With Final Filtering**")
     df_right = df_transformed.copy()
@@ -158,45 +187,33 @@ with col_right:
     if species_choice != "All proteins":
         df_right = df_right[df_right["Species"] == species_choice]
     
-    # Average over proteins → one value per replicate
-    X_right = df_right[all_reps].mean()
-    X_right = X_right.values.reshape(1, -1)
+    X_right, labels_right, colors_right = get_mean_intensity(df_right)
     
-    pca_right = PCA(n_components=2)
-    pc_right = pca_right.fit_transform(X_right)
-    
-    fig_right = go.Figure()
-    for i, rep in enumerate(all_reps):
-        color = "#E71316" if rep in c1 else "#1f77b4"
-        fig_right.add_trace(go.Scatter(
-            x=[pc_right[0, 0]], y=[pc_right[0, 1]],
-            mode='markers+text',
-            name=rep,
-            marker=dict(color=color, size=14),
-            text=rep,
-            textposition="top center"
-        ))
-    fig_right.update_layout(
-        title="PCA (With Filtering)",
-        xaxis_title="PC1",
-        yaxis_title="PC2",
-        height=500,
-        showlegend=False
-    )
-    st.plotly_chart(fig_right, use_container_width=True, key="pca_with_filter")
-
-# === 5. DENSITY PLOTS ===
-st.subheader("Intensity Density Plots (log₁₀)")
-# [Your existing 6 density plots code here]
-
-# === 6. PROTEIN COUNT TABLE ===
-st.subheader("Protein Counts After Filtering")
-count_data = [{"Species": "Total", "Count": len(df_right)}]
-if "Species" in df_right.columns:
-    for sp in df_right["Species"].value_counts().index:
-        count_data.append({"Species": sp, "Count": df_right["Species"].value_counts()[sp]})
-st.table(pd.DataFrame(count_data))
-
+    if len(X_right) < 2:
+        st.write("Not enough data after filtering")
+    else:
+        pca_right = PCA(n_components=2)
+        pc_right = pca_right.fit_transform(StandardScaler().fit_transform(X_right))
+        
+        fig_right = go.Figure()
+        for i, label in enumerate(labels_right):
+            fig_right.add_trace(go.Scatter(
+                x=[pc_right[i, 0]], y=[pc_right[i, 1]],
+                mode='markers+text',
+                name=label,
+                marker=dict(color=colors_right[i], size=16),
+                text=label,
+                textposition="top center",
+                textfont=dict(size=14)
+            ))
+        fig_right.update_layout(
+            title="PCA (With Filtering)",
+            xaxis_title=f"PC1 ({pca_right.explained_variance_ratio_[0]:.1%})",
+            yaxis_title=f"PC2 ({pca_right.explained_variance_ratio_[1]:.1%})",
+            height=500,
+            showlegend=False
+        )
+        st.plotly_chart(fig_right, use_container_width=True, key="pca_with_filter")
 # === 7. ACCEPT ===
 if st.button("Accept & Proceed to Differential Analysis", type="primary"):
     st.session_state.intensity_transformed = df_right[all_reps]
