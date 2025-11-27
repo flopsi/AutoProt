@@ -13,81 +13,70 @@ if "prot_final_df" not in st.session_state:
     st.stop()
 
 df = st.session_state.prot_final_df
-c1 = st.session_state.prot_final_c1  # e.g. ["A1", "A2", "A3"]
-c2 = st.session_state.prot_final_c2  # e.g. ["B1", "B2", "B3"]
+c1 = st.session_state.prot_final_c1
+c2 = st.session_state.prot_final_c2
 all_reps = c1 + c2
 
 st.title("Protein-Level Exploratory Analysis")
 st.success(f"Analyzing {len(df):,} proteins • {len(c1)} vs {len(c2)} replicates")
 
-# === 1. 6 INDIVIDUAL DENSITY PLOTS ===
-st.subheader("1. Individual Intensity Density Plots (log₂)")
+# === 1. 6 INDIVIDUAL DENSITY PLOTS (RAW) ===
+st.subheader("1. Individual Intensity Density Plots (Raw Data)")
 
-# Prepare log2 data
-log_data = df[all_reps].replace(0, np.nan).apply(np.log2)
+raw_data = df[all_reps].replace(0, np.nan)
 
-# 2 rows of 3
-row1, row2 = st.columns(3), st.columns(3)
-rows = [row1, row2]
+row1 = st.columns(3)
+row2 = st.columns(3)
 
 for i, rep in enumerate(all_reps):
-    col = rows[i // 3][i % 3]
+    col = row1[i] if i < 3 else row2[i-3]
     with col:
-        fig = px.histogram(
-            log_data[rep].dropna(),
-            nbins=80,
+        fig = go.Figure()
+        fig.add_trace(go.Histogram(
+            x=raw_data[rep].dropna(),
+            nbinsx=100,
             histnorm="density",
-            title=f"<b>{rep}</b>",
-            color_discrete_sequence=["#E71316" if rep in c1 else "#1f77b4"]
-        )
-        fig.add_vline(x=log_data[rep].median(), line_dash="dash", line_color="black")
+            name=rep,
+            marker_color="#E71316" if rep in c1 else "#1f77b4",
+            opacity=0.75
+        ))
+        median = raw_data[rep].median()
+        fig.add_vline(x=median, line_dash="dash", line_color="black")
         fig.update_layout(
             height=380,
-            margin=dict(t=50, b=40),
-            xaxis_title="log₂(Intensity)",
+            title=f"<b>{rep}</b>",
+            xaxis_title="Raw Intensity",
             yaxis_title="Density",
-            showlegend=False
+            showlegend=False,
+            plot_bgcolor="white"
         )
         st.plotly_chart(fig, use_container_width=True)
 
-# === 2. KOLMOGOROV-SMIRNOV PAIRWISE TEST ===
-st.subheader("2. Distribution Similarity Test (Kolmogorov-Smirnov)")
+# === 2. KS TEST ON RAW DATA + TEXT SUMMARY ONLY ===
+st.subheader("2. Distribution Similarity (Kolmogorov-Smirnov Test)")
 
-# Perform pairwise KS tests
-ks_results = []
+significant_pairs = []
 for rep1, rep2 in combinations(all_reps, 2):
-    d1 = log_data[rep1].dropna()
-    d2 = log_data[rep2].dropna()
+    d1 = raw_data[rep1].dropna()
+    d2 = raw_data[rep2].dropna()
     if len(d1) > 1 and len(d2) > 1:
-        stat, p = stats.ks_2samp(d1, d2)
-        sig = "Significant" if p < 0.05 else "Not significant"
-        ks_results.append({
-            "Replicate 1": rep1,
-            "Replicate 2": rep2,
-            "KS Statistic": f"{stat:.4f}",
-            "p-value": f"{p:.2e}",
-            "Different?": sig
-        })
+        _, p = stats.ks_2samp(d1, d2)
+        if p < 0.05:
+            significant_pairs.append(f"{rep1} vs {rep2}")
 
-ks_df = pd.DataFrame(ks_results)
-st.dataframe(ks_df.style.apply(lambda x: ["background: #ffcccc" if v == "Significant" else "" for v in x], subset=["Different?"]), use_container_width=True)
-
-# Interpretation
-if any(r["Different?"] == "Significant" for r in ks_results):
-    st.error("**Warning**: At least one pair of replicates has significantly different distributions — check for technical bias!")
+if significant_pairs:
+    st.error("**Warning: Significant distribution differences detected (p < 0.05):**  \n" + " • ".join(significant_pairs))
+    st.info("This is expected on raw intensities — we will now apply log₂ transformation (standard practice)")
 else:
-    st.success("**All replicate distributions are statistically similar** — excellent technical reproducibility")
+    st.success("**All replicates have statistically similar distributions** — excellent technical quality")
 
-st.info("""
-**Kolmogorov-Smirnov Test**  
-- Compares full distribution shape (not just mean/median)  
-- p < 0.05 → distributions are significantly different  
-- Ideal for detecting subtle shifts or outliers in proteomics (Schessner et al., 2022)
-""")
+# === 3. LOG₂ TRANSFORMATION & STANDARD PLOTS ===
+st.markdown("### 3. Standard log₂ Transformation (Schessner et al., 2022)")
 
-# === 3. OVERLAY HISTOGRAM (Figure 4A style) ===
-st.subheader("3. Overlay Histogram (Schessner et al., Figure 4A)")
+log_data = np.log2(raw_data)
 
+# Overlay histogram (Figure 4A)
+st.subheader("Overlay Histogram — log₂(Intensity)")
 fig_overlay = go.Figure()
 for rep in all_reps:
     fig_overlay.add_trace(go.Histogram(
@@ -97,20 +86,11 @@ for rep in all_reps:
         nbinsx=100,
         histnorm="density"
     ))
-
-fig_overlay.update_layout(
-    barmode="overlay",
-    height=500,
-    xaxis_title="log₂(Intensity)",
-    yaxis_title="Density",
-    legend_title="Replicate",
-    plot_bgcolor="white"
-)
+fig_overlay.update_layout(barmode="overlay", height=500, xaxis_title="log₂(Intensity)", yaxis_title="Density")
 st.plotly_chart(fig_overlay, use_container_width=True)
 
-# === 4. VIOLIN + BOX OVERLAY ===
-st.subheader("4. Violin + Box Overlay")
-
+# Violin + box
+st.subheader("Violin + Box Plot — log₂(Intensity)")
 melted = log_data.melt(var_name="Replicate", value_name="log₂(Intensity)").dropna()
 melted["Condition"] = melted["Replicate"].apply(lambda x: "A" if x in c1 else "B")
 melted["Replicate"] = pd.Categorical(melted["Replicate"], all_reps, ordered=True)
@@ -124,14 +104,8 @@ fig_violin.update_traces(box_visible=True, meanline_visible=True)
 fig_violin.update_layout(height=650)
 st.plotly_chart(fig_violin, use_container_width=True)
 
-# === FINAL SAVE ===
-st.session_state.intensity_log2 = log_data
-st.session_state.prot_final_df_log2 = df.copy()  # if needed later
-
-st.success("All QC complete — data ready for differential analysis")
+st.success("**log₂ transformation applied — gold standard in proteomics**")
+st.info("Data ready for differential analysis, PCA, volcano plot, etc.")
 
 if st.button("Go to Differential Analysis", type="primary", use_container_width=True):
     st.switch_page("pages/4_Differential_Analysis.py")
-
-st.markdown("---")
-st.caption("© 2024 Thermo Fisher Scientific • Internal Use Only")
