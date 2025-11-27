@@ -169,47 +169,60 @@ if "Species" in df_processed.columns:
         count_data.append({"Species": sp, "Proteins": df_processed["Species"].value_counts()[sp]})
 st.table(pd.DataFrame(count_data))
 
-# === 5. PCA ON FINAL DATA ===
-st.subheader("PCA on Final Processed Data")
+# === 5. PCA ON FINAL PROCESSED DATA (Schessner et al., 2022 Figure 4) ===
+st.subheader("PCA on Final Processed Data (Mean Intensity per Replicate)")
 
-def get_pca_data(df_subset):
-    mean_vals = []
-    labels = []
-    colors = []
-    for rep in all_reps:
-        vals = df_subset[rep].replace(0, np.nan).dropna()
-        if len(vals) == 0: continue
-        mean_vals.append(vals.mean())
-        labels.append(rep)
-        colors.append("#E71316" if rep in c1 else "#1f77b4")
-    return np.array(mean_vals).reshape(-1, 1), labels, colors
+# Compute mean intensity per replicate
+mean_intensities = []
+rep_labels = []
+rep_colors = []
 
-col1, col2 = st.columns(2)
+for rep in all_reps:
+    # Use the final processed data (after transformation + filtering)
+    vals = df_processed[rep].replace(0, np.nan).dropna()
+    if len(vals) == 0:
+        continue
+    mean_intensities.append(vals.mean())
+    rep_labels.append(rep)
+    rep_colors.append("#E71316" if rep in c1 else "#1f77b4")
 
-with col1:
-    st.markdown("**All Proteins**")
-    X_all, labels_all, colors_all = get_pca_data(df_processed)
-    if len(X_all) < 2:
-        st.write("Not enough data")
-    else:
-        pca = PCA(n_components=1)
-        pc = pca.fit_transform(StandardScaler().fit_transform(X_all))
-        fig = go.Figure()
-        for i, label in enumerate(labels_all):
-            fig.add_trace(go.Scatter(
-                x=[pc[i, 0]], y=[pc[i, 0]],
-                mode='markers+text',
-                name=label,
-                marker=dict(color=colors_all[i], size=16),
-                text=label,
-                textposition="top center"
-            ))
-        fig.update_layout(
-            title=f"PCA (All: {pca.explained_variance_ratio_[0]:.1%} + {pca.explained_variance_ratio_[1]:.1%})",
-            xaxis_title="PC1", yaxis_title="PC2",
-            height=500, showlegend=False
-        )
-        st.plotly_chart(fig, use_container_width=True, key="pca_all")
+# Convert to array: shape (n_replicates, 1)
+X = np.array(mean_intensities).reshape(-1, 1)
+
+if len(X) < 2:
+    st.write("Not enough replicates for PCA")
+else:
+    # Standardize and perform PCA
+    X_scaled = StandardScaler().fit_transform(X)
+    pca = PCA(n_components=2)
+    pc = pca.fit_transform(X_scaled)
+
+    # Create single PCA plot with 6 labeled points
+    fig = go.Figure()
+
+    for i, label in enumerate(rep_labels):
+        fig.add_trace(go.Scatter(
+            x=[pc[i, 0]],
+            y=[pc[i, 1]],
+            mode='markers+text',
+            name=label,
+            marker=dict(color=rep_colors[i], size=16, line=dict(width=2, color='black')),
+            text=label,
+            textposition="top center",
+            textfont=dict(size=14)
+        ))
+
+    fig.update_layout(
+        title=f"PCA of Replicate Mean Intensities<br>"
+              f"PC1: {pca.explained_variance_ratio_[0]:.1%} | PC2: {pca.explained_variance_ratio_[1]:.1%}",
+        xaxis_title=f"PC1 ({pca.explained_variance_ratio_[0]:.1%} variance)",
+        yaxis_title=f"PC2 ({pca.explained_variance_ratio_[1]:.1%} variance)",
+        height=600,
+        showlegend=False,
+        template="simple_white"
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
 
 with col2:
     st.markdown("**Human Proteins Only**")
