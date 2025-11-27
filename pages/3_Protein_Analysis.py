@@ -169,29 +169,24 @@ if "Species" in df_processed.columns:
         count_data.append({"Species": sp, "Proteins": df_processed["Species"].value_counts()[sp]})
 st.table(pd.DataFrame(count_data))
 
-# === 5. PCA ON FINAL PROCESSED DATA — EXACTLY LIKE SCHESSNER ET AL., 2022 FIGURE 4 ===
-st.subheader("PCA on Final Processed Data (Schessner et al., 2022 Figure 4)")
+# === 5. PCA & REPLICATE SIMILARITY (Schessner et al., 2022 Figure 4) ===
+st.subheader("PCA & Replicate Similarity (PERMANOVA)")
 
-# Use the final processed data (after transformation + filtering)
+# Use final processed data
 df_pca = df_processed[all_reps].copy()
-
-# Remove proteins with missing values in any replicate
-df_pca = df_pca.dropna(how='any')
+df_pca = df_pca.dropna(how='any')  # Remove proteins with any missing value
 
 if len(df_pca) < 10:
     st.error("Not enough proteins after filtering for reliable PCA")
 else:
-    # Impute any remaining missing values with median (rare)
-    df_pca = df_pca.fillna(df_pca.median())
-
     # Standardize across proteins
-    X = StandardScaler().fit_transform(df_pca.values)  # shape: (n_proteins, n_replicates)
-
-    # PCA: samples = replicates → transpose
+    X = StandardScaler().fit_transform(df_pca.values)
+    
+    # PCA: replicates as samples
     pca = PCA(n_components=2)
-    pc_scores = pca.fit_transform(X.T)  # shape: (6, 2) — one row per replicate
+    pc_scores = pca.fit_transform(X.T)  # shape: (6, 2)
 
-    # Create plot
+    # Create beautiful, integrated PCA plot
     fig = go.Figure()
 
     for i, rep in enumerate(all_reps):
@@ -203,25 +198,91 @@ else:
             name=rep,
             marker=dict(
                 color=color,
-                size=20,
+                size=18,
                 line=dict(width=3, color='black')
             ),
             text=rep,
             textposition="top center",
-            textfont=dict(size=14, family="Arial Black", color="black")
+            textfont=dict(size=14, family="Arial", color="black")
         ))
 
     fig.update_layout(
-        title="PCA of Replicate Profiles<br>"
-              f"<sub>PC1: {pca.explained_variance_ratio_[0]:.1%} • PC2: {pca.explained_variance_ratio_[1]:.1%} variance explained</sub>",
+        title="PCA of Replicate Profiles",
         xaxis_title=f"PC1 ({pca.explained_variance_ratio_[0]:.1%} variance)",
         yaxis_title=f"PC2 ({pca.explained_variance_ratio_[1]:.1%} variance)",
-        height=600,
+        height=500,
         showlegend=False,
         template="simple_white",
         plot_bgcolor="white",
+        paper_bgcolor="white",
+        font=dict(family="Arial", size=12),
         xaxis=dict(showgrid=True, gridcolor='lightgray', zeroline=True, zerolinecolor='gray'),
         yaxis=dict(showgrid=True, gridcolor='lightgray', zeroline=True, zerolinecolor='gray')
     )
 
     st.plotly_chart(fig, use_container_width=True)
+
+    # === PERMANOVA: Within vs Between Group Variance ===
+    from scipy.spatial.distance import pdist, squareform
+    from scipy.stats import f
+
+    # Distance matrix (Euclidean on PC scores)
+    dist_matrix = squareform(pdist(pc_scores, metric='euclidean'))
+
+    # Group labels
+    groups = ['A'] * len(c1) + ['B'] * len(c2)
+
+    # PERMANOVA calculation
+    n = len(groups)
+    a = len(set(groups))  # number of groups
+    N = n
+
+    # Total sum of squares
+    SST = np.sum(dist_matrix**2) / (2 * N)
+
+    # Within-group sum of squares
+    SSW = 0
+    for group in set(groups):
+        idx = [i for i, g in enumerate(groups) if g == group]
+        if len(idx) > 1:
+            submatrix = dist_matrix[np.ix_(idx, idx)]
+            SSW += np.sum(submatrix**2) / (2 * len(idx))
+
+    # Between-group sum of squares
+    SSB = SST - SSW
+
+    # Degrees of freedom
+    df_between = a - 1
+    df_within = N - a
+
+    # Mean squares
+    MSB = SSB / df_between if df_between > 0 else 0
+    MSW = SSW / df_within if df_within > 0 else 0
+
+    # F-statistic
+    F = MSB / MSW if MSW > 0 else float('inf')
+    p_value = 1 - f.cdf(F, df_between, df_within) if MSW > 0 else 0
+
+    # Display result
+    st.markdown("#### **PERMANOVA: Replicate Similarity**")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("F-statistic", f"{F:.3f}")
+    with col2:
+        st.metric("p-value", f"{p_value:.3e}")
+    with col3:
+        if p_value < 0.05:
+            st.error("**Significant difference** between groups")
+        else:
+            st.success("**No significant difference** — excellent reproducibility")
+
+    st.info("**PERMANOVA** tests if variance between biological groups is greater than within-group technical variance (Schessner et al., 2022)")
+
+# === 6. ACCEPT ===
+if st.button("Accept & Proceed to Differential Analysis", type="primary"):
+    st.session_state.intensity_transformed = df_processed[all_reps]
+    st.session_state.df_filtered = df_processed
+    st.session_state.transform_applied = best_transform
+    st.session_state.qc_accepted = True
+    st.success("Ready for differential analysis!")
+    st.balloons()
