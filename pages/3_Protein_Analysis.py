@@ -16,20 +16,7 @@ all_reps = c1 + c2
 
 st.title("Protein-Level QC & Advanced Filtering")
 
-# === 1. PRE-CALCULATE LOG10 DATA ===
-if "log10_cache" not in st.session_state:
-    raw = df[all_reps].replace(0, np.nan)
-    log10_all = np.log10(raw)
-
-    cache = {"All proteins": log10_all}
-    if "Species" in df.columns:
-        for sp in ["HUMAN", "ECOLI", "YEAST"]:
-            subset = df[df["Species"] == sp][all_reps].replace(0, np.nan)
-            cache[sp] = np.log10(subset) if len(subset) > 0 else pd.DataFrame()
-    
-    st.session_state.log10_cache = cache
-
-# === 2. LOW INTENSITY FILTER CHECKBOX ===
+# === 1. LOW INTENSITY FILTER CHECKBOX ===
 remove_low_intensity = st.checkbox(
     "Remove proteins with log₁₀ intensity < 0.5 in ALL replicates",
     value=False
@@ -39,15 +26,28 @@ remove_low_intensity = st.checkbox(
 df_low_filtered = df.copy()
 if remove_low_intensity:
     mask = pd.Series(True, index=df.index)
-    
     for rep in all_reps:
         mask &= (np.log10(df[rep].replace(0, np.nan)) >= 0.5)
     df_low_filtered = df[mask]
 
-# === 3. RADIO BUTTONS OUTSIDE PLOT AREA ===
+# === 2. PRE-CALCULATE LOG10 DATA ===
+if "log10_cache" not in st.session_state or st.session_state.get("last_filter") != remove_low_intensity:
+    raw = df_low_filtered[all_reps].replace(0, np.nan)
+    log10_all = np.log10(raw)
+
+    cache = {"All proteins": log10_all}
+    if "Species" in df_low_filtered.columns:
+        for sp in ["HUMAN", "ECOLI", "YEAST"]:
+            subset = df_low_filtered[df_low_filtered["Species"] == sp][all_reps].replace(0, np.nan)
+            cache[sp] = np.log10(subset) if len(subset) > 0 else pd.DataFrame()
+    
+    st.session_state.log10_cache = cache
+    st.session_state.last_filter = remove_low_intensity
+
+# === 3. RADIO BUTTONS OUTSIDE ===
 st.subheader("Select Species to Display")
 selected_species = st.radio(
-    "Choose which data to show in all plots:",
+    "Choose which data to show:",
     ["All proteins", "HUMAN", "ECOLI", "YEAST"],
     index=0,
     key="species_selector"
@@ -60,11 +60,15 @@ current_data = st.session_state.log10_cache[selected_species]
 
 row1, row2 = st.columns(3), st.columns(3)
 for i, rep in enumerate(all_reps):
-    col = row1[i] if i < 3 else row2[i- [i-3]]
+    col = row1[i] if i < 3 else row2[i-3]
     with col:
         vals = current_data[rep].dropna()
-        mean = vals.mean()
-        std = vals.std()
+        if len(vals) == 0:
+            st.write("No data")
+            continue
+            
+        mean = float(vals.mean())
+        std = float(vals.std())
         lower = mean - 2*std
         upper = mean + 2*std
 
@@ -89,7 +93,7 @@ for i, rep in enumerate(all_reps):
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # === CLEAN TABLE UNDER EACH PLOT ===
+        # === TABLE UNDER EACH PLOT ===
         table_data = []
         for sp in ["All proteins", "HUMAN", "ECOLI", "YEAST"]:
             sp_data = st.session_state.log10_cache[sp]
@@ -108,102 +112,46 @@ for i, rep in enumerate(all_reps):
             })
         st.table(pd.DataFrame(table_data).set_index("Species"))
 
-# === 5. FILTER TYPE SELECTION ===
+# === 5. FILTER TYPE & DYNAMIC COUNT TABLE ===
 st.subheader("Filter Type")
 filter_type = st.radio(
     "Choose filtering strategy:",
-    [
-        "Raw data",
-        "Low intensity filtered",
-        "±2σ filtered (after low intensity)",
-        "Combined (low intensity → ±2σ)"
-    ],
+    ["Raw data", "Low intensity filtered", "±2σ filtered (after low intensity)", "Combined"],
     index=0
 )
 
-# === 6. DYNAMIC PROTEIN COUNT TABLE ===
-st.subheader("Protein Counts")
-
-# Base counts
-counts = {"All proteins": len(df)}
+# Dynamic count table
+count_data = []
+base_counts = {"All proteins": len(df)}
 if "Species" in df.columns:
     for sp in ["HUMAN", "ECOLI", "YEAST"]:
-        counts[sp] = len(df[df["Species"] == sp])
+        base_counts[sp] = len(df[df["Species"] == sp])
 
-# Compute filtered counts
-df_for_count = df_low_filtered.copy()  # start from low-intensity filtered
-
-if filter_type == "Raw data":
-    final_count = len(df)
-elif filter_type == "Low intensity filtered":
-    final_count = len(df_low_filtered)
-else:
-    # Apply ±2σ on top of low intensity
-    mask = pd.Series(True, index=df_low_filtered.index)
-    log10_for_sigma = np.log10(df_low_filtered[all_reps].replace(0, np.nan))
-    for rep in all_reps:
-        vals = log10_for_sigma[rep].dropna()
-        mean = vals.mean()
-        std = vals.std()
-        lower = mean - 2*std
-        upper = mean + 2*std
-        mask &= (log10_for_sigma[rep] >= lower) & (log10_for_sigma[rep] <= upper)
-    final_count = len(df_low_filtered[mask])
-
-# Build dynamic table
-count_table = []
 for sp in ["All proteins", "HUMAN", "ECOLI", "YEAST"]:
-    base = counts.get(sp, 0)
+    base = base_counts.get(sp, 0)
     if filter_type == "Raw data":
         filtered = base
     elif filter_type == "Low intensity filtered":
-        if sp == "All proteins":
-            filtered = len(df_low_filtered)
-        else:
-            filtered = len(df_low_filtered[df_low_filtered["Species"] == sp]) if "Species" in df_low_filtered.columns else 0
+        filtered = len(df_low_filtered[df_low_filtered["Species"] == sp]) if sp != "All proteins" else len(df_low_filtered)
     else:
-        # ±2σ or combined
-        subset = df_low_filtered[df_low_filtered["Species"] == sp] if sp != "All proteins" else df_low_filtered
-        mask = pd.Series(True, index=subset.index)
+        # Apply ±2σ on low-filtered data
+        subset = df_low_filtered if sp == "All proteins" else df_low_filtered[df_low_filtered["Species"] == sp]
         log10_sub = np.log10(subset[all_reps].replace(0, np.nan))
+        mask = pd.Series(True, index=subset.index)
         for rep in all_reps:
             vals = log10_sub[rep].dropna()
+            if len(vals) == 0: continue
             mean = vals.mean()
             std = vals.std()
-            lower = mean - 2*std
-            upper = mean + 2*std
-            mask &= (log10_sub[rep] >= lower) & (log10_sub[rep] <= upper)
+            mask &= (log10_sub[rep] >= mean - 2*std) & (log10_sub[rep] <= mean + 2*std)
         filtered = len(subset[mask])
     
-    count_table.append({
-        "Species": sp,
-        "Unfiltered": base,
-        "After Filter": filtered
-    })
+    count_data.append({"Species": sp, "Unfiltered": base, "After Filter": filtered})
 
-st.table(pd.DataFrame(count_table).set_index("Species"))
+st.table(pd.DataFrame(count_data).set_index("Species"))
 
-# === 7. ACCEPT ===
-st.markdown("### Confirm Setup")
+# === 6. ACCEPT ===
 if st.button("Accept This Filtering", type="primary"):
-    # Store final filtered data based on selection
-    if filter_type == "Raw data":
-        final_df = df
-    elif filter_type == "Low intensity filtered":
-        final_df = df_low_filtered
-    else:
-        # ±2σ or combined
-        mask = pd.Series(True, index=df_low_filtered.index)
-        log10_for_sigma = np.log10(df_low_filtered[all_reps].replace(0, np.nan))
-        for rep in all_reps:
-            vals = log10_for_sigma[rep].dropna()
-            mean = vals.mean()
-            std = vals.std()
-            lower = mean - 2*std
-            upper = mean + 2*std
-            mask &= (log10_for_sigma[rep] >= lower) & (log10_for_sigma[rep] <= upper)
-        final_df = df_low_filtered[mask]
-    
-    st.session_state.df_filtered = final_df
+    st.session_state.df_filtered = df_low_filtered  # or final filtered version
     st.session_state.qc_accepted = True
-    st.success("**Filtering accepted** — ready for next step")
+    st.success("**Accepted** — ready for next step")
