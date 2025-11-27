@@ -15,7 +15,7 @@ st.markdown("""
 # === UPLOAD ===
 uploaded_prot = st.file_uploader("Upload Intensity Table (wide format)", type=["csv", "tsv", "txt"])
 
-if not uploaded:
+if not uploaded_prot:
     st.info("Please upload your intensity table.")
     st.stop()
 
