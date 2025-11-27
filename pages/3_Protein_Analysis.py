@@ -20,50 +20,63 @@ all_reps = c1 + c2
 st.title("Protein-Level Exploratory Analysis")
 st.success(f"Analyzing {len(df):,} proteins • {len(c1)} vs {len(c2)} replicates")
 
-# === DETECT SPECIES ===
-species_list = ["HUMAN","MOUSE","RAT","ECOLI","BOVIN","YEAST","RABIT","CANFA","MACMU","PANTR"]
-def find_species_col(df):
-    pattern = "|".join(species_list)
-    for c in df.columns:
-        if c in all_reps: continue
-        if df[c].astype(str).str.upper().str.contains(pattern).any():
-            return c
-    return None
+# === ROBUST SPECIES DETECTION (FIXED) ===
+def extract_species(text):
+    if pd.isna(text):
+        return "Other"
+    text = str(text).upper()
+    species_keywords = {
+        "HUMAN": ["HUMAN", "HOMO SAPIENS", "HSA"],
+        "MOUSE": ["MOUSE", "MUS MUSCULUS", "MMU"],
+        "RAT": ["RAT", "RATTUS NORVEGICUS", "RNO"],
+        "ECOLI": ["ECOLI", "ESCHERICHIA COLI"],
+        "BOVIN": ["BOVIN", "BOVINE", "BOS TAURUS"],
+        "YEAST": ["YEAST", "SACCHAROMYCES", "SCE"],
+        "RABIT": ["RABBIT", "RABIT", "OCU"],
+        "CANFA": ["DOG", "CANIS", "CANFA"],
+        "MACMU": ["MACACA", "RHESUS", "MACMU"],
+        "PANTR": ["CHIMP", "PANTR"],
+    }
+    for species, keywords in species_keywords.items():
+        if any(kw in text for kw in keywords):
+            return species
+    return "Other"
 
-sp_col = find_species_col(df)
+# Find species column
+species_col = None
+for col in df.columns:
+    if col in all_reps: continue
+    sample = df[col].dropna().astype(str).str.upper()
+    if sample.str.contains("HUMAN|MOUSE|RAT|ECOLI|BOVIN|YEAST|RABIT|CANFA|MACMU|PANTR").any():
+        species_col = col
+        break
 
-if sp_col and sp_col != "Not found":
-    df["Species"] = df[sp_col].astype(str).str.upper().apply(
-        lambda x: next((s for s in species_list if s in x), "Other")
-    )
-    detected_species = df["Species"].dropna().unique()
+if species_col:
+    df["Detected_Species"] = df[species_col].apply(extract_species)
+    detected = df["Detected_Species"].value_counts()
+    st.write("**Detected species:**")
+    st.dataframe(detected.reset_index().rename(columns={"index": "Species", "Detected_Species": "Count"}), use_container_width=True)
 else:
-    detected_species = ["HUMAN"]  # fallback
-    df["Species"] = "HUMAN"
+    df["Detected_Species"] = "HUMAN"  # default
+    st.info("No species column found — assuming HUMAN")
 
 # === USER SELECTS CONSTANT SPECIES ===
-st.subheader("1. Select Constant (Reference) Species for QC")
-if len(detected_species) > 1:
+unique_species = sorted(df["Detected_Species"].unique())
+if len(unique_species) > 1:
     constant_species = st.selectbox(
-        "Multiple species detected — which is the constant reference?",
-        options=sorted(detected_species),
+        "Select constant (reference) species for QC",
+        options=unique_species,
         index=0
     )
-    st.info(f"KS test will be performed **only on {constant_species}** proteins")
 else:
-    constant_species = detected_species[0]
-    st.success(f"Only one species detected: **{constant_species}** — using as reference")
+    constant_species = unique_species[0]
+    st.success(f"Only one species: **{constant_species}**")
 
-# Filter to constant species
-df_const = df[df["Species"] == constant_species].copy()
-if len(df_const) == 0:
-    st.error(f"No proteins found for species {constant_species}")
-    st.stop()
-
+df_const = df[df["Detected_Species"] == constant_species].copy()
 st.write(f"Using **{len(df_const):,}** {constant_species} proteins for distribution testing")
 
 # === 6 INDIVIDUAL DENSITY PLOTS (RAW) ===
-st.subheader("2. Individual Intensity Density Plots (Raw — Constant Species Only)")
+st.subheader("Individual Intensity Density Plots (Raw — Constant Species)")
 
 raw_data = df_const[all_reps].replace(0, np.nan)
 
@@ -93,8 +106,8 @@ for i, rep in enumerate(all_reps):
         )
         st.plotly_chart(fig, use_container_width=True)
 
-# === KS TEST ON CONSTANT SPECIES ONLY ===
-st.subheader("3. Distribution Similarity Test (KS) — Constant Species Only")
+# === KS TEST ON CONSTANT SPECIES ===
+st.subheader("Distribution Similarity Test (KS) — Constant Species Only")
 
 significant_pairs = []
 for rep1, rep2 in combinations(all_reps, 2):
@@ -106,13 +119,12 @@ for rep1, rep2 in combinations(all_reps, 2):
             significant_pairs.append(f"{rep1} vs {rep2}")
 
 if significant_pairs:
-    st.error(f"**Significant differences detected** in {constant_species} distributions:\n" + " • ".join(significant_pairs))
-    st.info("This may indicate technical bias — check injection, digestion, or labeling")
+    st.error(f"**Significant differences** in {constant_species} distributions:\n" + " • ".join(significant_pairs))
 else:
-    st.success(f"**All {constant_species} replicates have similar distributions** — excellent technical quality!")
+    st.success(f"**All {constant_species} replicates have similar distributions** — excellent!")
 
-# === LOG₂ TRANSFORMATION & FINAL PLOTS ===
-st.markdown("### 4. Standard log₂ Transformation")
+# === LOG₂ PLOTS ===
+st.markdown("### log₂ Transformation (Standard)")
 log_data = np.log2(df_const[all_reps])
 
 # Overlay histogram
@@ -126,11 +138,11 @@ for rep in all_reps:
         nbinsx=100,
         histnorm="density"
     ))
-fig_overlay.update_layout(barmode="overlay", height=500, xaxis_title="log₂(Intensity)", yaxis_title="Density")
+fig_overlay.update_layout(barmode="overlay", height=500)
 st.plotly_chart(fig_overlay, use_container_width=True)
 
 # Violin + box
-st.subheader("Violin + Box Plot — log₂(Intensity)")
+st.subheader("Violin + Box — log₂(Intensity)")
 melted = log_data.melt(var_name="Replicate", value_name="log₂(Intensity)").dropna()
 melted["Condition"] = melted["Replicate"].apply(lambda x: "A" if x in c1 else "B")
 melted["Replicate"] = pd.Categorical(melted["Replicate"], all_reps, ordered=True)
@@ -141,7 +153,6 @@ fig_violin = px.violin(
     box=True, points=False, violinmode="overlay"
 )
 fig_violin.update_traces(box_visible=True, meanline_visible=True)
-fig_violin.update_layout(height=650)
 st.plotly_chart(fig_violin, use_container_width=True)
 
 st.success("**log₂ transformation applied — ready for analysis**")
