@@ -194,7 +194,7 @@ for rep in all_reps:
     ks_results.append({"Replicate": rep, "vs": ref_label, "p-value": f"{p:.2e}", "Different?": different})
 
 ks_df = pd.DataFrame(ks_results)
-))
+
 
 if any(r["Different?"] == "Yes" for r in ks_results if r["Different?"] != "—"):
     st.error("**Significant differences detected** — check technical reproducibility")
