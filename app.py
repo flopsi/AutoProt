@@ -45,5 +45,35 @@ with col2:
         if st.button("Peptide Import", type="primary", use_container_width=True):
             st.switch_page("pages/2_Peptide_Import.py")
 
+
+# Add this at the end of any page
+st.markdown("""
+<style>
+    .restart-fixed {
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 999;
+        background: #E71316;
+        color: white;
+        padding: 15px 30px;
+        border-radius: 10px;
+        font-weight: bold;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        text-align: center;
+    }
+</style>
+<div class="restart-fixed">
+    🔄 Restart Entire Analysis
+</div>
+""", unsafe_allow_html=True)
+
+if st.button("RESTART", key="restart_fixed", help="Clear all data and start over"):
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun()
 st.markdown("---")
 st.caption("© 2024 Thermo Fisher Scientific • Internal Use Only")
