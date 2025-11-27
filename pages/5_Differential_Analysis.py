@@ -162,10 +162,13 @@ if cv_data:
         showlegend=True
     )
     st.plotly_chart(fig, use_container_width=True)
-# === 4. STACKED BAR PLOTS — PROTEINS PER SAMPLE PER SPECIES ===
+
+
+# === 4. PROTEINS DETECTED PER SAMPLE PER SPECIES ===
 st.subheader("4. Proteins Detected per Sample per Species")
 
-detected = (intensity_final[all_reps] > np.log2(2)).astype(int)  # >1 in raw scale
+# Count proteins with intensity > 1 (non-imputed)
+detected = (intensity_final[all_reps] > 1).astype(int)
 detected_df = detected.join(df_final[["Species"]])
 
 count_data = []
@@ -185,9 +188,14 @@ fig = px.bar(
     text="Proteins",
     color_discrete_sequence=px.colors.qualitative.Set2
 )
-fig.update_traces(textposition='inside')
+fig.update_traces(textposition='inside', textfont_size=12)
 fig.update_layout(height=600, barmode='stack', template="simple_white")
 st.plotly_chart(fig, use_container_width=True)
+
+# === 5-ROW SNAPSHOT BELOW THE PLOT ===
+st.markdown("### Final Processed Data (5-row snapshot)")
+st.write("**Transformation:** log₂ | **Filtering:** Applied | **Used for differential analysis**")
+st.dataframe(intensity_final.head(5).round(3), use_container_width=True)
 
 # === FINAL ACCEPT ===
 if st.button("Complete Analysis & Export Results", type="primary"):
