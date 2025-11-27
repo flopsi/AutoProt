@@ -17,6 +17,9 @@ st.markdown("""
 
 # === UPLOAD ===
 uploaded_prot = st.file_uploader("Upload Intensity Table (wide format)", type=["csv", "tsv", "txt"])
+if not uploaded_prot or not uploaded_pep:
+    st.info("Please upload either protein or peptide file to continue.")
+    st.stop()
 
 if not uploaded_prot:
     st.info("Please upload your intensity table.")
@@ -29,8 +32,8 @@ def load(file):
 
 df_prot=load(uploaded_prot)
 st.success(f"Loaded: {len(df_prot):,} features × {len(df_prot.columns):,} columns")
-#st.dataframe(df_prot.head())
-df_prot.head()
+st.dataframe(df_prot.head(5))
+
 proteomes = st_tags(label="#Type the proteomes in your sample:",
                     text = "Press enter to add more",
                     value = ["HUMAN","YEAST","ECOLI","RAT"],
