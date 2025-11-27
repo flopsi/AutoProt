@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from scipy import stats
+from itertools import combinations
 
 # Load data
 if "prot_final_df" not in st.session_state:
@@ -17,7 +18,7 @@ all_reps = c1 + c2
 
 st.title("Protein-Level QC & Transformation")
 
-# === SPECIES SELECTION ===
+# === 1. SPECIES SELECTION ===
 if "Species" not in df.columns:
     st.error("Species column missing — please re-upload")
     st.stop()
@@ -35,8 +36,8 @@ selected_species = st.selectbox(
 df_species = df[df["Species"] == selected_species].copy()
 st.write(f"Using **{len(df_species):,}** {selected_species} proteins")
 
-# === 1. 6 INDIVIDUAL DENSITY PLOTS — log₁₀ ===
-st.subheader("1. Intensity Density Plots (log₁₀)")
+# === 2. 6 LOG10 DENSITY PLOTS ===
+st.subheader("2. Intensity Density Plots (log₁₀)")
 
 raw_data = df_species[all_reps].replace(0, np.nan)
 log10_data = np.log10(raw_data)
@@ -66,8 +67,24 @@ for i, rep in enumerate(all_reps):
         )
         st.plotly_chart(fig, use_container_width=True)
 
-# === 2. RAW DATA STATISTICS ===
-st.subheader("2. Raw Data Distribution Diagnosis")
+# === 3. KS TEST ON RAW DATA (CONSTANT SPECIES) ===
+st.subheader("3. Technical Reproducibility (KS Test — Raw Intensity)")
+
+significant_pairs = []
+for r1, r2 in combinations(all_reps, 2):
+    d1, d2 = raw_data[r1].dropna(), raw_data[r2].dropna()
+    if len(d1) > 1 and len(d2) > 1:
+        _, p = stats.ks_2samp(d1, d2)
+        if p < 0.05:
+            significant_pairs.append(f"{r1} vs {r2}")
+
+if significant_pairs:
+    st.warning(f"**Significant differences** in {selected_species} distributions:\n" + " • ".join(significant_pairs))
+else:
+    st.success("**All replicates have similar distributions** — excellent technical quality")
+
+# === 4. NORMALITY TEST ON RAW INTENSITY ===
+st.subheader("4. Raw Data Distribution Diagnosis")
 
 stats_raw = []
 for rep in all_reps:
@@ -90,46 +107,43 @@ for rep in all_reps:
 
 st.dataframe(pd.DataFrame(stats_raw), use_container_width=True)
 
-# === 3. TRANSFORMATION SELECTION (SAFE) ===
-st.markdown("### 3. Apply Transformation")
+# === 5. SUGGESTION BASED ON RAW DATA ===
+non_normal = sum(1 for r in stats_raw if r.get("Normal") == "No")
+high_skew = any(abs(float(r["Skew"].replace("N/A","0"))) > 1.0 for r in stats_raw if r["Skew"] != "N/A")
+high_kurt = any(abs(float(r["Kurtosis"].replace("N/A","0"))) > 3.0 for r in stats_raw if r["Kurtosis"] != "N/A")
 
-# Check if data allows Box-Cox
-has_negative_or_zero = (raw_data <= 0).any().any()
+if non_normal == 0:
+    st.success("Raw data appears normal — parametric tests possible (rare!)")
+else:
+    st.warning("**Strong non-normality detected** — transformation REQUIRED")
+    if high_skew or high_kurt:
+        st.info("→ **log₁₀ transformation strongly recommended**")
 
+# === 6. TRANSFORMATION SELECTION ===
+st.markdown("### 6. Apply Transformation")
 transform = st.selectbox(
     "Choose transformation",
-    ["log₂", "log₁₀"] + (["Box-Cox"] if not has_negative_or_zero else []) + ["Yeo-Johnson", "None"],
+    ["log₂", "log₁₀", "Box-Cox", "Yeo-Johnson", "None"],
     index=1
 )
 
-# Apply transformation
+# Apply transformation (safe)
 if transform == "log₂":
     transformed = np.log2(raw_data)
-    y_label = "log₂(Intensity)"
 elif transform == "log₁₀":
     transformed = np.log10(raw_data)
-    y_label = "log₁₀(Intensity)"
 elif transform == "Box-Cox":
     shifted = raw_data + 1
-    transformed = pd.DataFrame(
-        stats.boxcox(shifted.values.flatten())[0].reshape(shifted.shape),
-        index=raw_data.index, columns=raw_data.columns
-    )
-    y_label = "Box-Cox(Intensity)"
+    transformed = pd.DataFrame(stats.boxcox(shifted.values.flatten())[0].reshape(shifted.shape),
+                               index=raw_data.index, columns=raw_data.columns)
 elif transform == "Yeo-Johnson":
-    # Yeo-Johnson handles negative/zero
-    transformed = pd.DataFrame(
-        stats.yeojohnson(raw_data.values.flatten())[0].reshape(raw_data.shape),
-        index=raw_data.index, columns=raw_data.columns
-    )
-    y_label = "Yeo-Johnson(Intensity)"
+    transformed = pd.DataFrame(stats.yeojohnson(raw_data.values.flatten())[0].reshape(raw_data.shape),
+                               index=raw_data.index, columns=raw_data.columns)
 else:
     transformed = raw_data
-    y_label = "Raw Intensity"
 
-# === 4. POST-TRANSFORMATION STATISTICS (REAL-TIME) ===
-st.markdown("### 4. After Transformation")
-
+# === 7. POST-TRANSFORMATION TABLE (LIVE UPDATE) ===
+st.markdown("### 7. After Transformation")
 post_stats = []
 for rep in all_reps:
     vals = transformed[rep].dropna()
@@ -150,26 +164,22 @@ for rep in all_reps:
 
 st.dataframe(pd.DataFrame(post_stats), use_container_width=True)
 
-# === 5. ACCEPTANCE REQUIRED ===
-st.markdown("### 5. Confirm Transformation")
-non_normal = sum(1 for r in post_stats if r.get("Normal") == "No")
-
-if non_normal == 0:
-    st.success("**Perfect — data is normal**")
-elif non_normal <= 2:
-    st.info("**Good — mild non-normality**")
+# === 8. LIVE NORMALITY STATEMENT ===
+post_non_normal = sum(1 for r in post_stats if r.get("Normal") == "No")
+if post_non_normal == 0:
+    st.success("**Perfect — data is normal after transformation**")
+elif post_non_normal <= 2:
+    st.info("**Good — mild non-normality remains**")
 else:
     st.warning("**Still non-normal — try another transformation**")
 
-if st.button("Accept This Transformation & Proceed", type="primary"):
+# === 9. ACCEPT BUTTON ONLY ===
+st.markdown("### 9. Confirm Transformation")
+if st.button("Accept This Transformation", type="primary"):
     st.session_state.intensity_transformed = transformed
     st.session_state.transform_applied = transform
     st.session_state.qc_accepted = True
-    st.success(f"**{transform} accepted** — ready for analysis")
+    st.success(f"**{transform} accepted** — ready for next plots")
 
-# === FINAL BUTTON ===
-if st.session_state.get("qc_accepted", False):
-    if st.button("Go to Differential Analysis", type="primary", use_container_width=True):
-        st.switch_page("pages/4_Differential_Analysis.py")
-else:
-    st.info("Please accept transformation before proceeding")
+# No "proceed" button — as requested
+st.info("More plots coming soon...")
