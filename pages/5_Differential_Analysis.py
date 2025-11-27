@@ -2,11 +2,13 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
-import plotly.express as px
-from scipy.cluster.hierarchy import linkage, leaves_list
-from scipy.spatial.distance import pdist
+import dash_bio
+from dash import html, dcc
 
+# Load final data
+if "intensity_final" not in st.session_state or "df_final" not in st.session_state:
+    st.error("No final processed data found! Please complete Protein Analysis first.")
+    st.stop()
 
 intensity_final = st.session_state.intensity_final.copy()
 df_final = st.session_state.df_final.copy()
@@ -14,73 +16,54 @@ c1 = st.session_state.prot_c1
 c2 = st.session_state.prot_c2
 all_reps = c1 + c2
 
-st.title("Differential Analysis & Data Summary")
+st.title("Differential Analysis & Data Summary (Schessner et al., 2022 Figure 5)")
 
-# === 5-ROW SNAPSHOT OF FINAL DATA ===
-# === 5-ROW SNAPSHOT — INDEXED BY PROTEIN GROUP (Schessner et al., 2022) ===
+# === 5-ROW SNAPSHOT ===
 st.subheader("Final Processed Data (5-row snapshot)")
-
-# Ensure PG is the index
+st.write("**Index:** Protein Group ID | **Transformation:** log₂ | **Filtering:** Applied")
 display_df = intensity_final.copy()
 if "PG" in df_final.columns:
     display_df.index = df_final["PG"]
-
-# Show only intensity columns, indexed by PG
-st.write("**Index:** Protein Group ID | **Transformation:** log₂ | **Filtering:** Applied")
 st.dataframe(display_df.head(5).round(3), use_container_width=True)
 
+# === 1. INTERACTIVE CLUSTERMAP (Schessner et al., 2022 Figure 5) ===
+st.subheader("Interactive Clustermap (Hierarchical Clustering)")
 
-# === 1. CLUSTERMAP — EXACTLY LIKE SCHESSNER ET AL., 2022 FIGURE 5 ===
-st.subheader("Clustermap of Replicate Profiles (Z-score)")
-
-from scipy.cluster.hierarchy import linkage, leaves_list
-from scipy.spatial.distance import pdist
+# Prepare data
+data_for_clustermap = intensity_final[all_reps].copy()
+data_for_clustermap = data_for_clustermap.dropna()
 
 # Z-score across proteins
-# Standardize across proteins
 from sklearn.preprocessing import StandardScaler
-
 z_data = pd.DataFrame(
     StandardScaler().fit_transform(data_for_clustermap),
     index=data_for_clustermap.index,
     columns=data_for_clustermap.columns
 )
 
-# Cluster samples
-col_dist = pdist(z_data.T, metric='euclidean')
-col_linkage = linkage(col_dist, method='average')
-col_order = leaves_list(col_linkage)
+# Convert to list of lists
+values = z_data.values.tolist()
+row_labels = z_data.index.astype(str).tolist()
+col_labels = z_data.columns.tolist()
 
-# Cluster proteins
-row_dist = pdist(z_data, metric='euclidean')
-row_linkage = linkage(row_dist, method='average')
-row_order = leaves_list(row_linkage)
-
-# Reorder
-z_ordered = z_data.iloc[row_order, col_order]
-ordered_samples = z_data.columns[col_order]
-ordered_proteins = z_data.index[row_order]
-
-fig = go.Figure(data=go.Heatmap(
-    z=z_ordered.values,
-    x=ordered_samples,
-    y=[f"Protein {i}" for i in range(len(ordered_proteins))],
-    colorscale="RdBu_r",
-    zmid=0,
-    showscale=True
-))
-
-fig.update_layout(
-    title="Clustermap (Z-score across proteins, hierarchical clustering)",
+# Create dashbio Clustergram
+fig = dashbio.Clustergram(
+    data=values,
+    column_labels=col_labels,
+    row_labels=row_labels,
     height=800,
-    xaxis_title="Samples",
-    yaxis_title="Proteins",
-    template="simple_white"
+    width=1200,
+    color_map="RdBu_r",
+    center_values=True,
+    linkage_type="average",
+    display_ratio=[0.15, 0.15],
+    paper_bgcolor="white",
+    plot_bgcolor="white",
+    line_width=1,
+    hidden_labels=[]
 )
 
-# Add dendrograms (optional)
-# ... (can be added with go.Scatter for full dashbio look)
-
+# Display in Streamlit
 st.plotly_chart(fig, use_container_width=True)
 
 # === 2. INTENSITY DISTRIBUTION — EXACTLY LIKE SCHESSNER ET AL., 2022 FIGURE 5A ===
