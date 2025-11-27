@@ -87,8 +87,14 @@ c2 = [f"B{i+1}" for i in range(n)]
 
 st.success(f"Renamed → A: {', '.join(c1)} | B: {', '.join(c2)}")
 
-# pages/1_Protein_Import.py
-# ... all your existing code until after replicate assignment ...
+df = df_raw.rename(columns=rename_map).copy()
+
+# THIS LINE REPLACES 0 AND NaN WITH 1.0 — CRITICAL
+intensity_cols = c1 + c2
+df[intensity_cols] = df[intensity_cols].replace([0, np.nan], 1.0)
+
+# Save final
+st.session_state.prot_final_df = df
 
 # === USER SELECTS SPECIES COLUMN ===
 st.markdown("### Select Species Column")
