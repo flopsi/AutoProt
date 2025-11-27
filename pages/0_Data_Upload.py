@@ -27,7 +27,7 @@ def load(file):
 
 data_df=load(uploaded_prot)
 
-data_df=pd.Dataframe(
+data_df=pd.DataFrame(
                     {
                         "widgets":["st.selectbox", "st.number_input", "st.text_area", "st.button"],
                     }
