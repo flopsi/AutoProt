@@ -21,7 +21,7 @@ all_reps = c1 + c2
 st.title("Protein-Level QC (Schessner et al., 2022 Figure 4)")
 
 # === 1. NORMALITY TESTING & RECOMMENDED TRANSFORMATION ===
-st.subheader("["1. Normality Testing & Recommended Transformation"]
+st.subheader("1. Normality Testing & Recommended Transformation")
 
 transform_options = {
     "log₂": lambda x: np.log2(x + 1),
