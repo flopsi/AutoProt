@@ -21,11 +21,31 @@ if not uploaded_prot:
     st.stop()
 
 @st.cache_data  # 👈 Add the caching decorator
-def load_prot(file):
+def load(file):
     df = pd.read_csv(file, sep=None, engine="python", header=0,index_col=0)
     return df
 
-df_prot=load_prot(uploaded_prot)
+df_prot=pd.DatFrame(load(uploaded_prot)
+                    {"widgets":["st.selectbox", "st.number_input", "st.text_area", "st.button"],
+    }
+)
+
+st.data_editor(
+    data_df,
+    column_config={
+        "widgets": st.column_config.Column(
+            "Streamlit Widgets",
+            help="Streamlit **widget** commands 🎈",
+            width="medium",
+            required=True,
+        )
+    },
+    hide_index=True,
+    num_rows="dynamic",
+)
 st.dataframe(df_prot)
 
 df_prot.head(5)
+
+edited_df_prot = st.data_editor(df_prot)
+
