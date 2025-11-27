@@ -282,3 +282,80 @@ if st.button("Accept Final Filtering & Proceed", type="primary"):
     st.session_state.qc_accepted = True
     st.success("Final dataset accepted! Ready for normalization & stats.")
     st.balloons()
+
+
+# === 8. NORMALITY TESTING & TRANSFORMATION RECOMMENDATION ===
+st.subheader("Normality Testing & Transformation Recommendation")
+
+# Test multiple transformations
+transformations = {
+    "Raw": lambda x: x,
+    "log₂": lambda x: np.log2(x + 1),
+    "log₁₀": lambda x: np.log10(x + 1),
+    "Square root": np.sqrt,
+    "Cube root": lambda x: np.cbrt(x + 1),
+    "Box-Cox": lambda x: stats.boxcox(x + 1)[0] if (x + 1 > 0).all() else None,
+    "Yeo-Johnson": lambda x: stats.yeojohnson(x + 1)[0],
+    "Inverse": lambda x: 1 / (x + 1)
+}
+
+results = []
+best_score = float('inf')
+best_transform = "Raw"
+
+for rep in all_reps:
+    raw_vals = df_final[rep].replace(0, np.nan).dropna()
+    if len(raw_vals) < 8:
+        continue
+        
+    row = {"Replicate": rep}
+    rep_best = "Raw"
+    rep_score = float('inf')
+    
+    for name, func in transformations.items():
+        try:
+            if name == "Box-Cox" and not (raw_vals > 0).all():
+                continue
+            t_vals = func(raw_vals)
+            if t_vals is None or np.any(np.isnan(t_vals)) or np.any(np.isinf(t_vals)):
+                continue
+                
+            skew = stats.skew(t_vals)
+            kurt = stats.kurtosis(t_vals)
+            _, p = stats.shapiro(t_vals)
+            
+            # Score: lower = better (Schessner et al. logic)
+            score = abs(skew) + abs(kurt - 3) + (0 if p > 0.05 else 10)
+            
+            row[name + " skew"] = f"{skew:+.3f}"
+            row[name + " kurt"] = f"{kurt:+.3f}"
+            row[name + " p"] = f"{p:.2e}"
+            
+            if score < rep_score:
+                rep_score = score
+                rep_best = name
+                
+        except:
+            continue
+            
+    row["Recommended"] = rep_best
+    results.append(row)
+    
+    if rep_score < best_score:
+        best_score = rep_score
+        best_transform = rep_best
+
+# Display results
+results_df = pd.DataFrame(results)
+st.table(results_df)
+
+# Final recommendation
+st.success(f"**Recommended transformation: {best_transform}**")
+st.info(f"Based on minimizing skewness + excess kurtosis (Schessner et al., 2022)")
+
+if best_transform in ["log₂", "log₁₀"]:
+    st.info("Log transformation is the gold standard in proteomics — stabilizes variance and normalizes distributions")
+elif best_transform in ["Box-Cox", "Yeo-Johnson"]:
+    st.info("Power transformation optimal — handles non-constant variance")
+else:
+    st.warning("No strong improvement — consider experimental design")
