@@ -1,140 +1,115 @@
-# pages/1_Protein_Import.py
+# pages/3_Protein_Analysis.py
 import streamlit as st
 import pandas as pd
-import io
-from shared import restart_button
+import numpy as np
+import plotly.graph_objects as go
+from scipy import stats
+from itertools import combinations
 
-def ss(key, default=None):
-    if key not in st.session_state:
-        st.session_state[key] = default
-    return st.session_state[key]
-
-st.set_page_config(page_title="Protein Import", layout="wide")
-
-st.markdown("""
-<style>
-    .header {background:linear-gradient(90deg,#E71316,#A6192E); padding:20px 40px; color:white; margin:-80px -80px 40px;}
-    .header h1,.header p {margin:0;}
-    .stButton>button {background:#E71316 !important; color:white !important;}
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown('<div class="header"><h1>DIA Proteomics Pipeline</h1><p>Protein Import</p></div>', unsafe_allow_html=True)
-
-# === UPLOAD ONCE, KEEP FOREVER ===
-if "uploaded_protein_bytes" not in st.session_state:
-    st.markdown("### Upload Protein File")
-    uploaded = st.file_uploader("CSV / TSV / TXT", type=["csv","tsv","txt"])
-    if uploaded:
-        st.session_state.uploaded_protein_bytes = uploaded.getvalue()
-        st.session_state.uploaded_protein_name = uploaded.name
-        st.rerun()
-    else:
-        restart_button()
-        st.stop()
-else:
-    st.success(f"Protein file ready: **{st.session_state.uploaded_protein_name}**")
-
-# === LOAD FROM BYTES (safe ===
-@st.cache_data(show_spinner="Loading protein data...")
-def load_protein_data(_bytes):
-    text = _bytes.decode("utf-8", errors="replace")
-    if text.startswith("\ufeff"):
-        text = text[1:]
-    return pd.read_csv(io.StringIO(text), sep=None, engine="python")
-
-df_raw = load_protein_data(st.session_state.uploaded_protein_bytes)
-
-st.write(f"**{len(df_raw):,}** proteins × **{len(df_raw.columns)}** columns")
-
-# === INTENSITY COLUMNS ===
-intensity_cols = []
-for col in df_raw.columns:
-    cleaned = pd.to_numeric(df_raw[col].astype(str).str.replace(r"[,\#NUM!]", "", regex=True), errors='coerce')
-    if cleaned.notna().mean() > 0.3:
-        df_raw[col] = cleaned
-        intensity_cols.append(col)
-
-if not intensity_cols:
-    st.error("No quantitative columns found")
+# Load data
+if "prot_final_df" not in st.session_state:
+    st.error("No protein data found! Please go to Protein Import first.")
     st.stop()
 
-# === REPLICATES ===
-st.markdown("### Assign Replicates (must be equal)")
-rows = [{"Column": c, "A": True, "B": False} for c in intensity_cols]
-edited = st.data_editor(
-    pd.DataFrame(rows),
-    column_config={
-        "Column": st.column_config.TextColumn(disabled=True),
-        "A": st.column_config.CheckboxColumn("Condition A"),
-        "B": st.column_config.CheckboxColumn("Condition B"),
-    },
-    hide_index=True, use_container_width=True, num_rows="fixed"
-)
+df = st.session_state.prot_final_df
+c1 = st.session_state.prot_final_c1
+c2 = st.session_state.prot_final_c2
+all_reps = c1 + c2
 
-a_cols = edited[edited["A"]]["Column"].tolist()
-b_cols = edited[edited["B"]]["Column"].tolist()
+st.title("Protein-Level QC & Transformation Recommendation")
 
-if len(a_cols) != len(b_cols) or len(a_cols) == 0:
-    st.error("Must have equal replicates")
+# === USER SELECTS CONSTANT SPECIES ===
+if "Species" not in df.columns:
+    st.error("Species column missing — please re-upload")
     st.stop()
 
-n = len(a_cols)
-df = df_raw.rename(columns={a_cols[i]: f"A{i+1}" for i in range(n)} | {b_cols[i]: f"B{i+1}" for i in range(n)}).copy()
-c1 = [f"A{i+1}" for i in range(n)]
-c2 = [f"B{i+1}" for i in range(n)]
-
-st.success(f"Renamed → A: {', '.join(c1)} | B: {', '.join(c2)}")
-
-# pages/1_Protein_Import.py
-# ... all your existing code until after replicate assignment ...
-
-# === USER SELECTS SPECIES COLUMN ===
-st.markdown("### Select Species Column")
-species_candidates = [c for c in df.columns if c not in c1 + c2]
-species_col = st.selectbox(
-    "Which column contains species information? (e.g., 'Species', 'Organism', 'Description')",
-    options=species_candidates,
+unique_species = sorted(df["Species"].dropna().unique())
+constant_species = st.selectbox(
+    "Select constant (reference) species for QC",
+    options=unique_species,
     index=0
 )
 
-# Extract species cleanly
-species_keywords = {
-    "HUMAN": ["HUMAN", "HOMO", "HSA"],
-    "MOUSE": ["MOUSE", "MUS", "MMU"],
-    "RAT": ["RAT", "RATTUS", "RNO"],
-    "ECOLI": ["ECOLI", "ESCHERICHIA"],
-    "BOVIN": ["BOVIN", "BOVINE", "BOS"],
-    "YEAST": ["YEAST", "SACCHAROMYCES"],
-    "RABIT": ["RABBIT", "RABIT", "OCU"],
-    "CANFA": ["DOG", "CANIS", "CANFA"],
-    "MACMU": ["MACACA", "RHESUS", "MACMU"],
-    "PANTR": ["CHIMP", "PANTR"]
-}
+df_const = df[df["Species"] == constant_species].copy()
+st.write(f"Using **{len(df_const):,}** {constant_species} proteins for analysis")
 
-def get_species(text):
-    if pd.isna(text): return "Other"
-    text = str(text).upper()
-    for species, keywords in species_keywords.items():
-        if any(kw in text for kw in keywords):
-            return species
-    return "Other"
+# === 6 INDIVIDUAL DENSITY PLOTS — log₁₀ INTENSITY ===
+st.subheader("1. Individual Intensity Density Plots (log₁₀)")
 
-df["Species"] = df[species_col].apply(get_species)
-st.write("Detected species:", df["Species"].value_counts().to_dict())
+log10_data = np.log10(df_const[all_reps].replace(0, np.nan))
 
-# === SAVE SPECIES COLUMN NAME ===
-st.session_state.species_column_name = species_col
-st.session_state.prot_final_df = df
-# === SAVE FINAL DATA ===
-st.session_state.prot_df = df
-st.session_state.prot_c1 = c1
-st.session_state.prot_c2 = c2
+row1, row2 = st.columns(3), st.columns(3)
+for i, rep in enumerate(all_reps):
+    col = row1[i] if i < 3 else row2[i-3]
+    with col:
+        fig = go.Figure()
+        fig.add_trace(go.Histogram(
+            x=log10_data[rep].dropna(),
+            nbinsx=80,
+            histnorm="density",
+            name=rep,
+            marker_color="#E71316" if rep in c1 else "#1f77b4",
+            opacity=0.75
+        ))
+        median = log10_data[rep].median()
+        fig.add_vline(x=median, line_dash="dash", line_color="black")
+        fig.update_layout(
+            height=380,
+            title=f"<b>{rep}</b>",
+            xaxis_title="log₁₀(Intensity)",
+            yaxis_title="Density",
+            showlegend=False,
+            plot_bgcolor="white"
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
-st.success("Protein data saved — ready for analysis")
+# === KS TEST ON RAW DATA ===
+st.subheader("2. Technical Reproducibility (KS Test on Raw Data)")
 
-# === GO TO ANALYSIS ===
-if st.button("Go to Protein Analysis", type="primary", use_container_width=True):
-    st.switch_page("pages/3_Protein_Analysis.py")
+raw_data = df_const[all_reps].replace(0, np.nan)
+significant_pairs = []
+for r1, r2 in combinations(all_reps, 2):
+    d1, d2 = raw_data[r1].dropna(), raw_data[r2].dropna()
+    if len(d1) > 1 and len(d2) > 1:
+        _, p = stats.ks_2samp(d1, d2)
+        if p < 0.05:
+            significant_pairs.append(f"{r1} vs {r2}")
 
-restart_button()
+if significant_pairs:
+    st.warning(f"**Technical differences detected** (raw data):\n" + " • ".join(significant_pairs))
+else:
+    st.success("**Excellent technical reproducibility** — all raw distributions similar")
+
+# === NORMALITY TEST ON log₁₀ DATA ===
+st.subheader("3. Normality Test (log₁₀ Intensities)")
+
+normality_results = []
+for rep in all_reps:
+    vals = log10_data[rep].dropna()
+    if len(vals) < 8:
+        normality_results.append({"Replicate": rep, "Shapiro-Wilk p": "N/A", "Normal?": "Too few values"})
+        continue
+    _, p = stats.shapiro(vals)
+    normal = "Yes" if p > 0.05 else "No"
+    normality_results.append({
+        "Replicate": rep,
+        "Shapiro-Wilk p": f"{p:.2e}",
+        "Normal?": normal
+    })
+
+st.dataframe(pd.DataFrame(normality_results), use_container_width=True)
+
+# === FINAL RECOMMENDATION ===
+non_normal_count = sum(1 for r in normality_results if r.get("Normal?") == "No")
+if non_normal_count == 0:
+    st.success("**log₁₀ intensities are approximately normal** — parametric tests acceptable")
+elif non_normal_count <= 2:
+    st.info("**log₁₀ is good** — mild non-normality in few replicates. Parametric OK with caution")
+else:
+    st.warning("**log₁₀ still non-normal** — consider robust methods or rank-based tests")
+
+st.success("**Recommended downstream transformation: log₁₀**")
+st.info("→ Use `np.log10(intensity)` in all statistical tests and visualizations")
+
+if st.button("Go to Differential Analysis", type="primary", use_container_width=True):
+    st.switch_page("pages/4_Differential_Analysis.py")
