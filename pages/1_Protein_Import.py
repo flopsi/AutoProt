@@ -4,6 +4,7 @@ import streamlit as st
 import pandas as pd
 import io
 from shared import restart_button
+import numpy as np
 
 def ss(key, default=None):
     if key not in st.session_state:
