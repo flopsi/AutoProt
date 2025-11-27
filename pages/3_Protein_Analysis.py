@@ -1,4 +1,4 @@
-# pages/3_Protein_Analysis.py
+Python# pages/3_Protein_Analysis.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -6,14 +6,20 @@ import plotly.graph_objects as go
 from scipy import stats
 from scipy.stats import boxcox, yeojohnson
 
-# Load data
-if "prot_final_df" not in st.session_state:
-    st.error("No protein data found! Please go to Protein Import first.")
+# === CRITICAL FIX: USE THE CORRECT SESSION STATE KEYS FROM IMPORT PAGE ===
+required_keys = ["prot_df", "prot_c1", "prot_c2"]
+missing = [k for k in required_keys if k not in st.session_state or st.session_state[k] is None]
+
+if missing:
+    st.error("No protein data found! Please complete **Protein Import** first.")
+    if st.button("Go to Protein Import"):
+        st.switch_page("pages/1_Protein_Import.py")
     st.stop()
 
-df = st.session_state.prot_final_df
-c1 = st.session_state.prot_final_c1
-c2 = st.session_state.prot_final_c2
+# === LOAD DATA USING THE CORRECT KEYS ===
+df = st.session_state.prot_df.copy()
+c1 = st.session_state.prot_c1.copy()
+c2 = st.session_state.prot_c2.copy()
 all_reps = c1 + c2
 
 st.title("Protein-Level QC & Transformation")
@@ -29,7 +35,7 @@ data_source = st.radio(
     key="normality_data_source"
 )
 
-test_df = df if data_source == "All original data" else df  # will be updated after filtering
+test_df = df if data_source == "All original data" else df  # will be updated later
 
 # Test transformations
 transform_options = {
@@ -83,7 +89,6 @@ for rep in all_reps:
     
     row["Recommended"] = rep_best
     
-    # Show only recommended
     if rep_best != "Raw":
         try:
             final_vals = transform_options[rep_best](raw_vals)
@@ -118,7 +123,6 @@ proceed_choice = st.radio(
     ["Raw data", f"Transformed data ({best_transform})"],
     index=1
 )
-
 # === 1. LOW INTENSITY FILTER FOR PLOTS ONLY ===
 st.subheader("Plot Filter (Visual QC Only)")
 remove_low_plot = st.checkbox(
