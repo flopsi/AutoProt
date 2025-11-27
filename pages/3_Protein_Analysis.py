@@ -6,6 +6,7 @@ import numpy as np
 import plotly.graph_objects as go
 from scipy import stats
 from scipy.stats import boxcox, yeojohnson
+import hashlib
 
 # Load data
 if "prot_df" not in st.session_state:
