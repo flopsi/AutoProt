@@ -157,26 +157,20 @@ st.info(f"Removed {before - after:,} proteins with only imputed values (all = 1.
 final_cols = ["PG", "Name", "Species"] + all_intensity
 df_final = df[final_cols].copy()
 
-# === PREVIEW ===
-st.success(f"Final dataset ready: **{len(df_final):,} proteins** × **{len(df_final.columns)} columns**")
-
-colA, colB = st.columns(2)
-with colA:
-    st.subheader("Condition A")
-    st.code(" | ".join(c1))
-with colB:
-    st.subheader("Condition B")
-    st.code(" | ".join(c2))
-
-st.write("**Species distribution:**", dict(df_final["Species"].value_counts()))
-
-# ------------------------------
-# FINAL PREVIEW – BULLETPROOF
-# ------------------------------
 st.subheader("Data Preview (first 12 proteins)")
 
-preview = df_final.head(5).copy()
+preview = df_final.head(12).copy()
 
+# Create empty style matrix
+styles = pd.DataFrame("", index=preview.index, columns=preview.columns)
+
+# Apply green background to all intensity columns
+for col in all_intensity:
+    if col in preview.columns:
+        styles[col] = "background-color: #d4edda; color: #155724; font-weight: bold"
+
+# Display with styling
+st.dataframe(preview.style.apply(lambda _: styles, axis=None), use_container_width=True)
 
 # === SAVE TO SESSION ===
 st.session_state.prot_df = df_final
