@@ -6,7 +6,9 @@ import plotly.graph_objects as go
 import plotly.express as px
 from scipy.cluster.hierarchy import linkage, leaves_list
 from scipy.spatial.distance import pdist
-
+# Final data — indexed by Protein Group ID
+df_final = df_final.set_index("PG")  # ← Protein Group ID as index
+intensity_final = df_final[all_reps]   # ← intensities indexed by PG
 
 intensity_final = st.session_state.intensity_final.copy()
 df_final = st.session_state.df_final.copy()
@@ -18,9 +20,8 @@ st.title("Differential Analysis & Data Summary")
 
 # === 5-ROW SNAPSHOT OF FINAL DATA ===
 st.subheader("Final Processed Data (5-row snapshot)")
-st.write("**Transformation:** log₂ | **Filtering:** Applied | **For differential analysis**")
+st.write("**Index:** Protein Group ID | **Transformation:** log₂ | **Filtering:** Applied")
 st.dataframe(intensity_final.head(5).round(3), use_container_width=True)
-
 # === 1. HEATMAP WITH HIERARCHICAL CLUSTERING ===
 st.subheader("1. Sample Correlation Heatmap (Hierarchical Clustering)")
 
@@ -192,9 +193,7 @@ fig.update_traces(textposition='inside', textfont_size=12)
 fig.update_layout(height=600, barmode='stack', template="simple_white")
 st.plotly_chart(fig, use_container_width=True)
 
-# Final data — indexed by Protein Group ID
-df_final = df_final.set_index("PG")  # ← Protein Group ID as index
-intensity_final = df_final[all_reps]   # ← intensities indexed by PG
+
 # === 5-ROW SNAPSHOT BELOW THE PLOT ===
 st.subheader("Final Processed Data (5-row snapshot)")
 st.write("**Index:** Protein Group ID | **Transformation:** log₂ | **Filtering:** Applied")
