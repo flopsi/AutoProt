@@ -1,8 +1,11 @@
-# pages/5_Differential_Analysis.py
+# pages/4_Differential_Analysis.py
 import streamlit as st
 import pandas as pd
 import numpy as np
-
+import plotly.graph_objects as go
+import plotly.express as px
+from scipy.cluster.hierarchy import linkage, leaves_list
+from scipy.spatial.distance import pdist
 # Load final data
 if "intensity_final" not in st.session_state or "df_final" not in st.session_state:
     st.error("No final processed data found! Please complete Protein Analysis first.")
