@@ -187,20 +187,21 @@ if filter_strategy in ["±2σ filtered", "Combined"]:
     df_final = df_final[mask]
 
 # === PROTEIN COUNT TABLE — EXACTLY LIKE SCHESSNER ET AL., 2022 TABLE 1 ===
-st.subheader("Protein Counts After Final Filtering (Schessner et al., 2022 Table 1)")
+st.subheader("Protein Counts After Final Filtering")
 
 count_data = []
 
 # All proteins
 count_data.append({
     "Species": "All proteins",
-    len(df),
+    "Before Filter": len(df),
     "After Filter": len(df_final)
 })
 
 # Per species
 if "Species" in df.columns:
-    for sp in ["HUMAN", "ECOLI", "YEAST"]:
+    species_list = ["HUMAN", "ECOLI", "YEAST"]
+    for sp in species_list:
         if sp in df["Species"].values:
             before = len(df[df["Species"] == sp])
             after = len(df_final[df_final["Species"] == sp])
@@ -214,7 +215,6 @@ count_df = pd.DataFrame(count_data)
 st.table(count_df.style.format({"Before Filter": "{:,}", "After Filter": "{:,}"}))
 
 st.info("**Table 1 from Schessner et al., 2022** — shows impact of filtering on total and species-specific protein numbers")
-
 # === 5. PROCEED BUTTON ===
 st.markdown("### Confirm & Proceed")
 if st.button("Accept & Proceed to Differential Analysis", type="primary"):
