@@ -106,7 +106,7 @@ fig.update_layout(
 )
 st.plotly_chart(fig, use_container_width=True)
 
-# === 3. CVs — CLEAN VIOLIN PLOTS ===
+# === 3. CVs — VIOLIN PLOTS WITH MEAN & MEDIAN ===
 st.subheader("Technical Reproducibility (CV within Conditions)")
 
 cv_data = []
@@ -114,20 +114,26 @@ for reps, name in [(c1, "Condition A"), (c2, "Condition B")]:
     if len(reps) >= 2:
         cv_per_protein = intensity_final[reps].std(axis=1) / intensity_final[reps].mean(axis=1) * 100
         cv_per_protein = cv_per_protein.dropna()
+        mean_cv = cv_per_protein.mean()
+        median_cv = cv_per_protein.median()
+        st.metric(f"**{name}** — Mean CV", f"{mean_cv:.1f}%")
+        st.metric(f"**{name}** — Median CV", f"{median_cv:.1f}%")
         cv_data.extend([{"Condition": name, "CV (%)": cv} for cv in cv_per_protein])
 
 cv_df = pd.DataFrame(cv_data)
 
 fig = go.Figure()
+
 for condition, color in [("Condition A", "#E71316"), ("Condition B", "#1f77b4")]:
-    data = cv_df[cv_df["Condition"] == condition]["CV (%)"]
+    subset = cv_df[cv_df["Condition"] == condition]
     fig.add_trace(go.Violin(
-        y=data,
+        y=subset["CV (%)"],
         name=condition,
         line_color=color,
         meanline_visible=True,
         box=dict(visible=True, width=0.3),
-        points=False
+        points=False,
+        showlegend=True
     ))
 
 fig.update_layout(
