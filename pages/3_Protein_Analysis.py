@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from scipy import stats
-from itertools import combinations
+from scipy.stats import boxcox, yeojohnson
 
 # Load data
 if "prot_final_df" not in st.session_state:
@@ -16,25 +16,25 @@ c1 = st.session_state.prot_final_c1
 c2 = st.session_state.prot_final_c2
 all_reps = c1 + c2
 
-st.title("Protein-Level QC & Transformation Recommendation")
+st.title("Protein-Level QC & Transformation")
 
-# === SPECIES SELECTION (DEFAULT = MOST COMMON) ===
+# === SPECIES SELECTION ===
 if "Species" not in df.columns:
     st.error("Species column missing — please re-upload")
     st.stop()
 
 species_counts = df["Species"].value_counts()
-most_common_species = species_counts.index[0]
+most_common = species_counts.index[0]
 
 selected_species = st.selectbox(
-    "Select species for QC plots and testing",
+    "Select species for QC",
     options=species_counts.index.tolist(),
     index=0,
     format_func=lambda x: f"{x} ({species_counts[x]:,} proteins)"
 )
 
 df_species = df[df["Species"] == selected_species].copy()
-st.write(f"Using **{len(df_species):,}** {selected_species} proteins for analysis")
+st.write(f"Using **{len(df_species):,}** {selected_species} proteins")
 
 # === 1. 6 INDIVIDUAL DENSITY PLOTS — log₁₀ INTENSITY ===
 st.subheader("1. Intensity Density Plots (log₁₀) — Selected Species")
@@ -66,68 +66,101 @@ for i, rep in enumerate(all_reps):
         )
         st.plotly_chart(fig, use_container_width=True)
 
-# === 2. KS TEST ON RAW DATA ===
-st.subheader("2. Technical Reproducibility (KS Test — Raw Intensity)")
+# === 2. RAW DATA STATISTICS (Skew, Kurtosis, Normality) ===
+st.subheader("2. Raw Data Distribution Diagnosis")
 
 raw_data = df_species[all_reps].replace(0, np.nan)
-significant_pairs = []
-for r1, r2 in combinations(all_reps, 2):
-    d1, d2 = raw_data[r1].dropna(), raw_data[r2].dropna()
-    if len(d1) > 1 and len(d2) > 1:
-        _, p = stats.ks_2samp(d1, d2)
-        if p < 0.05:
-            significant_pairs.append(f"{r1} vs {r2}")
-
-if significant_pairs:
-    st.warning(f"**Significant differences detected**:\n" + " • ".join(significant_pairs))
-else:
-    st.success("**Excellent technical reproducibility** — all replicates similar")
-
-# === 3. NORMALITY TEST ON RAW INTENSITY ===
-st.subheader("3. Normality Test (Raw Intensity — Before Transformation)")
-
-normality_results = []
+stats_raw = []
 for rep in all_reps:
     vals = raw_data[rep].dropna()
     if len(vals) < 8:
-        normality_results.append({"Replicate": rep, "Shapiro-Wilk p": "N/A", "Normal?": "Too few values"})
+        stats_raw.append({"Replicate": rep, "n": len(vals), "Skew": "N/A", "Kurtosis": "N/A", "Shapiro p": "N/A", "Normal": "N/A"})
         continue
+    skew = stats.skew(vals)
+    kurt = stats.kurtosis(vals)
     _, p = stats.shapiro(vals)
     normal = "Yes" if p > 0.05 else "No"
-    normality_results.append({
+    stats_raw.append({
         "Replicate": rep,
-        "Shapiro-Wilk p": f"{p:.2e}",
-        "Normal?": normal
+        "n": len(vals),
+        "Skew": f"{skew:+.3f}",
+        "Kurtosis": f"{kurt:+.3f}",
+        "Shapiro p": f"{p:.2e}",
+        "Normal": normal
     })
 
-st.dataframe(pd.DataFrame(normality_results), use_container_width=True)
+st.dataframe(pd.DataFrame(stats_raw), use_container_width=True)
 
-# === 4. TRANSFORMATION RECOMMENDATION ===
-non_normal_count = sum(1 for r in normality_results if r.get("Normal?") == "No")
+# === 3. TRANSFORMATION SELECTION ===
+st.markdown("### 3. Apply Transformation")
+transform = st.selectbox(
+    "Choose transformation to apply",
+    ["None", "log₂", "log₁₀", "Box-Cox", "Yeo-Johnson"],
+    index=2  # default log10
+)
 
-if non_normal_count == 0:
-    st.success("**Raw intensities appear normal** — parametric tests acceptable (very rare!)")
-elif non_normal_count <= 2:
-    st.info("**Mild non-normality** — log₁₀ transformation recommended")
+# Apply transformation
+if transform == "log₂":
+    transformed = np.log2(raw_data)
+    y_label = "log₂(Intensity)"
+elif transform == "log₁₀":
+    transformed = np.log10(raw_data)
+    y_label = "log₁₀(Intensity)"
+elif transform == "Box-Cox":
+    shifted = raw_data - raw_data.min().min() + 1
+    transformed = pd.DataFrame(boxcox(shifted.values.flatten())[0].reshape(shifted.shape),
+                               index=raw_data.index, columns=raw_data.columns)
+    y_label = "Box-Cox(Intensity)"
+elif transform == "Yeo-Johnson":
+    transformed = pd.DataFrame(yeojohnson(raw_data.values.flatten())[0].reshape(raw_data.shape),
+                               index=raw_data.index, columns=raw_data.columns)
+    y_label = "Yeo-Johnson(Intensity)"
 else:
-    st.warning("**Strong non-normality** — log₁₀ transformation REQUIRED")
+    transformed = raw_data
+    y_label = "Raw Intensity"
 
-st.success("**Recommended downstream transformation: log₁₀**")
-st.info("""
-**Why log₁₀?**  
-- Standard practice in proteomics (Schessner et al., 2022)  
-- Compresses dynamic range  
-- Stabilizes variance  
-- Makes distributions more symmetric  
-→ Use `np.log10(intensity)` in all downstream analysis (volcano, PCA, t-tests)
-""")
+# === 4. RETEST AFTER TRANSFORMATION ===
+st.markdown("### 4. Distribution After Transformation")
+post_stats = []
+for rep in all_reps:
+    vals = transformed[rep].dropna()
+    if len(vals) < 8:
+        post_stats.append({"Replicate": rep, "Skew": "N/A", "Kurtosis": "N/A", "Shapiro p": "N/A", "Normal": "N/A"})
+        continue
+    skew = stats.skew(vals)
+    kurt = stats.kurtosis(vals)
+    _, p = stats.shapiro(vals)
+    normal = "Yes" if p > 0.05 else "No"
+    post_stats.append({
+        "Replicate": rep,
+        "Skew": f"{skew:+.3f}",
+        "Kurtosis": f"{kurt:+.3f}",
+        "Shapiro p": f"{p:.2e}",
+        "Normal": normal
+    })
 
-# === SAVE FOR DOWNSTREAM ===
-st.session_state.intensity_raw = raw_data
-st.session_state.intensity_log10 = log10_data
-st.session_state.selected_species_for_qc = selected_species
+st.dataframe(pd.DataFrame(post_stats), use_container_width=True)
 
-st.success("Data ready for differential analysis")
+# === 5. USER ACCEPTANCE REQUIRED ===
+st.markdown("### 5. Confirm Transformation")
+non_normal = sum(1 for r in post_stats if r.get("Normal") == "No")
 
-if st.button("Go to Differential Analysis", type="primary", use_container_width=True):
-    st.switch_page("pages/4_Differential_Analysis.py")
+if non_normal == 0:
+    st.success("**Perfect — data is normal after transformation**")
+elif non_normal <= 2:
+    st.info("**Good — mild non-normality remains**")
+else:
+    st.warning("**Still non-normal — try another transformation**")
+
+if st.button("Accept This Transformation & Proceed", type="primary"):
+    st.session_state.intensity_transformed = transformed
+    st.session_state.transform_applied = transform
+    st.session_state.qc_accepted = True
+    st.success(f"**{transform} accepted** — ready for differential analysis")
+
+# === FINAL BUTTON ONLY AFTER ACCEPTANCE ===
+if st.session_state.get("qc_accepted", False):
+    if st.button("Go to Differential Analysis", type="primary", use_container_width=True):
+        st.switch_page("pages/4_Differential_Analysis.py")
+else:
+    st.info("Please accept transformation before proceeding")
