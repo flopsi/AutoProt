@@ -69,11 +69,5 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-if st.button("RESTART", key="restart_fixed", help="Clear all data and start over"):
-    st.cache_data.clear()
-    st.cache_resource.clear()
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-    st.rerun()
 st.markdown("---")
 st.caption("© 2024 Thermo Fisher Scientific • Internal Use Only")
