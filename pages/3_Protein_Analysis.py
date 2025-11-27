@@ -5,12 +5,18 @@ import numpy as np
 import plotly.graph_objects as go
 from scipy import stats
 
-# Load data
-if "prot_final_df" not in st.session_state:
-    st.error("No protein data found! Please go to Protein Import first.")
+# === CORRECT SESSION STATE KEYS (MUST MATCH YOUR IMPORT PAGE) ===
+required_keys = ["prot_final_df", "prot_final_c1", "prot_final_c2"]
+missing = [k for k in required_keys if k not in st.session_state]
+
+if missing or st.session_state.prot_final_df is None or len(st.session_state.prot_final_df) == 0:
+    st.error("No protein data found! Please complete **Protein Import** first.")
+    if st.button("Go to Protein Import"):
+        st.switch_page("pages/1_Protein_Import.py")
     st.stop()
 
-df = st.session_state.prot_final_df
+# === LOAD DATA ===
+df = st.session_state.prot_final_df.copy()
 c1 = st.session_state.prot_final_c1
 c2 = st.session_state.prot_final_c2
 all_reps = c1 + c2
@@ -24,7 +30,6 @@ remove_low_plot = st.checkbox(
     value=False
 )
 
-# Apply to plot data
 df_plot = df.copy()
 if remove_low_plot:
     mask = pd.Series(True, index=df.index)
@@ -62,7 +67,7 @@ st.subheader("Intensity Density Plots (log₁₀)")
 
 row1, row2 = st.columns(3), st.columns(3)
 for i, rep in enumerate(all_reps):
-    col = row1[i] if i < 3 else row2[i-3]
+    col = row1[i] if i <  3 else row2[i-3]
     with col:
         vals = current_data[rep].dropna()
         if len(vals) == 0:
