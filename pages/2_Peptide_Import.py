@@ -3,7 +3,6 @@ import streamlit as st
 import pandas as pd
 import io
 import numpy as np
-from shared import restart_button
 
 def clear_all_session():
     keys = ["peptide_bytes", "metadata_bytes", "peptide_name", "metadata_name",
@@ -105,8 +104,7 @@ def detect_peptide_sequence_column(df):
         if df[col].dtype != "object": continue
         sample = df[col].dropna().astype(str).head(2000)
         if sample.empty: continue
-        # Pattern: ends with K or R before _ or end of string
-        pattern = r'[KR](?=[_\.]|$)'  # K/R followed by _, ., or end
+        pattern = r'[KR](?=[_\.]|$)'
         matches = sample.str.contains(pattern, regex=True)
         ratio = matches.mean()
         if ratio > 0.90:
@@ -201,7 +199,7 @@ df_final["Species"] = df_final["PG"].apply(get_species)
 final_cols = ["Sequence", "PG", "Species"] + all_intensity_cols
 df_final = df_final[final_cols].copy()
 
-# === SAVE TO SESSION ===
+# === SAVE TO SESSION — EXACT KEYS USED IN ANALYSIS PAGE ===
 st.session_state.pep_df = df_final
 st.session_state.pep_c1 = c1
 st.session_state.pep_c2 = c2
@@ -222,7 +220,7 @@ st.subheader("Data Preview")
 st.dataframe(df_final.head(12), use_container_width=True)
 
 if st.button("Go to Peptide Analysis", type="primary", use_container_width=True):
-    st.switch_page("pages/4_Peptide_Analysis.py")
+    st.switch_page("pages/3_Peptide_Analysis.py")
 
 if st.button("Restart Everything"):
     clear_all_session()
