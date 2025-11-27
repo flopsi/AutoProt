@@ -29,9 +29,7 @@ if "PG" in df_final.columns:
 st.write("**Index:** Protein Group ID | **Transformation:** log₂ | **Filtering:** Applied")
 st.dataframe(display_df.head(5).round(3), use_container_width=True)
 
-st.subheader("Final Processed Data (5-row snapshot)")
-st.write("**Index:** Protein Group ID | **Transformation:** log₂ | **Filtering:** Applied")
-st.dataframe(intensity_final.head(5).round(3), use_container_width=True)
+
 # === 1. HEATMAP WITH HIERARCHICAL CLUSTERING ===
 st.subheader("1. Sample Correlation Heatmap (Hierarchical Clustering)")
 
