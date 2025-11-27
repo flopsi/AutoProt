@@ -16,81 +16,36 @@ all_reps = c1 + c2
 
 st.title("Protein-Level QC & Species-Specific Visualization")
 
-# === 1. GLOBAL SPECIES SELECTION TABLE (ONE CHECKBOX ACTIVE) ===
-st.subheader("Select Species to Display (Only One Allowed)")
+# === PRE-CALCULATE LOG10 DATA FOR SPEED ===
+if "log10_cache" not in st.session_state:
+    raw = df[all_reps].replace(0, np.nan)
+    log10_all = np.log10(raw)
+    
+    cache = {"All proteins": log10_all}
+    if "Species" in df.columns:
+        for sp in ["HUMAN", "ECOLI", "YEAST"]:
+            subset = df[df["Species"] == sp][all_reps].replace(0, np.nan)
+            cache[sp] = np.log10(subset) if len(subset) > 0 else pd.DataFrame()
+    
+    st.session_state.log10_cache = cache
+    st.session_state.species_options = ["All proteins", "HUMAN", "ECOLI", "YEAST"]
 
-# Initialize session state
+# === DEFAULT SELECTION ===
 if "selected_species" not in st.session_state:
     st.session_state.selected_species = "All proteins"
 
-# Build table with radio-style behavior using data_editor
-species_options = ["All proteins", "HUMAN", "ECOLI", "YEAST"]
-table_data = []
-
-for sp in species_options:
-    if sp == "All proteins":
-        subset = df
-    else:
-        subset = df[df["Species"] == sp] if "Species" in df.columns else pd.DataFrame()
-    
-    # Compute stats for one example replicate to show in table (e.g., first replicate)
-    example_rep = all_reps[0]
-    rep_vals = np.log10(subset[example_rep].replace(0, np.nan).dropna())
-    
-    if len(rep_vals) == 0:
-        mean_str = variance_str = std_str = "—"
-    else:
-        mean_str = f"{rep_vals.mean():.3f}"
-        variance_str = f"{rep_vals.var():.3f}"
-        std_str = f"{rep_vals.std():.3f}"
-    
-    table_data.append({
-        "Show": sp == st.session_state.selected_species,
-        "Species": sp,
-        "Mean (log₁₀)": mean_str,
-        "Variance": variance_str,
-        "Std Dev": std_str
-    })
-
-# Interactive table
-edited = st.data_editor(
-    pd.DataFrame(table_data),
-    column_config={
-        "Show": st.column_config.CheckboxColumn("Show", default=False),
-        "Species": st.column_config.TextColumn("Species", disabled=True),
-        "Mean (log₁₀)": st.column_config.TextColumn("Mean (log₁₀)", disabled=True),
-        "Variance": st.column_config.TextColumn("Variance", disabled=True),
-        "Std Dev": st.column_config.TextColumn("Std Dev", disabled=True),
-    },
-    use_container_width=True,
-    hide_index=True
-)
-
-# Detect selection change and enforce single selection
-selected_row = edited[edited["Show"]]
-if not selected_row.empty:
-    new_species = selected_row["Species"].iloc[0]
-    if new_species != st.session_state.selected_species:
-        st.session_state.selected_species = new_species
-        st.experimental_rerun()
-
-# === 2. 6 LOG10 DENSITY PLOTS — BASED ON SELECTED SPECIES ===
-st.subheader(f"Intensity Density Plots — {st.session_state.selected_species}")
-
-# Get data for selected species
-if st.session_state.selected_species == "All proteins":
-    df_plot = df.copy()
-else:
-    df_plot = df[df["Species"] == st.session_state.selected_species].copy()
-
-raw_plot = df_plot[all_reps].replace(0, np.nan)
-log10_plot = np.log10(raw_plot)
+# === 6 LOG10 DENSITY PLOTS ===
+st.subheader("Intensity Density Plots (log₁₀)")
 
 row1, row2 = st.columns(3), st.columns(3)
+cols = [row1[0], row1[1], row1[2], row2[0], row2[1], row2[2]]
+
 for i, rep in enumerate(all_reps):
-    col = row1[i] if i < 3 else row2[i-3]
+    col = cols[i]
     with col:
-        vals = log10_plot[rep].dropna()
+        current_data = st.session_state.log10_cache[st.session_state.selected_species]
+        vals = current_data[rep].dropna()
+        
         mean = vals.mean()
         std = vals.std()
         lower = mean - 2*std
@@ -115,6 +70,51 @@ for i, rep in enumerate(all_reps):
             showlegend=False
         )
         st.plotly_chart(fig, use_container_width=True)
+
+        # === TABLE UNDER EACH PLOT — ONLY FIRST HAS CHECKBOX ===
+        table_data = []
+        for sp in st.session_state.species_options:
+            sp_data = st.session_state.log10_cache[sp]
+            sp_vals = sp_data[rep].dropna()
+            if len(sp_vals) == 0:
+                mean_str = variance_str = std_str = "—"
+            else:
+                mean_str = f"{sp_vals.mean():.3f}"
+                variance_str = f"{sp_vals.var():.3f}"
+                std_str = f"{sp_vals.std():.3f}"
+            
+            row = {
+                "Species": sp,
+                "Mean": mean_str,
+                "Variance": variance_str,
+                "Std Dev": std_str
+            }
+            if i == 0:  # Only first plot has checkbox
+                row["Show"] = sp == st.session_state.selected_species
+            table_data.append(row)
+
+        if i == 0:
+            edited = st.data_editor(
+                pd.DataFrame(table_data),
+                column_config={
+                    "Show": st.column_config.CheckboxColumn("Show", default=False),
+                    "Species": st.column_config.TextColumn("Species", disabled=True),
+                    "Mean": st.column_config.TextColumn("Mean", disabled=True),
+                    "Variance": st.column_config.TextColumn("Variance", disabled=True),
+                    "Std Dev": st.column_config.TextColumn("Std Dev", disabled=True),
+                },
+                use_container_width=True,
+                hide_index=True
+            )
+            # Detect change
+            selected_row = edited[edited["Show"]]
+            if not selected_row.empty:
+                new_sp = selected_row["Species"].iloc[0]
+                if new_sp != st.session_state.selected_species:
+                    st.session_state.selected_species = new_sp
+                    st.experimental_rerun()
+        else:
+            st.table(pd.DataFrame(table_data)[["Species", "Mean", "Variance", "Std Dev"]].set_index("Species"))
 
 # === FILTERING & ACCEPT (unchanged) ===
 # ... [your filtering code here] ...
