@@ -53,7 +53,7 @@ if "log10_plot_cache" not in st.session_state or st.session_state.get("last_plot
     log10_all = np.log10(raw)
 
     cache = {"All proteins": log10_all}
-    if "Species" in df_plot.columns:
+    if "Species" in df_plot.columns[all_reps]:
         for sp in ["HUMAN", "ECOLI", "YEAST"]:
             subset = df_plot[df_plot["Species"] == sp][all_reps].replace(0, np.nan)
             cache[sp] = np.log10(subset) if len(subset) > 0 else pd.DataFrame()
