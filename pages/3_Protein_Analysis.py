@@ -306,8 +306,8 @@ if filtering in ["±2σ filtered", "Combined"]:
 
 filtered_index = df_for_filtering[mask].index
 
-# In 3_Protein_Analysis.py — after filtering
-st.session_state.raw_intensities = df.loc[filtered_index, all_reps].copy()  # ← raw values
+# After final filtering
+st.session_state.raw_intensities_filtered = df.loc[filtered_index, all_reps].copy()
 
 # Final data: log2 of original raw values (GOLD STANDARD)
 df_final = df.loc[filtered_index].copy()
