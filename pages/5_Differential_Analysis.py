@@ -64,43 +64,33 @@ fig = go.Figure()
 # Condition A: left-facing violins
 for rep in c1:
     fig.add_trace(go.Violin(
-        x=[rep] * len(intensity_final),
-        y=intensity_final[rep],
+        x=[rep] * len(intensity_final[rep].notna().sum()),
+        y=intensity_final[rep].dropna(),
         name=rep,
         side='negative',
         line_color='#E71316',
+        width=0.8,
         meanline_visible=True,
-        points=False,
-        showlegend=False
+        showlegend=False,
+        box=dict(visible=True, width=0.3),
+        points=False
     ))
 
 # Condition B: right-facing violins
 for rep in c2:
     fig.add_trace(go.Violin(
-        x=[rep] * len(intensity_final),
-        y=intensity_final[rep],
+        x=[rep] * len(intensity_final[rep].notna().sum()),
+        y=intensity_final[rep].dropna(),
         name=rep,
         side='positive',
         line_color='#1f77b4',
+        width=0.8,
         meanline_visible=True,
-        points=False,
-        showlegend=False
+        showlegend=False,
+        box=dict(visible=True, width=0.3),
+        points=False
     ))
 
-# Overlay boxplots
-for rep in all_reps:
-    color = '#E71316' if rep in c1 else '#1f77b4'
-    fig.add_trace(go.Box(
-        y=intensity_final[rep],
-        x=[rep] * len(intensity_final),
-        name=rep,
-        marker_color='white',
-        line_color=color,
-        width=0.2,
-        showlegend=False
-    ))
-
-fig.update_traces(box_visible=False)  # We already added boxplots
 fig.update_layout(
     title="Intensity Distribution (log₂ transformed)",
     yaxis_title="log₂(Intensity)",
@@ -109,7 +99,8 @@ fig.update_layout(
     height=600,
     template="simple_white",
     xaxis=dict(showgrid=False),
-    yaxis=dict(showgrid=True, gridcolor='lightgray')
+    yaxis=dict(showgrid=True, gridcolor='lightgray'),
+    font=dict(family="Arial", size=12)
 )
 st.plotly_chart(fig, use_container_width=True)
 
@@ -121,20 +112,20 @@ for reps, name in [(c1, "Condition A"), (c2, "Condition B")]:
     if len(reps) >= 2:
         cv_per_protein = intensity_final[reps].std(axis=1) / intensity_final[reps].mean(axis=1) * 100
         cv_data.extend([{"Replicate": rep, "CV (%)": cv, "Condition": name} 
-                       for rep in reps for cv in cv_per_protein])
+                       for rep in reps for cv in cv_per_protein.dropna()])
 
 cv_df = pd.DataFrame(cv_data)
 
 fig = go.Figure()
 
 for condition, color in [("Condition A", "#E71316"), ("Condition B", "#1f77b4")]:
-    data = cv_df[cv_df["Condition"] == condition]["CV (%)"]
+    subset = cv_df[cv_df["Condition"] == condition]
     fig.add_trace(go.Violin(
-        y=data,
+        y=subset["CV (%)"],
         name=condition,
         line_color=color,
         meanline_visible=True,
-        box_visible=True,
+        box=dict(visible=True, width=0.3),
         points=False
     ))
 
@@ -143,7 +134,8 @@ fig.update_layout(
     yaxis_title="CV (%)",
     height=600,
     template="simple_white",
-    showlegend=True
+    showlegend=True,
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
 )
 st.plotly_chart(fig, use_container_width=True)
 
