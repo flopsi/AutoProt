@@ -6,17 +6,15 @@ import plotly.graph_objects as go
 from scipy import stats
 from itertools import combinations
 
-# Load data
-if "prot_final_df" not in st.session_state:
-    st.error("No protein data found! Please go to Protein Import first.")
+# pages/3_Protein_Analysis.py
+import streamlit as st
+
+# === GUARD: MUST HAVE PROTEIN DATA ===
+if "prot_df" not in st.session_state or st.session_state.prot_df is None:
+    st.error("No protein data found! Please go to **Protein Import** first.")
+    if st.button("Go to Protein Import"):
+        st.switch_page("pages/1_Protein_Import.py")
     st.stop()
-
-df = st.session_state.prot_final_df
-c1 = st.session_state.prot_final_c1
-c2 = st.session_state.prot_final_c2
-all_reps = c1 + c2
-
-st.title("Protein-Level QC & Replicate Difference Testing")
 
 # === 1. LOW INTENSITY FILTER FOR PLOTS ONLY ===
 st.subheader("Plot Filter (Visual QC Only)")
