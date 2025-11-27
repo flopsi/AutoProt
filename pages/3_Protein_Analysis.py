@@ -15,22 +15,12 @@ if missing or st.session_state.prot_df is None or len(st.session_state.prot_df) 
     st.stop()
 
 # === LOAD DATA ===
-df = st.session_state.prot_df
+df = st.session_state.prot_df.copy()
 c1 = st.session_state.prot_c1
 c2 = st.session_state.prot_c2
-
-# === DEFINE ALL_REPS AND CONDITIONS (THIS WAS MISSING!) ===
 all_reps = c1 + c2
-condition_a_name = "Condition A"
-condition_b_name = "Condition B"
 
-st.success(f"Loaded **{len(df):,}** proteins | {condition_a_name}: **{len(c1)}** reps | {condition_b_name}: **{len(c2)}** reps")
-
-# Optional: make it more flexible if you ever have >2 conditions
-conditions = {
-    condition_a_name: c1,
-    condition_b_name: c2
-}
+st.success(f"Loaded **{len(df):,}** proteins | Condition A: **{len(c1)}** reps | Condition B: **{len(c2)}** reps")
 
 # === 1. LOW INTENSITY FILTER FOR PLOTS ONLY ===
 st.subheader("Plot Filter (Visual QC Only)")
@@ -39,66 +29,57 @@ remove_low_plot = st.checkbox(
     value=False
 )
 
-# Apply to plot data
 df_plot = df.copy()
 if remove_low_plot:
-    mask = pd.Series(True, index=df.index)
+    mask = pd.Series([True] * len(df_plot))
     for rep in all_reps:
-        mask &= (np.log10(df[rep].replace(0, np.nan)) >= 0.5)
-    df_plot = df[mask]
+        mask &= (np.log10(df_plot[rep].replace(0, np.nan)) >= 0.5)
+    df_plot = df_plot[mask]
 
-# === 2. PRE-CALCULATE LOG10 FOR PLOTS (FIXED!) ===
+# === 2. PRE-CALCULATE LOG10 FOR PLOTS (SAFE!) ===
 if "log10_plot_cache" not in st.session_state:
-    # Only use the actual intensity columns (A1, A2, B1, etc.)
-    intensity_cols = c1 + c2
-    
-    # Make a copy and replace 0 → NaN only in intensity columns
-    df_log = df[intensity_cols].replace(0, np.nan)
-    
-    # Take log10 ONLY on numeric intensity data
-    log10_values = np.log10(df_log)
-    
-    # Create cache
-    cache = {"All proteins": log10_values}
-    
-    if "Species" in df.columns:
-        for species in df["Species"].unique():
-            if species != "Other":
-                mask = df["Species"] == species
-                cache[species] = np.log10(df[mask][intensity_cols].replace(0, np.nan))
-    
+    intensity_cols = all_reps
+    log10_data = np.log10(df_plot[intensity_cols].replace(0, np.nan))
+
+    cache = {"All proteins": log10_data}
+
+    if "Species" in df_plot.columns:
+        for species in df_plot["Species"].unique():
+            if pd.notna(species) and species != "Other":
+                mask = df_plot["Species"] == species
+                subset = df_plot[mask][intensity_cols].replace(0, np.nan)
+                if not subset.empty:
+                    cache[species] = np.log10(subset)
+
     st.session_state.log10_plot_cache = cache
 
-# Now safe to use
-log10_all = st.session_state.log10_plot_cache["All proteins"]
-
 # === 3. SPECIES SELECTION FOR PLOTS ===
-#st.subheader("Select Species for Plots")
+st.subheader("Select Species for Plots")
 selected_species = st.radio(
     "Show in plots:",
-    ["All proteins", "HUMAN", "ECOLI", "YEAST"],
+    options=["All proteins"] + (["HUMAN", "ECOLI", "YEAST"] if "Species" in df.columns else []),
     index=0,
-    key="plot_species"
+    horizontal=True
 )
 
-current_data = st.session_state.log10_plot_cache[selected_species]
+current_log10 = st.session_state.log10_plot_cache.get(selected_species, st.session_state.log10_plot_cache["All proteins"])
 
 # === 4. 6 LOG10 DENSITY PLOTS + TABLE UNDER EACH ===
-#st.subheader("Intensity Density Plots (log₁₀)")
+st.subheader("Intensity Density Plots (log₁₀)")
 
-row1, row2 = st.columns(3), st.columns(3)
+rows = st.columns(3)
 for i, rep in enumerate(all_reps):
-    col = row1[i] if i < 3 else row2[i-3]
-    with col:
-        vals = current_data[rep].dropna()
+    with rows[i % 3]:
+        vals = current_log10[rep].dropna()
         if len(vals) == 0:
+            st.write(f"**{rep}**")
             st.write("No data")
             continue
-            
-        mean = float(vals.mean())
-        std = float(vals.std())
-        lower = mean - 2*std
-        upper = mean + 2*std
+
+        mean_val = vals.mean()
+        std_val = vals.std()
+        lower = mean_val - 2 * std_val
+        upper = mean_val + 2 * std_val
 
         fig = go.Figure()
         fig.add_trace(go.Histogram(
@@ -110,181 +91,119 @@ for i, rep in enumerate(all_reps):
             opacity=0.75
         ))
         fig.add_vrect(x0=lower, x1=upper, fillcolor="white", opacity=0.35, line_width=2)
-        fig.add_vline(x=mean, line_dash="dash", line_color="black")
-        
+        fig.add_vline(x=mean_val, line_dash="dash", line_color="black")
+
         fig.update_layout(
             height=380,
             title=f"<b>{rep}</b>",
             xaxis_title="log₁₀(Intensity)",
             yaxis_title="Density",
-            showlegend=False
+            showlegend=False,
+            margin=dict(t=50)
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # === TABLE UNDER EACH PLOT ===
+        # Table under plot
         table_data = []
         for sp in ["All proteins", "HUMAN", "ECOLI", "YEAST"]:
-            sp_data = st.session_state.log10_plot_cache[sp]
-            sp_vals = sp_data[rep].dropna()
-            if len(sp_vals) == 0:
-                mean_str = variance_str = std_str = "—"
-            else:
-                mean_str = f"{sp_vals.mean():.3f}"
-                variance_str = f"{sp_vals.var():.3f}"
-                std_str = f"{sp_vals.std():.3f}"
-            table_data.append({
-                "Species": sp,
-                "Mean": mean_str,
-                "Variance": variance_str,
-                "Std Dev": std_str
-            })
+            if sp in st.session_state.log10_plot_cache:
+                sp_vals = st.session_state.log10_plot_cache[sp][rep].dropna()
+                if len(sp_vals) == 0:
+                    mean_s = var_s = std_s = "—"
+                else:
+                    mean_s = f"{sp_vals.mean():.3f}"
+                    var_s = f"{sp_vals.var():.3f}"
+                    std_s = f"{sp_vals.std():.3f}"
+                table_data.append({"Species": sp, "Mean": mean_s, "Var": var_s, "Std": std_s})
         st.table(pd.DataFrame(table_data).set_index("Species"))
 
-# === 5. REPLICATE DIFFERENCE TESTING ===
-st.subheader("Replicate Difference Testing")
-
-test_mode = st.radio(
-    "Test replicate similarity using:",
-    ["All proteins", "Constant proteome only"],
-    index=1
-)
-
-if test_mode == "Constant proteome only":
-    if "Species" not in df.columns:
-        st.error("Species column missing")
-        st.stop()
-    constant_species = st.selectbox(
-        "Select constant proteome (reference)",
-        options=["HUMAN", "ECOLI", "YEAST"],
-        index=0
-    )
-    reference_df = df[df["Species"] == constant_species]
-else:
-    constant_species = "All proteins"
-    reference_df = df
-
-
-# === 6. FINAL FILTER & ACCEPT ===
+# === 5. FINAL FILTER STRATEGY ===
 st.subheader("Final Filter Strategy")
 filter_strategy = st.radio(
-    "Choose filtering strategy:",
-    ["Raw data", "Low intensity filtered", "±2σ filtered (on raw data)", "Combined"],
+    "Choose filtering strategy for downstream analysis:",
+    ["Raw data", "Low intensity filtered", "±2σ filtered", "Combined"],
     index=0
 )
-# === REPLICATE DIFFERENCE TESTING (AFTER FINAL FILTERING) ===
+
+df_final = df.copy()
+log10_full = np.log10(df[all_reps].replace(0, np.nan))
+
+if filter_strategy in ["Low intensity filtered", "Combined"]:
+    mask = (log10_full >= 0.5).all(axis=1)
+    df_final = df_final[mask]
+    log10_full = log10_full.loc[mask]
+
+if filter_strategy in ["±2σ filtered", "Combined"]:
+    mask = pd.Series([True] * len(df_final))
+    for rep in all_reps:
+        vals = log10_full[rep].dropna()
+        if len(vals) > 0:
+            m, s = vals.mean(), vals.std()
+            mask &= (log10_full[rep] >= m - 2*s) & (log10_full[rep] <= m + 2*s)
+    df_final = df_final[mask]
+
+# === 6. REPLICATE DIFFERENCE TESTING (KS TEST) ===
 st.subheader("Replicate Difference Testing (Kolmogorov–Smirnov)")
 
 test_mode = st.radio(
-    "Test replicate similarity using:",
+    "Test using:",
     ["All proteins", "Constant proteome only"],
     index=1
 )
 
 if test_mode == "Constant proteome only":
     if "Species" not in df_final.columns:
-        st.error("Species column missing in filtered data")
+        st.error("Species column missing")
         st.stop()
-    constant_species = st.selectbox(
-        "Select constant proteome (reference)",
-        options=["HUMAN", "ECOLI", "YEAST"],
-        index=0
-    )
-    reference_df = df_final[df_final["Species"] == constant_species]
+    constant_species = st.selectbox("Reference proteome", ["HUMAN", "ECOLI", "YEAST"], index=0)
+    ref_df = df_final[df_final["Species"] == constant_species]
     ref_label = constant_species
 else:
-    reference_df = df_final
+    ref_df = df_final
     ref_label = "All proteins"
 
-# KS test: each replicate vs reference (after final filtering)
 ks_results = []
 for rep in all_reps:
-    ref_vals = np.log10(reference_df[rep].replace(0, np.nan).dropna())
+    ref_vals = np.log10(ref_df[rep].replace(0, np.nan).dropna())
     rep_vals = np.log10(df_final[rep].replace(0, np.nan).dropna())
-    
+
     if len(ref_vals) < 10 or len(rep_vals) < 10:
-        ks_results.append({
-            "Replicate": rep,
-            "vs Reference": ref_label,
-            "KS p-value": "—",
-            "Different?": "—"
-        })
+        ks_results.append({"Replicate": rep, "vs": ref_label, "p-value": "—", "Different?": "—"})
         continue
-    
+
     _, p = stats.ks_2samp(ref_vals, rep_vals)
     different = "Yes" if p < 0.05 else "No"
-    ks_results.append({
-        "Replicate": rep,
-        "vs Reference": ref_label,
-        "KS p-value": f"{p:.2e}",
-        "Different?": different
-    })
+    ks_results.append({"Replicate": rep, "vs": ref_label, "p-value": f"{p:.2e}", "Different?": different})
 
 ks_df = pd.DataFrame(ks_results)
-
-# Styled table
 st.table(ks_df.style.apply(
     lambda x: ["background: #ffcccc" if v == "Yes" else "background: #ccffcc" for v in x],
-    subset=["Different?"]
+    subset="Different?"
 ))
 
-# Interpretation
 if any(r["Different?"] == "Yes" for r in ks_results if r["Different?"] != "—"):
-    st.error("**Significant differences detected** — potential technical bias")
+    st.error("**Significant differences detected** — check technical reproducibility")
 else:
-    st.success("**All replicates similar** — excellent technical reproducibility")
+    st.success("**Excellent technical reproducibility** — all replicates similar")
 
-st.info("**Kolmogorov–Smirnov test** — compares full distribution shape (Schessner et al., 2022, Figure 4B)")
-# [Your filtering & count table code here]
-
-if st.button("Accept Final Filtering", type="primary"):
-    st.session_state.df_filtered = df_final
-    st.session_state.qc_accepted = True
-    st.success("**Final filtering accepted** — ready for transformation")
-
-# === DYNAMIC PROTEIN COUNT TABLE BASED ON FILTER STRATEGY ===
+# === 7. PROTEIN COUNTS AFTER FILTER ===
 st.subheader("Protein Counts After Final Filter")
-
-# Recalculate final filtered dataset
-df_final = df.copy()
-log10_full = np.log10(df[all_reps].replace(0, np.nan))
-
-if filter_strategy in ["Low intensity filtered", "±2σ filtered (on raw data)", "Combined"]:
-    # Low intensity filter
-    mask = pd.Series(True, index=df.index)
-    for rep in all_reps:
-        mask &= (log10_full[rep] >= 0.5)
-    df_final = df[mask]
-    log10_full = log10_full.loc[mask]
-
-if filter_strategy == "±2σ filtered (on raw data)":
-    mask = pd.Series(True, index=df_final.index)
-    for rep in all_reps:
-        vals = log10_full[rep].dropna()
-        if len(vals) == 0: continue
-        mean = vals.mean()
-        std = vals.std()
-        mask &= (log10_full[rep] >= mean - 2*std) & (log10_full[rep] <= mean + 2*std)
-    df_final = df_final[mask]
-
-elif filter_strategy == "Combined":
-    mask = pd.Series(True, index=df_final.index)
-    for rep in all_reps:
-        vals = log10_full[rep].dropna()
-        if len(vals) == 0: continue
-        mean = vals.mean()
-        std = vals.std()
-        mask &= (log10_full[rep] >= mean - 2*std) & (log10_full[rep] <= mean + 2*std)
-    df_final = df_final[mask]
-
-# Build count table
 count_data = []
-for sp in ["All proteins", "HUMAN", "ECOLI", "YEAST"]:
-    base = len(df[df["Species"] == sp]) if sp != "All proteins" and "Species" in df.columns else len(df)
-    filtered = len(df_final[df_final["Species"] == sp]) if sp != "All proteins" and "Species" in df_final.columns else len(df_final)
-    count_data.append({
-        "Species": sp,
-        "Unfiltered": base,
-        "After Filter": filtered
-    })
+species_list = ["All proteins", "HUMAN", "ECOLI", "YEAST"]
+for sp in species_list:
+    if sp == "All proteins":
+        unfiltered = len(df)
+        filtered = len(df_final)
+    else:
+        unfiltered = len(df[df["Species"] == sp]) if "Species" in df.columns else 0
+        filtered = len(df_final[df_final["Species"] == sp]) if "Species" in df_final.columns else 0
+    count_data.append({"Species": sp, "Before Filter": unfiltered, "After Filter": filtered})
 
 st.table(pd.DataFrame(count_data).set_index("Species"))
+
+# === ACCEPT FILTERING ===
+if st.button("Accept Final Filtering & Proceed", type="primary"):
+    st.session_state.df_filtered = df_final
+    st.session_state.qc_accepted = True
+    st.success("Final dataset accepted! Ready for normalization & stats.")
+    st.balloons()
