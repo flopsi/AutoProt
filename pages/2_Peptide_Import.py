@@ -225,3 +225,19 @@ if st.button("Go to Peptide Analysis", type="primary", use_container_width=True)
 if st.button("Restart Everything"):
     clear_all_session()
     st.rerun()
+
+# === FINAL ACCEPT — SAVE PEPTIDE DATA ===
+if st.button("Accept & Proceed", type="primary"):
+    # Save final intensities (log2)
+    st.session_state.intensity_final = df_final[all_reps]
+    st.session_state.df_final = df_final
+    
+    # Save raw intensities for CV calculation
+    st.session_state.raw_intensities_filtered = st.session_state.pep_raw_intensities.loc[df_final.index]
+    
+    # Save for peptide differential analysis
+    st.session_state.pep_intensity_final = df_final[all_reps]
+    st.session_state.pep_df_final = df_final
+    
+    st.success("Peptide data processed and ready for differential analysis!")
+    st.balloons()
