@@ -90,13 +90,13 @@ with col3:
         available_species += sorted(df["Species"].dropna().unique().tolist())
     species_choice = st.radio("Species", available_species, index=0)
 
-# === 3. APPLY TRANSFORMATION (FOR PCA & PLOTS) ===
+# === 3. APPLY TRANSFORMATION (FOR PCA) ===
 df_pca = df.copy()
 if transformation_choice == f"Recommended ({best_transform})":
     func = transform_options[best_transform]
     df_pca[all_reps] = df_pca[all_reps].apply(func)
 
-# === 4. TWO PCA PLOTS (Schessner et al., 2022 Figure 4) ===
+# === 4. TWO PCA PLOTS ===
 st.subheader("PCA: Transformed Data — Without vs With Filtering")
 
 col_left, col_right = st.columns(2)
@@ -119,16 +119,17 @@ with col_left:
         fig_left.add_trace(go.Scatter(
             x=pc_left[:, 0], y=pc_left[:, 1],
             mode='markers', name=rep,
-            marker=dict(color=color, size=8),
+            marker=dict(color=color, size=10),
             text=[rep] * len(pc_left)
         ))
     fig_left.update_layout(
         title=f"PCA (Variance: {pca_left.explained_variance_ratio_[0]:.1%} + {pca_left.explained_variance_ratio_[1]:.1%})",
         xaxis_title=f"PC1 ({pca_left.explained_variance_ratio_[0]:.1%})",
         yaxis_title=f"PC2 ({pca_left.explained_variance_ratio_[1]:.1%})",
-        height=500
+        height=500,
+        showlegend=True
     )
-    st.plotly_chart(fig_left, use_container_width=True)
+    st.plotly_chart(fig_left, use_container_width=True, key="pca_no_filter")
 
 # Right: With filtering
 with col_right:
@@ -164,20 +165,21 @@ with col_right:
         fig_right.add_trace(go.Scatter(
             x=pc_right[:, 0], y=pc_right[:, 1],
             mode='markers', name=rep,
-            marker=dict(color=color, size=8),
+            marker=dict(color=color, size=10),
             text=[rep] * len(pc_right)
         ))
     fig_right.update_layout(
         title=f"PCA (Variance: {pca_right.explained_variance_ratio_[0]:.1%} + {pca_right.explained_variance_ratio_[1]:.1%})",
         xaxis_title=f"PC1 ({pca_right.explained_variance_ratio_[0]:.1%})",
         yaxis_title=f"PC2 ({pca_right.explained_variance_ratio_[1]:.1%})",
-        height=500
+        height=500,
+        showlegend=True
     )
-    st.plotly_chart(fig_right, use_container_width=True)
+    st.plotly_chart(fig_right, use_container_width=True, key="pca_with_filter")
 
 # === 5. DENSITY PLOTS ===
 st.subheader("Intensity Density Plots (log₁₀)")
-# [Your existing 6 density plots code here — uses df_current from previous version]
+# [Your existing 6 density plots code here — uses df_right or df_current]
 
 # === 6. PROTEIN COUNT TABLE ===
 st.subheader("Protein Counts After Filtering")
