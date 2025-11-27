@@ -1,4 +1,4 @@
-# pages/4_Differential_Analysis.py
+# pages/5_Differential_Analysis.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -6,31 +6,29 @@ import plotly.graph_objects as go
 import plotly.express as px
 from scipy.cluster.hierarchy import linkage, leaves_list
 from scipy.spatial.distance import pdist
-import seaborn as sns
-import matplotlib.pyplot as plt
 
-# Load data from previous steps
-if "intensity_transformed" not in st.session_state:
-    st.error("No transformed data found! Please complete QC first.")
+# Load final processed data
+if "intensity_final" not in st.session_state or "df_final" not in st.session_state:
+    st.error("No final processed data found! Please complete Protein Analysis first.")
     st.stop()
 
-intensity_df = st.session_state.intensity_transformed.copy()
-df_filtered = st.session_state.df_filtered.copy()
-c1 = st.session_state.pep_c1 if "pep_c1" in st.session_state else st.session_state.prot_c1
-c2 = st.session_state.pep_c2 if "pep_c2" in st.session_state else st.session_state.prot_c2
+intensity_final = st.session_state.intensity_final.copy()
+df_final = st.session_state.df_final.copy()
+c1 = st.session_state.prot_c1
+c2 = st.session_state.prot_c2
 all_reps = c1 + c2
 
 st.title("Differential Analysis & Data Summary (Schessner et al., 2022 Figure 5)")
+
+# === 5-ROW SNAPSHOT OF FINAL DATA ===
 st.subheader("Final Processed Data (5-row snapshot)")
 st.write("**Transformation:** log₂ | **Filtering:** Applied | **For differential analysis**")
-st.dataframe(df_final[all_reps].head(5).round(3))
+st.dataframe(intensity_final.head(5).round(3), use_container_width=True)
+
 # === 1. HEATMAP WITH HIERARCHICAL CLUSTERING ===
 st.subheader("1. Sample Correlation Heatmap (Hierarchical Clustering)")
 
-# Correlation matrix
-corr_matrix = intensity_df[all_reps].corr(method="pearson")
-
-# Hierarchical clustering
+corr_matrix = intensity_final[all_reps].corr(method="pearson")
 dist = pdist(corr_matrix.values)
 linkage_matrix = linkage(dist, method="average")
 order = leaves_list(linkage_matrix)
@@ -50,97 +48,103 @@ fig = go.Figure(data=go.Heatmap(
 fig.update_layout(
     title="Pearson Correlation of Replicate Profiles",
     height=600,
-    xaxis_title="Samples",
-    yaxis_title="Samples",
     template="simple_white"
 )
 st.plotly_chart(fig, use_container_width=True)
 
-# === 2. BOXPLOTS OF FINAL DATA ===
-st.subheader("2. Intensity Distribution After Processing")
+# === 2. INTENSITY DISTRIBUTION — VIOLIN + BOXPLOT ===
+st.subheader("2. Intensity Distribution (log₂ transformed)")
 
 fig = go.Figure()
-for rep in all_reps:
+for i, rep in enumerate(all_reps):
     color = "#E71316" if rep in c1 else "#1f77b4"
-    fig.add_trace(go.Box(
-        y=intensity_df[rep],
+    side = 'negative' if rep in c1 else 'positive'
+    
+    fig.add_trace(go.Violin(
+        x=[rep] * len(intensity_final),
+        y=intensity_final[rep],
         name=rep,
-        marker_color=color,
-        boxpoints=False
+        side=side,
+        line_color=color,
+        meanline_visible=True,
+        showlegend=False
     ))
 
+fig.update_traces(box_visible=True, points=False)
 fig.update_layout(
-    title="Boxplots of Final Processed Intensities",
-    yaxis_title="log₁₀(Intensity)",
-    height=500,
-    showlegend=False,
+    title="Intensity Distribution (log₂ transformed)",
+    yaxis_title="log₂(Intensity)",
+    violingap=0,
+    violinmode='overlay',
+    height=600,
     template="simple_white"
 )
 st.plotly_chart(fig, use_container_width=True)
 
-# === 3. COEFFICIENT OF VARIATION (CV) ===
+# === 3. CVs — VIOLIN PLOTS ===
 st.subheader("3. Technical Reproducibility (CV within Conditions)")
 
 cv_data = []
-for condition, reps in [("Condition A", c1), ("Condition B", c2)]:
-    if len(reps) < 2: continue
-    cv_per_peptide = intensity_df[reps].std(axis=1) / intensity_df[reps].mean(axis=1) * 100
-    mean_cv = cv_per_peptide.mean()
-    cv_data.append({"Condition": condition, "Mean CV (%)": f"{mean_cv:.1f}"})
+for reps, name in [(c1, "Condition A"), (c2, "Condition B")]:
+    if len(reps) >= 2:
+        cv_per_protein = intensity_final[reps].std(axis=1) / intensity_final[reps].mean(axis=1) * 100
+        for rep in reps:
+            cv_data.extend([(rep, cv) for cv in cv_per_protein])
 
-cv_df = pd.DataFrame(cv_data)
-st.table(cv_df)
+cv_df = pd.DataFrame(cv_data, columns=["Replicate", "CV (%)"])
 
-# Plot CV distribution
 fig = go.Figure()
-for reps, name, color in [(c1, "Condition A", "#E71316"), (c2, "Condition B", "#1f77b4")]:
-    if len(reps) < 2: continue
-    cv_per_peptide = intensity_df[reps].std(axis=1) / intensity_df[reps].mean(axis=1) * 100
-    fig.add_trace(go.Histogram(
-        x=cv_per_peptide,
-        name=name,
-        marker_color=color,
-        opacity=0.7,
-        nbinsx=50
+for i, rep in enumerate(all_reps):
+    color = "#E71316" if rep in c1 else "#1f77b4"
+    side = 'negative' if rep in c1 else 'positive'
+    data_rep = cv_df[cv_df["Replicate"] == rep]["CV (%)"]
+    
+    fig.add_trace(go.Violin(
+        x=[rep] * len(data_rep),
+        y=data_rep,
+        name=rep,
+        side=side,
+        line_color=color,
+        meanline_visible=True,
+        showlegend=False
     ))
 
+fig.update_traces(box_visible=True, points=False)
 fig.update_layout(
-    title="Distribution of Coefficient of Variation (CV) Within Conditions",
-    xaxis_title="CV (%)",
-    yaxis_title="Number of Peptides/Proteins",
-    barmode="overlay",
-    height=500
+    title="Coefficient of Variation (CV %) Within Conditions",
+    yaxis_title="CV (%)",
+    violingap=0,
+    violinmode='overlay',
+    height=600,
+    template="simple_white"
 )
 st.plotly_chart(fig, use_container_width=True)
 
 # === 4. STACKED BAR PLOTS — PROTEINS PER SAMPLE PER SPECIES ===
 st.subheader("4. Proteins Detected per Sample per Species")
 
-# Count proteins per sample and species
-count_df = []
+detected = (intensity_final[all_reps] > np.log2(2)).astype(int)  # >1 in raw scale
+detected_df = detected.join(df_final[["Species"]])
+
+count_data = []
 for rep in all_reps:
-    for species in df_filtered["Species"].unique():
-        subset = df_filtered[df_filtered["Species"] == species]
-        detected = (intensity_df.loc[subset.index, rep] > 1).sum()  # assuming imputed = 1.0
-        count_df.append({"Sample": rep, "Species": species, "Proteins": detected})
+    for species in detected_df["Species"].unique():
+        count = detected_df[detected_df["Species"] == species][rep].sum()
+        count_data.append({"Sample": rep, "Species": species, "Proteins": count})
 
-count_df = pd.DataFrame(count_df)
+count_df = pd.DataFrame(count_data)
 
-# 6 stacked bar plots
 fig = px.bar(
     count_df,
     x="Sample",
     y="Proteins",
     color="Species",
     title="Number of Proteins Detected per Sample per Species",
+    text="Proteins",
     color_discrete_sequence=px.colors.qualitative.Set2
 )
-fig.update_layout(
-    height=600,
-    barmode='stack',
-    xaxis_title="Sample",
-    yaxis_title="Number of Proteins"
-)
+fig.update_traces(textposition='inside')
+fig.update_layout(height=600, barmode='stack', template="simple_white")
 st.plotly_chart(fig, use_container_width=True)
 
 # === FINAL ACCEPT ===
