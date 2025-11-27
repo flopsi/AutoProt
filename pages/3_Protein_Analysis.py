@@ -15,14 +15,32 @@ c2 = st.session_state.prot_final_c2
 all_reps = c1 + c2
 
 st.title("Protein-Level QC & Advanced Filtering")
+# === 2. 6 LOG10 DENSITY PLOTS + TABLE BELOW EACH ===
+st.subheader("2. Intensity Density Plots (log₁₀)")
+# === 3. FILTERING OPTIONS — TWO COLUMNS ===
 
-# === 1. VIEW MODE ===
-st.subheader("1. Select View Mode")
-view_species = st.selectbox(
-    "Show density plots for:",
-    ["All proteins", "HUMAN", "ECOLI", "YEAST"],
-    index=0
-)
+col_left, col_right = st.columns(2)
+
+intensity_filter = False
+stdev_filter = False
+
+with col_left:
+    st.markdown("**Intensity-based Filtering**")
+    intensity_filter = st.checkbox("Enable intensity filter", key="intensity_cb")
+    if intensity_filter:
+        lower_input = st.number_input("Lower bound (log₁₀)", value=-1.0, step=0.1, format="%.2f")
+        upper_input = st.number_input("Upper bound (log₁₀)", value=5.0, step=0.1, format="%.2f")
+
+with col_right:
+    st.markdown("**StDev-based Filtering**")
+    stdev_filter = st.checkbox("Enable ±σ filter", key="stdev_cb")
+    if stdev_filter:
+        stdev_scope = st.radio("Apply ±σ:", ["Global", "Per species"], index=1)
+
+# Enforce mutual exclusion
+if intensity_filter and stdev_filter:
+    st.error("Please select only ONE filtering method")
+    st.stop()
 
 # Prepare data for selected view
 if view_species == "All proteins":
