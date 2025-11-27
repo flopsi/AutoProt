@@ -15,10 +15,6 @@ if "prot_df" not in st.session_state or st.session_state.prot_df is None:
         st.switch_page("pages/1_Protein_Import.py")
     st.stop()
 
-# Optional: also check replicates
-if "prot_c1" not in st.session_state or "prot_c2" not in st.session_state:
-    st.error("Replicate information missing. Please re-run Protein Import.")
-    st.stop()
 
 # NOW SAFE TO USE
 df = st.session_state.prot_df
