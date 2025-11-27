@@ -26,5 +26,5 @@ def load(file):
     return df
 
 df_prot=load(uploaded_prot)
-st.success(f"Loaded: {len(df_prot):,} features × {len(df.columns):,} columns")
+st.success(f"Loaded: {len(df_prot):,} features × {len(df_prot.columns):,} columns")
 
