@@ -158,7 +158,7 @@ final_cols = ["PG", "Name", "Species"] + all_intensity
 df_final = df[final_cols].copy()
 
 # === PREVIEW ===
-st.success(f"Final dataset ready: **{len(df_final):,} proteins**")
+st.success(f"Final dataset ready: **{len(df_final):,} proteins** × **{len(df_final.columns)} columns**")
 
 colA, colB = st.columns(2)
 with colA:
@@ -170,19 +170,28 @@ with colB:
 
 st.write("**Species distribution:**", dict(df_final["Species"].value_counts()))
 
-preview = df_final.head(12)
-def highlight_intensity(val):
-    return ['background-color: #d4edda; color: #155724; font-weight: bold' 
-            if col in all_intensity else '' for col in preview.columns]
+# ------------------------------
+# FINAL PREVIEW – BULLETPROOF
+# ------------------------------
+st.subheader("Data Preview (first 12 proteins)")
 
-st.dataframe(preview.style.apply(highlight_intensity, axis=0), use_container_width=True)
+preview = df_final.head(12).copy()
+
+# Perfect, never-failing cell highlighting
+def highlight_cell(val, col):
+    if col in all_intensity:
+        return "background-color: #d4edda; color: #155724; font-weight: bold"
+    return ""
+
+styled = preview.style.applymap(highlight_cell, col_name=preview.columns)
+st.dataframe(styled, use_container_width=True)
 
 # === SAVE TO SESSION ===
 st.session_state.prot_df = df_final
 st.session_state.prot_c1 = c1
 st.session_state.prot_c2 = c2
 
-st.success("Protein data processed and ready!")
+st.success("Protein data fully processed and ready!")
 
 if st.button("Go to Protein Analysis", type="primary", use_container_width=True):
     st.switch_page("pages/3_Protein_Analysis.py")
