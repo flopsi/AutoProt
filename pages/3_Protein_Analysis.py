@@ -18,25 +18,28 @@ all_reps = c1 + c2
 
 st.title("Protein-Level QC & Transformation Recommendation")
 
-# === USER SELECTS CONSTANT SPECIES ===
+# === USER SELECTS SPECIES (default = most common) ===
 if "Species" not in df.columns:
     st.error("Species column missing — please re-upload")
     st.stop()
 
-unique_species = sorted(df["Species"].dropna().unique())
-constant_species = st.selectbox(
-    "Select constant (reference) species for QC",
-    options=unique_species,
-    index=0
+species_counts = df["Species"].value_counts()
+most_common = species_counts.index[0]
+
+selected_species = st.selectbox(
+    "Select species for visualization and testing",
+    options=species_counts.index.tolist(),
+    index=0,
+    format_func=lambda x: f"{x} ({species_counts[x]:,} proteins)"
 )
 
-df_const = df[df["Species"] == constant_species].copy()
-st.write(f"Using **{len(df_const):,}** {constant_species} proteins for analysis")
+df_species = df[df["Species"] == selected_species].copy()
+st.write(f"Using **{len(df_species):,}** {selected_species} proteins")
 
-# === 6 INDIVIDUAL DENSITY PLOTS — log₁₀ INTENSITY ===
-st.subheader("1. Individual Intensity Density Plots (log₁₀)")
+# === 1. 6 INDIVIDUAL DENSITY PLOTS — log₁₀ INTENSITY ===
+st.subheader("1. Intensity Density Plots (log₁₀) — Selected Species")
 
-log10_data = np.log10(df_const[all_reps].replace(0, np.nan))
+log10_data = np.log10(df_species[all_reps].replace(0, np.nan))
 
 row1, row2 = st.columns(3), st.columns(3)
 for i, rep in enumerate(all_reps):
@@ -63,10 +66,10 @@ for i, rep in enumerate(all_reps):
         )
         st.plotly_chart(fig, use_container_width=True)
 
-# === KS TEST ON RAW DATA ===
-st.subheader("2. Technical Reproducibility (KS Test on Raw Data)")
+# === 2. KS TEST ON RAW DATA ===
+st.subheader("2. Technical Reproducibility (KS Test on Raw Intensities)")
 
-raw_data = df_const[all_reps].replace(0, np.nan)
+raw_data = df_species[all_reps].replace(0, np.nan)
 significant_pairs = []
 for r1, r2 in combinations(all_reps, 2):
     d1, d2 = raw_data[r1].dropna(), raw_data[r2].dropna()
@@ -76,16 +79,16 @@ for r1, r2 in combinations(all_reps, 2):
             significant_pairs.append(f"{r1} vs {r2}")
 
 if significant_pairs:
-    st.warning(f"**Technical differences detected** (raw data):\n" + " • ".join(significant_pairs))
+    st.warning(f"**Technical differences detected**:\n" + " • ".join(significant_pairs))
 else:
-    st.success("**Excellent technical reproducibility** — all raw distributions similar")
+    st.success("**Excellent technical reproducibility** — all replicates similar")
 
-# === NORMALITY TEST ON log₁₀ DATA ===
-st.subheader("3. Normality Test (log₁₀ Intensities)")
+# === 3. NORMALITY TEST ON RAW INTENSITY ===
+st.subheader("3. Normality Test (Raw Intensity — Before Transformation)")
 
 normality_results = []
 for rep in all_reps:
-    vals = log10_data[rep].dropna()
+    vals = raw_data[rep].dropna()
     if len(vals) < 8:
         normality_results.append({"Replicate": rep, "Shapiro-Wilk p": "N/A", "Normal?": "Too few values"})
         continue
@@ -99,17 +102,25 @@ for rep in all_reps:
 
 st.dataframe(pd.DataFrame(normality_results), use_container_width=True)
 
-# === FINAL RECOMMENDATION ===
-non_normal_count = sum(1 for r in normality_results if r.get("Normal?") == "No")
-if non_normal_count == 0:
-    st.success("**log₁₀ intensities are approximately normal** — parametric tests acceptable")
-elif non_normal_count <= 2:
-    st.info("**log₁₀ is good** — mild non-normality in few replicates. Parametric OK with caution")
+# === 4. TRANSFORMATION RECOMMENDATION ===
+non_normal = sum(1 for r in normality_results if r.get("Normal?") == "No")
+
+if non_normal == 0:
+    st.success("**Raw intensities are approximately normal** — parametric tests acceptable (rare!)")
+elif non_normal <= 2:
+    st.info("**Mild non-normality** — log₁₀ transformation recommended")
 else:
-    st.warning("**log₁₀ still non-normal** — consider robust methods or rank-based tests")
+    st.warning("**Strong non-normality** — log₁₀ transformation REQUIRED")
 
 st.success("**Recommended downstream transformation: log₁₀**")
-st.info("→ Use `np.log10(intensity)` in all statistical tests and visualizations")
+st.info("""
+**Why log₁₀?**  
+- Standard in proteomics (Schessner et al., 2022)  
+- Compresses dynamic range  
+- Stabilizes variance  
+- Makes distributions closer to normal  
+→ Use `np.log10(intensity)` in all downstream analysis
+""")
 
 if st.button("Go to Differential Analysis", type="primary", use_container_width=True):
     st.switch_page("pages/4_Differential_Analysis.py")
