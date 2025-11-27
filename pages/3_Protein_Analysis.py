@@ -36,10 +36,11 @@ selected_species = st.selectbox(
 df_species = df[df["Species"] == selected_species].copy()
 st.write(f"Using **{len(df_species):,}** {selected_species} proteins")
 
-# === 1. 6 INDIVIDUAL DENSITY PLOTS — log₁₀ INTENSITY ===
-st.subheader("1. Intensity Density Plots (log₁₀) — Selected Species")
+# === 1. 6 INDIVIDUAL DENSITY PLOTS — log₁₀ ===
+st.subheader("1. Intensity Density Plots (log₁₀)")
 
-log10_data = np.log10(df_species[all_reps].replace(0, np.nan))
+raw_data = df_species[all_reps].replace(0, np.nan)
+log10_data = np.log10(raw_data)
 
 row1, row2 = st.columns(3), st.columns(3)
 for i, rep in enumerate(all_reps):
@@ -66,10 +67,9 @@ for i, rep in enumerate(all_reps):
         )
         st.plotly_chart(fig, use_container_width=True)
 
-# === 2. RAW DATA STATISTICS (Skew, Kurtosis, Normality) ===
+# === 2. RAW DATA STATISTICS ===
 st.subheader("2. Raw Data Distribution Diagnosis")
 
-raw_data = df_species[all_reps].replace(0, np.nan)
 stats_raw = []
 for rep in all_reps:
     vals = raw_data[rep].dropna()
@@ -94,12 +94,12 @@ st.dataframe(pd.DataFrame(stats_raw), use_container_width=True)
 # === 3. TRANSFORMATION SELECTION ===
 st.markdown("### 3. Apply Transformation")
 transform = st.selectbox(
-    "Choose transformation to apply",
-    ["None", "log₂", "log₁₀", "Box-Cox", "Yeo-Johnson"],
-    index=2  # default log10
+    "Choose transformation",
+    ["log₂", "log₁₀", "Box-Cox", "Yeo-Johnson", "None"],
+    index=1
 )
 
-# Apply transformation
+# Apply transformation — FIXED Yeo-Johnson & Box-Cox
 if transform == "log₂":
     transformed = np.log2(raw_data)
     y_label = "log₂(Intensity)"
@@ -107,20 +107,27 @@ elif transform == "log₁₀":
     transformed = np.log10(raw_data)
     y_label = "log₁₀(Intensity)"
 elif transform == "Box-Cox":
-    shifted = raw_data - raw_data.min().min() + 1
-    transformed = pd.DataFrame(boxcox(shifted.values.flatten())[0].reshape(shifted.shape),
-                               index=raw_data.index, columns=raw_data.columns)
+    # Box-Cox requires strictly positive values
+    shifted = raw_data + 1  # simple shift
+    transformed = pd.DataFrame(
+        boxcox(shifted.values.flatten())[0].reshape(shifted.shape),
+        index=raw_data.index, columns=raw_data.columns
+    )
     y_label = "Box-Cox(Intensity)"
 elif transform == "Yeo-Johnson":
-    transformed = pd.DataFrame(yeojohnson(raw_data.values.flatten())[0].reshape(raw_data.shape),
-                               index=raw_data.index, columns=raw_data.columns)
+    # Yeo-Johnson handles negative/zero — but must be finite
+    clean_data = raw_data.replace([np.inf, -np.inf], np.nan).fillna(0)
+    transformed = pd.DataFrame(
+        yeojohnson(clean_data.values.flatten())[0].reshape(clean_data.shape),
+        index=raw_data.index, columns=raw_data.columns
+    )
     y_label = "Yeo-Johnson(Intensity)"
 else:
     transformed = raw_data
     y_label = "Raw Intensity"
 
-# === 4. RETEST AFTER TRANSFORMATION ===
-st.markdown("### 4. Distribution After Transformation")
+# === 4. POST-TRANSFORMATION STATISTICS ===
+st.markdown("### 4. After Transformation")
 post_stats = []
 for rep in all_reps:
     vals = transformed[rep].dropna()
@@ -141,14 +148,14 @@ for rep in all_reps:
 
 st.dataframe(pd.DataFrame(post_stats), use_container_width=True)
 
-# === 5. USER ACCEPTANCE REQUIRED ===
+# === 5. ACCEPTANCE REQUIRED ===
 st.markdown("### 5. Confirm Transformation")
 non_normal = sum(1 for r in post_stats if r.get("Normal") == "No")
 
 if non_normal == 0:
-    st.success("**Perfect — data is normal after transformation**")
+    st.success("**Perfect — data is normal**")
 elif non_normal <= 2:
-    st.info("**Good — mild non-normality remains**")
+    st.info("**Good — mild non-normality**")
 else:
     st.warning("**Still non-normal — try another transformation**")
 
@@ -156,9 +163,9 @@ if st.button("Accept This Transformation & Proceed", type="primary"):
     st.session_state.intensity_transformed = transformed
     st.session_state.transform_applied = transform
     st.session_state.qc_accepted = True
-    st.success(f"**{transform} accepted** — ready for differential analysis")
+    st.success(f"**{transform} accepted** — ready for analysis")
 
-# === FINAL BUTTON ONLY AFTER ACCEPTANCE ===
+# === FINAL BUTTON ===
 if st.session_state.get("qc_accepted", False):
     if st.button("Go to Differential Analysis", type="primary", use_container_width=True):
         st.switch_page("pages/4_Differential_Analysis.py")
