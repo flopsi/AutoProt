@@ -194,9 +194,6 @@ for rep in all_reps:
     ks_results.append({"Replicate": rep, "vs": ref_label, "p-value": f"{p:.2e}", "Different?": different})
 
 ks_df = pd.DataFrame(ks_results)
-st.table(ks_df.style.apply(
-    lambda x: ["background: #ffcccc" if v == "Yes" else "background: #ccffcc" for v in x],
-    subset="Different?"
 ))
 
 if any(r["Different?"] == "Yes" for r in ks_results if r["Different?"] != "—"):
