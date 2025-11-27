@@ -30,29 +30,91 @@ st.write("**Index:** Protein Group ID | **Transformation:** log₂ | **Filtering
 st.dataframe(display_df.head(5).round(3), use_container_width=True)
 
 
-# === 1. HEATMAP WITH HIERARCHICAL CLUSTERING ===
-st.subheader("1. Sample Correlation Heatmap (Hierarchical Clustering)")
+# === 1. DENDROGRAM & CLUSTERMAP (Schessner et al., 2022 Figure 5) ===
+st.subheader("Sample Clustering (Dendrogram & Clustermap)")
 
-corr_matrix = intensity_final[all_reps].corr(method="pearson")
-dist = pdist(corr_matrix.values)
-linkage_matrix = linkage(dist, method="average")
-order = leaves_list(linkage_matrix)
-ordered_corr = corr_matrix.iloc[order, order]
+# Use final log2 data
+data_for_clustering = intensity_final[all_reps].copy()
+
+# Remove proteins with missing values
+data_for_clustering = data_for_clustering.dropna()
+
+# Standardize across proteins
+X = StandardScaler().fit_transform(data_for_clustering.values)
+
+# Hierarchical clustering
+from scipy.cluster.hierarchy import linkage, dendrogram
+linkage_matrix = linkage(X.T, method='average', metric='euclidean')
+
+# === DENDROGRAM ===
+fig_dend = go.Figure()
+
+# Create dendrogram
+dendro = dendrogram(linkage_matrix, labels=all_reps, no_plot=True)
+order = dendro['leaves']
+
+# Plot
+for i in range(len(dendro['icoord'])):
+    x = dendro['icoord'][i]
+    y = dendro['dcoord'][i]
+    fig_dend.add_trace(go.Scatter(
+        x=[x[1], x[2]], y=[y[1], y[2]],
+        mode='lines',
+        line=dict(color='black', width=2),
+        showlegend=False,
+        hoverinfo='none'
+    ))
+
+# Color by condition
+colors = ['#E71316' if rep in c1 else '#1f77b4' for rep in all_reps]
+
+fig_dend.add_trace(go.Scatter(
+    x=list(range(len(all_reps))),
+    y=[0] * len(all_reps),
+    mode='markers+text',
+    marker=dict(color=colors, size=12, line=dict(width=2, color='black')),
+    text=all_reps,
+    textposition="bottom center",
+    showlegend=False
+))
+
+fig_dend.update_layout(
+    title="Hierarchical Clustering Dendrogram (Average Linkage, Euclidean)",
+    xaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
+    yaxis=dict(showgrid=False, zeroline=False),
+    height=300,
+    template="simple_white"
+)
+st.plotly_chart(fig_dend, use_container_width=True)
+
+# === CLUSTERMAP (alphastats style) ===
+st.subheader("Clustermap of Replicate Profiles")
+
+# Reorder data by dendrogram
+ordered_samples = [all_reps[i] for i in order]
+data_clustermap = data_for_clustering[ordered_samples]
+
+# Z-score across proteins
+z_data = pd.DataFrame(
+    StandardScaler().fit_transform(data_clustermap),
+    index=data_clustermap.index,
+    columns=ordered_samples
+)
 
 fig = go.Figure(data=go.Heatmap(
-    z=ordered_corr.values,
-    x=ordered_corr.columns,
-    y=ordered_corr.index,
+    z=z_data.values,
+    x=z_data.columns,
+    y=[""] * len(z_data),  # Hide protein IDs for clean look
     colorscale="RdBu_r",
     zmid=0,
-    text=np.round(ordered_corr.values, 2),
-    texttemplate="%{text}",
-    textfont={"size": 10},
-    hoverongaps=False
+    showscale=True
 ))
+
 fig.update_layout(
-    title="Pearson Correlation of Replicate Profiles",
+    title="Clustermap (Z-score across proteins)",
     height=600,
+    xaxis_title="Samples (ordered by clustering)",
+    yaxis_title="Proteins",
     template="simple_white"
 )
 st.plotly_chart(fig, use_container_width=True)
