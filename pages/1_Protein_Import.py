@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import io
+import numpy as np
 from shared import restart_button
 
 st.set_page_config(page_title="Protein Import", layout="wide")
