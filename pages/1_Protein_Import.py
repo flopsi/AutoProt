@@ -157,7 +157,7 @@ st.table(species_table)
 
 # === SIMPLE CLEAN PREVIEW ===
 st.subheader("Data Preview")
-st.dataframe(df_final.head(15), use_container_width=True)
+st.dataframe(df_final.head(5), use_container_width=True)
 
 # === SAVE ===
 st.session_state.prot_df = df_final
