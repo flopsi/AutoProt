@@ -187,6 +187,30 @@ for species, count in df_final["Species"].value_counts().items():
 st.subheader("Data Preview")
 st.dataframe(df_final.head(12), use_container_width=True)
 
+# === FINAL DATA: ALWAYS log2 (Schessner et al., 2022) ===
+df_final = df.copy()
+
+# 1. Filter using the best transformation (log10 or Yeo-Johnson)
+df_for_filtering = df_final.copy()
+df_for_filtering[all_reps] = df_for_filtering[all_reps].apply(best_transform_func)
+
+# Apply all filtering on this data
+mask = ...  # your filtering logic
+filtered_index = df_for_filtering[mask].index
+
+# 2. Keep only filtered proteins
+df_final = df_final.loc[filtered_index]
+
+# 3. Apply log2 to original raw values → GOLD STANDARD
+df_final[all_reps] = np.log2(df_final[all_reps].replace(0, np.nan))
+
+# Optional: impute missing with minimum - 1
+df_final[all_reps] = df_final[all_reps].fillna(df_final[all_reps].min() - 1)
+
+# Save
+st.session_state.intensity_final = df_final[all_reps]
+st.session_state.df_final = df_final
+
 # === SAVE TO SESSION STATE (GUARANTEED TO BE USED IN ANALYSIS) ===
 st.session_state.prot_df = df_final
 st.session_state.prot_c1 = c1
