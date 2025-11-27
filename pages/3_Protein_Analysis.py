@@ -68,7 +68,7 @@ for rep in all_reps:
 st.table(pd.DataFrame(results))
 st.success(f"**Recommended transformation: {best_transform}**")
 
-# === 2. DATA PROCESSING PANEL ===
+# === 2. DATA VIEW & FILTERING PANEL ===
 st.subheader("2. Data Processing & Visualization")
 
 col_t, col_s, col_f = st.columns(3)
@@ -90,8 +90,8 @@ with col_s:
 with col_f:
     filtering = st.radio(
         "Filtering",
-        ["Low intensity", "±2σ filtered", "Combined"],
-        index=2  # default Combined
+        ["No filtering", "Low intensity", "±2σ filtered", "Combined"],
+        index=0  # default: No filtering (as requested)
     )
 
 # === APPLY TRANSFORMATION & FILTERING ===
@@ -103,26 +103,29 @@ if transformation == "Recommended":
     df_processed[all_reps] = df_processed[all_reps].apply(func)
 
 # Filtering
-if filtering in ["Low intensity", "Combined"]:
-    mask = (np.log10(df_processed[all_reps].replace(0, np.nan)) >= 0.5).all(axis=1)
-    df_processed = df_processed[mask]
+if filtering != "No filtering":
+    log10_full = np.log10(df_processed[all_reps].replace(0, np.nan))
+    
+    if filtering in ["Low intensity", "Combined"]:
+        mask = (log10_full >= 0.5).all(axis=1)
+        df_processed = df_processed[mask]
 
-if filtering in ["±2σ filtered", "Combined"]:
-    mask = pd.Series(True, index=df_processed.index)
-    log10_current = np.log10(df_processed[all_reps].replace(0, np.nan))
-    for rep in all_reps:
-        vals = log10_current[rep].dropna()
-        if len(vals) == 0: continue
-        mean, std = vals.mean(), vals.std()
-        mask &= (log10_current[rep] >= mean - 2*std) & (log10_current[rep] <= mean + 2*std)
-    df_processed = df_processed[mask]
+    if filtering in ["±2σ filtered", "Combined"]:
+        mask = pd.Series(True, index=df_processed.index)
+        log10_current = np.log10(df_processed[all_reps].replace(0, np.nan))
+        for rep in all_reps:
+            vals = log10_current[rep].dropna()
+            if len(vals) == 0: continue
+            mean, std = vals.mean(), vals.std()
+            mask &= (log10_current[rep] >= mean - 2*std) & (log10_current[rep] <= mean + 2*std)
+        df_processed = df_processed[mask]
 
 # Visual species filter
 df_visual = df_processed.copy()
 if visual_species != "All proteins":
     df_visual = df_visual[df_visual["Species"] == visual_species]
 
-# === 3. DENSITY PLOTS ===
+# === 3. 6 DENSITY PLOTS (Schessner et al., 2022 Figure 4) ===
 st.subheader("Intensity Density Plots (log₁₀)")
 
 row1, row2 = st.columns(3), st.columns(3)
