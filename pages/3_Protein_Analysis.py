@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from scipy import stats
+from scipy.stats import yeojohnson
 from itertools import combinations
 
 # Load data
@@ -18,7 +19,7 @@ all_reps = c1 + c2
 
 st.title("Protein-Level QC & Transformation")
 
-# === 1. SPECIES SELECTION ===
+# === SPECIES SELECTION ===
 if "Species" not in df.columns:
     st.error("Species column missing — please re-upload")
     st.stop()
@@ -36,8 +37,8 @@ selected_species = st.selectbox(
 df_species = df[df["Species"] == selected_species].copy()
 st.write(f"Using **{len(df_species):,}** {selected_species} proteins")
 
-# === 2. 6 LOG10 DENSITY PLOTS ===
-st.subheader("2. Intensity Density Plots (log₁₀)")
+# === 1. 6 LOG10 DENSITY PLOTS ===
+st.subheader("1. Intensity Density Plots (log₁₀)")
 
 raw_data = df_species[all_reps].replace(0, np.nan)
 log10_data = np.log10(raw_data)
@@ -67,8 +68,8 @@ for i, rep in enumerate(all_reps):
         )
         st.plotly_chart(fig, use_container_width=True)
 
-# === 3. KS TEST ON RAW DATA (CONSTANT SPECIES) ===
-st.subheader("3. Technical Reproducibility (KS Test — Raw Intensity)")
+# === 2. KS TEST ON RAW DATA ===
+st.subheader("2. Technical Reproducibility (KS Test — Raw Intensity)")
 
 significant_pairs = []
 for r1, r2 in combinations(all_reps, 2):
@@ -79,12 +80,12 @@ for r1, r2 in combinations(all_reps, 2):
             significant_pairs.append(f"{r1} vs {r2}")
 
 if significant_pairs:
-    st.warning(f"**Significant differences** in {selected_species} distributions:\n" + " • ".join(significant_pairs))
+    st.warning(f"**Significant differences**:\n" + " • ".join(significant_pairs))
 else:
-    st.success("**All replicates have similar distributions** — excellent technical quality")
+    st.success("**All replicates have similar distributions**")
 
-# === 4. NORMALITY TEST ON RAW INTENSITY ===
-st.subheader("4. Raw Data Distribution Diagnosis")
+# === 3. NORMALITY TEST ON RAW INTENSITY ===
+st.subheader("3. Raw Data Distribution Diagnosis")
 
 stats_raw = []
 for rep in all_reps:
@@ -107,43 +108,39 @@ for rep in all_reps:
 
 st.dataframe(pd.DataFrame(stats_raw), use_container_width=True)
 
-# === 5. SUGGESTION BASED ON RAW DATA ===
+# === 4. SUGGESTION BASED ON RAW DATA ===
 non_normal = sum(1 for r in stats_raw if r.get("Normal") == "No")
-high_skew = any(abs(float(r["Skew"].replace("N/A","0"))) > 1.0 for r in stats_raw if r["Skew"] != "N/A")
-high_kurt = any(abs(float(r["Kurtosis"].replace("N/A","0"))) > 3.0 for r in stats_raw if r["Kurtosis"] != "N/A")
-
 if non_normal == 0:
-    st.success("Raw data appears normal — parametric tests possible (rare!)")
+    st.success("Raw data appears normal — parametric tests possible (very rare!)")
 else:
-    st.warning("**Strong non-normality detected** — transformation REQUIRED")
-    if high_skew or high_kurt:
-        st.info("→ **log₁₀ transformation strongly recommended**")
+    st.warning("**Non-normality detected** — transformation REQUIRED")
+    st.info("→ **log₁₀ transformation strongly recommended**")
 
-# === 6. TRANSFORMATION SELECTION ===
-st.markdown("### 6. Apply Transformation")
+# === 5. TRANSFORMATION SELECTION ===
+st.markdown("### 5. Apply Transformation")
 transform = st.selectbox(
     "Choose transformation",
-    ["log₂", "log₁₀", "Box-Cox", "Yeo-Johnson", "None"],
+    ["log₂", "log₁₀", "Yeo-Johnson", "None"],
     index=1
 )
 
-# Apply transformation (safe)
+# Apply transformation — FIXED & SAFE
 if transform == "log₂":
     transformed = np.log2(raw_data)
 elif transform == "log₁₀":
     transformed = np.log10(raw_data)
-elif transform == "Box-Cox":
-    shifted = raw_data + 1
-    transformed = pd.DataFrame(stats.boxcox(shifted.values.flatten())[0].reshape(shifted.shape),
-                               index=raw_data.index, columns=raw_data.columns)
 elif transform == "Yeo-Johnson":
-    transformed = pd.DataFrame(stats.yeojohnson(raw_data.values.flatten())[0].reshape(raw_data.shape),
-                               index=raw_data.index, columns=raw_data.columns)
+    # Yeo-Johnson handles zero/negative — safe
+    transformed_vals = yeojohnson(raw_data.values.flatten())
+    transformed = pd.DataFrame(
+        transformed_vals[0].reshape(raw_data.shape),
+        index=raw_data.index, columns=raw_data.columns
+    )
 else:
     transformed = raw_data
 
-# === 7. POST-TRANSFORMATION TABLE (LIVE UPDATE) ===
-st.markdown("### 7. After Transformation")
+# === 6. POST-TRANSFORMATION TABLE (LIVE UPDATE) ===
+st.markdown("### 6. After Transformation")
 post_stats = []
 for rep in all_reps:
     vals = transformed[rep].dropna()
@@ -164,7 +161,7 @@ for rep in all_reps:
 
 st.dataframe(pd.DataFrame(post_stats), use_container_width=True)
 
-# === 8. LIVE NORMALITY STATEMENT ===
+# === 7. LIVE NORMALITY STATEMENT ===
 post_non_normal = sum(1 for r in post_stats if r.get("Normal") == "No")
 if post_non_normal == 0:
     st.success("**Perfect — data is normal after transformation**")
@@ -173,7 +170,7 @@ elif post_non_normal <= 2:
 else:
     st.warning("**Still non-normal — try another transformation**")
 
-# === 9. ACCEPT BUTTON ONLY ===
+# === 8. ACCEPT BUTTON ONLY ===
 st.markdown("### 9. Confirm Transformation")
 if st.button("Accept This Transformation", type="primary"):
     st.session_state.intensity_transformed = transformed
@@ -181,5 +178,5 @@ if st.button("Accept This Transformation", type="primary"):
     st.session_state.qc_accepted = True
     st.success(f"**{transform} accepted** — ready for next plots")
 
-# No "proceed" button — as requested
+# No proceed button — as requested
 st.info("More plots coming soon...")
