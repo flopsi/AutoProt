@@ -7,6 +7,7 @@ from streamlit_tags import st_tags, st_tags_sidebar
 proteomes = st_tags(label="#Type the proteomes in your sample:",
                     text = "Press enter to add more",
                     value = ["HUMAN","YEAST","ECOLI","RAT"],
+                    suggestions = ["TEST"],
                     maxtags=maxtags,
                     key="proteomes")
                     
@@ -34,4 +35,5 @@ def load(file):
 
 df_prot=load(uploaded_prot)
 st.success(f"Loaded: {len(df_prot):,} features × {len(df_prot.columns):,} columns")
-st.write(proteomes)
+st.write("### Results:")
+st.write(type(keywords))
