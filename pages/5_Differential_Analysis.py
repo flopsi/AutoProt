@@ -2,8 +2,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import dash_bio
-from dash import html, dcc
 
 # Load final data
 if "intensity_final" not in st.session_state or "df_final" not in st.session_state:
