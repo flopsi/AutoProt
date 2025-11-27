@@ -21,25 +21,24 @@ if "log10_cache" not in st.session_state:
     raw = df[all_reps].replace(0, np.nan)
     log10_all = np.log10(raw)
 
-    cache = {
-        "All proteins": log10_all,
-        "HUMAN": np.log10(df[df["Species"] == "HUMAN"][all_reps].replace(0, np.nan)) if "Species" in df.columns and "HUMAN" in df["Species"].values else pd.DataFrame(),
-        "ECOLI": np.log10(df[df["Species"] == "ECOLI"][all_reps].replace(0, np.nan)) if "Species" in df.columns and "ECOLI" in df["Species"].values else pd.DataFrame(),
-        "YEAST": np.log10(df[df["Species"] == "YEAST"][all_reps].replace(0, np.nan)) if "Species" in df.columns and "YEAST" in df["Species"].values else pd.DataFrame(),
-    }
-
+    cache = {"All proteins": log10_all}
+    if "Species" in df.columns:
+        for sp in ["HUMAN", "ECOLI", "YEAST"]:
+            subset = df[df["Species"] == sp][all_reps].replace(0, np.nan)
+            cache[sp] = np.log10(subset) if len(subset) > 0 else pd.DataFrame()
+    
     st.session_state.log10_cache = cache
 
-# === RADIO BUTTONS OUTSIDE PLOT AREA (CLEAN) ===
+# === RADIO BUTTONS OUTSIDE PLOT AREA ===
 st.subheader("Select Species to Display")
 selected_species = st.radio(
     "Choose which data to show in all plots:",
     ["All proteins", "HUMAN", "ECOLI", "YEAST"],
     index=0,
-    key="species_radio"
+    key="species_selector"
 )
 
-# === 6 LOG10 DENSITY PLOTS ===
+# === 6 LOG10 DENSITY PLOTS — DYNAMIC MEAN & ±2σ BASED ON SELECTION ===
 st.subheader("Intensity Density Plots (log₁₀)")
 
 current_data = st.session_state.log10_cache[selected_species]
@@ -49,6 +48,8 @@ for i, rep in enumerate(all_reps):
     col = row1[i] if i < 3 else row2[i-3]
     with col:
         vals = current_data[rep].dropna()
+        
+        # DYNAMIC mean & std based on selected species
         mean = vals.mean()
         std = vals.std()
         lower = mean - 2*std
@@ -63,11 +64,14 @@ for i, rep in enumerate(all_reps):
             marker_color="#E71316" if rep in c1 else "#1f77b4",
             opacity=0.75
         ))
+        # DYNAMIC ±2σ white shadow
         fig.add_vrect(x0=lower, x1=upper, fillcolor="white", opacity=0.35, line_width=2)
+        # DYNAMIC mean line
         fig.add_vline(x=mean, line_dash="dash", line_color="black")
+        
         fig.update_layout(
             height=380,
-            title=f"<b>{rep}</b>",
+            title=f"<b>{rep}</b><br>{selected_species}",
             xaxis_title="log₁₀(Intensity)",
             yaxis_title="Density",
             showlegend=False
