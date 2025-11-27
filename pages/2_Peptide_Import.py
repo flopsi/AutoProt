@@ -1,190 +1,204 @@
-# pages/2_Peptide_Import.py
+# pages/1_peptide_Import.py
 import streamlit as st
 import pandas as pd
 import io
-import re
-from pandas.api.types import is_numeric_dtype
+import numpy as np  # Required for .ne(), .any(), etc.
+
+# Import your shared restart function (make sure this file exists!)
+from shared import restart_button
+
+# === FULLY RESET SESSION STATE ON RESTART ===
+def clear_all_session():
+    keys_to_remove = [
+        "peptide_bytes", "metadata_bytes", "peptide_name", "metadata_name",
+        "pep_df", "pep_c1", "pep_c2"
+    ]
+    for key in keys_to_remove:
+        if key in st.session_state:
+            del st.session_state[key]
 
 st.set_page_config(page_title="Peptide Import", layout="wide")
 
-# === CSS & HEADER ===
+# === STYLING ===
 st.markdown("""
 <style>
-    .header {background: linear-gradient(90deg, #E71316 0%, #A6192E 100%); padding: 20px 40px; color: white; margin: -60px -60px 40px -60px;}
-    .header h1 {margin:0; font-size:28px; font-weight:600;}
-    .stButton>button {background:#E71316 !important; color:white !important; border:none !important; padding:12px 24px !important; border-radius:6px !important; font-weight:500 !important;}
-    .footer {text-align:center; padding:30px; color:#54585A; font-size:12px; border-top:1px solid #E2E3E4; margin-top:60px;}
-    .fixed-restart {position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 999; width: 300px;}
+    .header {background:linear-gradient(90deg,#E71316,#A6192E); padding:20px 40px; color:white; margin:-80px -80px 40px;}
+    .header h1,.header p {margin:0;}
+    .stButton>button {background:#E71316 !important; color:white !important;}
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="header"><h1>Peptide Level Data Import</h1></div>', unsafe_allow_html=True)
+st.markdown('<div class="header"><h1>DIA Proteomics Pipeline</h1><p>Peptide Import + Metadata</p></div>', unsafe_allow_html=True)
 
-# === CHECK IF DATA EXISTS IN SESSION ===
-if "pep_df" in st.session_state and not st.session_state.get("allow_reconfigure_pep", False):
-    st.info("Data restored from session state")
+# === FILE UPLOAD ===
+col1, col2 = st.columns(2)
 
-    df = st.session_state.pep_df
-    c1 = st.session_state.pep_c1
-    c2 = st.session_state.pep_c2
-    sp_col = st.session_state.pep_sp_col
-    pg_col = st.session_state.pep_pg_col
-
-    st.success("Peptide data loaded!")
-
-    col1, col2, col3 = st.columns([1, 1, 1])
-    with col1:
-        st.metric("**Condition 1**", f"{len(c1)} reps")
-        st.write(", ".join(c1))
-    with col2:
-        st.metric("**Condition 2**", f"{len(c2)} reps")
-        st.write(", ".join(c2))
-    with col3:
-        if st.button("Reconfigure", key="reconfig_pep"):
-            st.session_state["allow_reconfigure_pep"] = True
+with col1:
+    if "peptide_bytes" not in st.session_state:
+        uploaded_pep = st.file_uploader("Upload Wide-Format Peptide File", type=["csv", "tsv", "txt"])
+        if uploaded_pep:
+            st.session_state.peptide_bytes = uploaded_pep.getvalue()
+            st.session_state.peptide_name = uploaded_pep.name
             st.rerun()
+    else:
+        st.success(f"Peptide: **{st.session_state.peptide_name}**")
 
-    st.info(f"**Species** → `{sp_col}` | **Protein Group** → `{pg_col}`")
+with col2:
+    if "metadata_bytes" not in st.session_state:
+        uploaded_meta = st.file_uploader("Upload Metadata File (metadata.tsv)", type=["tsv", "csv", "txt"])
+        if uploaded_meta:
+            st.session_state.metadata_bytes = uploaded_meta.getvalue()
+            st.session_state.metadata_name = uploaded_meta.name
+            st.rerun()
+    else:
+        st.success(f"Metadata: **{st.session_state.metadata_name}**")
 
-    st.markdown("---")
-    st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
-
-    st.markdown("""<style>.fixed-restart {position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 999; width: 300px;}</style><div class="fixed-restart">""", unsafe_allow_html=True)
-    if st.button("Restart Analysis", use_container_width=True):
-        st.session_state.clear()
+# Wait for both files
+if "peptide_bytes" not in st.session_state or "metadata_bytes" not in st.session_state:
+    st.info("Please upload both protein and metadata files.")
+    if st.button("Restart / Clear All"):
+        clear_all_session()
         st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
-# === UPLOAD FLOW ===
-st.markdown("### Upload Peptide Data")
-uploaded_file = st.file_uploader("", type=["csv","tsv","txt"], label_visibility="collapsed")
+# === LOAD DATA ===
+@st.cache_data(show_spinner="Loading files...")
+def load_dataframe(bytes_data):
+    text = bytes_data.decode("utf-8", errors="replace")
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    return pd.read_csv(io.StringIO(text), sep=None, engine="python")
 
-if not uploaded_file:
-    st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
+df_raw = load_dataframe(st.session_state.peptide_bytes)
+df_meta = load_dataframe(st.session_state.metadata_bytes)
+
+# === METADATA MATCHING (substring in column name) ===
+rename_dict = {}
+used_columns = set()
+
+for _, row in df_meta.iterrows():
+    run_label = str(row["Run Label"]).strip()
+    condition = str(row["Condition"]).strip()
+    replicate = str(row["Replicate"]).strip()
+    new_name = f"{condition}{replicate}"
+
+    matches = [c for c in df_raw.columns if run_label in str(c)]
+    
+    if len(matches) == 0:
+        st.warning(f"Run Label not found in headers: `{run_label}`")
+        continue
+    if len(matches) > 1:
+        st.error(f"Multiple columns contain `{run_label}`: {matches}")
+        st.stop()
+    
+    col = matches[0]
+    if col in used_columns:
+        st.error(f"Column `{col}` matched more than once!")
+        st.stop()
+    
+    rename_dict[col] = new_name
+    used_columns.add(col)
+
+if not rename_dict:
+    st.error("No intensity columns were matched using metadata!")
     st.stop()
 
-# === LOAD & PARSE ===
-@st.cache_data
-def load_peptides(file):
-    content = file.getvalue().decode("utf-8", errors="replace")
-    if content.startswith("\ufeff"):
-        content = content[1:]
-    df = pd.read_csv(io.StringIO(content), sep=None, engine="python", dtype=str)
-    
-    # Find intensity columns
-    intensity_cols = [c for c in df.columns if any(x in c.lower() for x in ["intensity", "lfq", "ibaq"])]
-    for col in intensity_cols:
-        df[col] = pd.to_numeric(df[col].str.replace(",", ""), errors="coerce")
-    
-    # Try to extract Species from Protein IDs or separate column
-    if "Protein IDs" in df.columns:
-        df["Species"] = df["Protein IDs"].str.extract(r";([A-Z]{5})", expand=False)
-    if "Species" not in df.columns:
-        df["Species"] = "UNKNOWN"
-    
-    return df, intensity_cols
+# Apply renaming
+df = df_raw.rename(columns=rename_dict).copy()
 
-df_raw, intensity_cols = load_peptides(uploaded_file)
-st.success(f"Peptide data imported — {len(df_raw):,} peptides")
+# Extract replicate columns
+c1 = sorted([name for name in rename_dict.values() if name.startswith("A")])
+c2 = sorted([name for name in rename_dict.values() if name.startswith("B")])
+all_intensity_cols = c1 + c2
 
-# === COLUMN ASSIGNMENT ===
-st.subheader("Column Assignment & Renaming")
+# Convert to float and replace missing/imputed with 1.0
+for col in all_intensity_cols:
+    df[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
+df[all_intensity_cols] = df[all_intensity_cols].replace([0, np.nan], 1.0)
 
-num_cols = [c for c in df_raw.columns if is_numeric_dtype(df_raw[c])]
-default_c1 = num_cols[:len(num_cols)//2]
+# === EXTRACT FIRST PROTEIN ACCESSION & NAME ===
+pg_cols = [c for c in df.columns if "Peptide" in c and ("Group" in c or "Groups" in c) or c.startswith("PG.")]
+if not pg_cols:
+    st.error("Could not find ProteinGroups column (PG.ProteinGroups)")
+    st.stop()
+df["PG"] = df[pg_cols[0]].astype(str).str.split(";").str[0]
 
-rows = []
-for col in df_raw.columns:
-    preview = " | ".join(df_raw[col].dropna().astype(str).unique()[:3])
-    rows.append({
-        "Rename": col,
-        "Cond 1": col in default_c1 and col in intensity_cols,
-        "Species": col == "Species",
-        "Protein Group": col == "Protein IDs" or col == "Leading razor protein",
-        "Original Name": col,
-        "Preview": preview,
-        "Type": "Intensity" if col in intensity_cols else "Metadata"
-    })
+name_cols = [c for c in df.columns if "PeptideNames" in c or "Gene" in c]
+df["Name"] = df[name_cols[0]].astype(str).str.split(";").str[0] if name_cols else "Unknown"
 
-df_edit = pd.DataFrame(rows)
-edited = st.data_editor(
-    df_edit,
-    column_config={
-        "Rename": st.column_config.TextColumn("Rename"),
-        "Cond 1": st.column_config.CheckboxColumn("Cond 1"),
-        "Species": st.column_config.CheckboxColumn("Species"),
-        "Protein Group": st.column_config.CheckboxColumn("PG"),
-        "Original Name": st.column_config.TextColumn("Original", disabled=True),
-        "Preview": st.column_config.TextColumn("Preview", disabled=True),
-        "Type": st.column_config.TextColumn("Type", disabled=True),
-    },
-    disabled=["Original Name", "Preview", "Type"],
-    hide_index=True,
-    use_container_width=True,
-    key="pep_col_table"
+# === SPECIES DETECTION FROM PROTEIN NAME ===
+st.subheader("Species Assignment")
+species_keywords = {
+    "HUMAN": ["HUMAN", "HOMO", "HSA"],
+    "MOUSE": ["MOUSE", "MUS", "MMU"],
+    "RAT":   ["RAT", "RATTUS", "RNO"],
+    "ECOLI": ["ECOLI", "ESCHERICHIA"],
+    "YEAST": ["YEAST", "SACCHA", "CEREVISIAE"],
+    "BOVIN": ["BOVIN", "BOVINE", "BOS"],
+}
+
+selected = st.multiselect(
+    "Which species are present?",
+    options=list(species_keywords.keys()),
+    default=["HUMAN", "ECOLI"]
 )
 
-# Extract selections
-c1_checked = edited[edited["Cond 1"]]
-sp_checked = edited[edited["Species"]]
-pg_checked = edited[edited["Protein Group"]]
+species_lookup = {}
+for sp in selected:
+    for kw in species_keywords[sp]:
+        species_lookup[kw] = sp
 
-c1_orig = c1_checked["Original Name"].tolist()
-c2_orig = [c for c in intensity_cols if c not in c1_orig]
-sp_cols = sp_checked["Original Name"].tolist()
-pg_cols = pg_checked["Original Name"].tolist()
+def get_species(name):
+    if pd.isna(name):
+        return "Other"
+    name_up = str(name).upper()
+    for kw, sp in species_lookup.items():
+        if kw in name_up:
+            return sp
+    return "Other"
 
-errors = []
-if len(c1_orig) == 0: errors.append("Cond 1 must have ≥1 replicate")
-if len(c2_orig) == 0: errors.append("Cond 2 must have ≥1 replicate")
-if len(sp_cols) != 1: errors.append("Select exactly 1 Species column")
-if len(pg_cols) != 1: errors.append("Select exactly 1 Protein Group column")
-if errors:
-    for e in errors: st.error(e)
-    st.stop()
+df["Species"] = df["Name"].apply(get_species)
 
-sp_col = sp_cols[0]
-pg_col = pg_cols[0]
+# === REMOVE FULLY IMPUTED PROTEINS ===
+before = len(df)
+df = df[df[all_intensity_cols].ne(1.0).any(axis=1)]
+after = len(df)
+st.info(f"Removed {before - after:,} peptides with only imputed values (all = 1.0)")
 
-# Rename
-rename_map = {}
-for _, row in edited.iterrows():
-    new = row["Rename"].strip()
-    if new and new != row["Original Name"]:
-        rename_map[row["Original Name"]] = new
+# === FINAL CLEAN TABLE ===
+final_columns = ["PG", "Name", "Species"] + all_intensity_cols
+df_final = df[final_columns].copy()
 
-df_final = df_raw.rename(columns=rename_map)
-c1 = [rename_map.get(c, c) for c in c1_orig]
-c2 = [rename_map.get(c, c) for c in c2_orig]
+# === DISPLAY RESULTS ===
+st.success(f"Final dataset: **{len(df_final):,} peptides** × **{len(df_final.columns)} columns**")
 
-# === SAVE TO SESSION ===
-st.session_state.update({
-    "pep_df": df_final,
-    "pep_c1": c1,
-    "pep_c2": c2,
-    "pep_sp_col": sp_col,
-    "pep_pg_col": pg_col,
-})
+colA, colB = st.columns(2)
+with colA:
+    st.subheader("Condition A")
+    st.code(" | ".join(c1), language=None)
+with colB:
+    st.subheader("Condition B")
+    st.code(" | ".join(c2), language=None)
 
-# === DISPLAY ===
-st.success("All assignments applied!")
-col1, col2 = st.columns(2)
-with col1:
-    st.metric("**Condition 1**", f"{len(c1)} reps")
-    st.write(", ".join(c1))
-with col2:
-    st.metric("**Condition 2**", f"{len(c2)} reps")
-    st.write(", ".join(c2))
+st.write("**Proteins per species:**")
+for species, count in df_final["Species"].value_counts().items():
+    st.write(f"• **{species}**: {count:,}")
 
-st.info(f"**Species** → `{sp_col}` | **Protein Group** → `{pg_col}`")
+st.subheader("Data Preview")
+st.dataframe(df_final.head(12), use_container_width=True)
 
-st.markdown("---")
-st.markdown('<div class="footer"><strong>Proprietary & Confidential</strong><br>© 2024 Thermo Fisher Scientific</div>', unsafe_allow_html=True)
+# === SAVE TO SESSION STATE (GUARANTEED TO BE USED IN ANALYSIS) ===
+st.session_state.pep_df = df_final
+st.session_state.pep_c1 = c1
+st.session_state.pep_c2 = c2
 
-# Restart button
-st.markdown("""<style>.fixed-restart {position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 999; width: 300px;}</style><div class="fixed-restart">""", unsafe_allow_html=True)
-if st.button("Restart Analysis", use_container_width=True):
-    st.session_state.clear()
+st.success("Peptide data successfully processed and ready!")
+
+if st.button("Go to Protein Analysis", type="primary", use_container_width=True):
+    st.switch_page("pages/3_peptide_Analysis.py")
+
+# Full restart
+if st.button("Restart Everything"):
+    clear_all_session()
+    st.success("All data cleared. Upload new files.")
     st.rerun()
-st.markdown('</div>', unsafe_allow_html=True)
