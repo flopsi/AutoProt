@@ -139,37 +139,6 @@ else:
     constant_species = "All proteins"
     reference_df = df
 
-# KS test: each replicate vs reference
-ks_results = []
-for rep in all_reps:
-    ref_vals = np.log10(reference_df[rep].replace(0, np.nan).dropna())
-    rep_vals = np.log10(df[rep].replace(0, np.nan).dropna())
-    
-    if len(ref_vals) < 10 or len(rep_vals) < 10:
-        ks_results.append({"Replicate": rep, "KS p-value": "—", "Different?": "—"})
-        continue
-    
-    _, p = stats.ks_2samp(ref_vals, rep_vals)
-    different = "Yes" if p < 0.05 else "No"
-    ks_results.append({
-        "Replicate": rep,
-        "vs": constant_species,
-        "KS p-value": f"{p:.2e}",
-        "Different?": different
-    })
-
-ks_df = pd.DataFrame(ks_results)
-st.table(ks_df.style.apply(
-    lambda x: ["background: #ffcccc" if v == "Yes" else "background: #ccffcc" for v in x],
-    subset=["Different?"]
-))
-
-if any(r["Different?"] == "Yes" for r in ks_results if r["Different?"] != "—"):
-    st.error("**Significant differences** detected — check technical bias")
-else:
-    st.success("**All replicates similar** — excellent technical quality")
-
-st.info("**Kolmogorov-Smirnov test** — Schessner et al., 2022 Figure 4B")
 
 # === 6. FINAL FILTER & ACCEPT ===
 st.subheader("Final Filter Strategy")
@@ -178,7 +147,69 @@ filter_strategy = st.radio(
     ["Raw data", "Low intensity filtered", "±2σ filtered (on raw data)", "Combined"],
     index=0
 )
+# === REPLICATE DIFFERENCE TESTING (AFTER FINAL FILTERING) ===
+st.subheader("Replicate Difference Testing (Kolmogorov–Smirnov)")
 
+test_mode = st.radio(
+    "Test replicate similarity using:",
+    ["All proteins", "Constant proteome only"],
+    index=1
+)
+
+if test_mode == "Constant proteome only":
+    if "Species" not in df_final.columns:
+        st.error("Species column missing in filtered data")
+        st.stop()
+    constant_species = st.selectbox(
+        "Select constant proteome (reference)",
+        options=["HUMAN", "ECOLI", "YEAST"],
+        index=0
+    )
+    reference_df = df_final[df_final["Species"] == constant_species]
+    ref_label = constant_species
+else:
+    reference_df = df_final
+    ref_label = "All proteins"
+
+# KS test: each replicate vs reference (after final filtering)
+ks_results = []
+for rep in all_reps:
+    ref_vals = np.log10(reference_df[rep].replace(0, np.nan).dropna())
+    rep_vals = np.log10(df_final[rep].replace(0, np.nan).dropna())
+    
+    if len(ref_vals) < 10 or len(rep_vals) < 10:
+        ks_results.append({
+            "Replicate": rep,
+            "vs Reference": ref_label,
+            "KS p-value": "—",
+            "Different?": "—"
+        })
+        continue
+    
+    _, p = stats.ks_2samp(ref_vals, rep_vals)
+    different = "Yes" if p < 0.05 else "No"
+    ks_results.append({
+        "Replicate": rep,
+        "vs Reference": ref_label,
+        "KS p-value": f"{p:.2e}",
+        "Different?": different
+    })
+
+ks_df = pd.DataFrame(ks_results)
+
+# Styled table
+st.table(ks_df.style.apply(
+    lambda x: ["background: #ffcccc" if v == "Yes" else "background: #ccffcc" for v in x],
+    subset=["Different?"]
+))
+
+# Interpretation
+if any(r["Different?"] == "Yes" for r in ks_results if r["Different?"] != "—"):
+    st.error("**Significant differences detected** — potential technical bias")
+else:
+    st.success("**All replicates similar** — excellent technical reproducibility")
+
+st.info("**Kolmogorov–Smirnov test** — compares full distribution shape (Schessner et al., 2022, Figure 4B)")
 # [Your filtering & count table code here]
 
 if st.button("Accept Final Filtering", type="primary"):
