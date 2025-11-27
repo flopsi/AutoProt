@@ -4,7 +4,6 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from scipy import stats
-from itertools import combinations
 
 # Load data
 if "prot_final_df" not in st.session_state:
@@ -17,6 +16,8 @@ c2 = st.session_state.prot_final_c2
 all_reps = c1 + c2
 
 st.title("Protein-Level QC & Replicate Difference Testing")
+
+# === Schessner et al., 2022 ===")
 
 # === 1. LOW INTENSITY FILTER FOR PLOTS ONLY ===
 st.subheader("Plot Filter (Visual QC Only)")
@@ -58,7 +59,7 @@ selected_species = st.radio(
 
 current_data = st.session_state.log10_plot_cache[selected_species]
 
-# === 4. 6 LOG10 DENSITY PLOTS ===
+# === 4. 6 LOG10 DENSITY PLOTS + TABLE UNDER EACH ===
 st.subheader("Intensity Density Plots (log₁₀)")
 
 row1, row2 = st.columns(3), st.columns(3)
@@ -96,92 +97,90 @@ for i, rep in enumerate(all_reps):
         )
         st.plotly_chart(fig, use_container_width=True)
 
-# === 5. FINAL FILTER STRATEGY ===
-st.subheader("Final Filter Strategy (for Downstream Analysis)")
+        # === TABLE UNDER EACH PLOT ===
+        table_data = []
+        for sp in ["All proteins", "HUMAN", "ECOLI", "YEAST"]:
+            sp_data = st.session_state.log10_plot_cache[sp]
+            sp_vals = sp_data[rep].dropna()
+            if len(sp_vals) == 0:
+                mean_str = variance_str = std_str = "—"
+            else:
+                mean_str = f"{sp_vals.mean():.3f}"
+                variance_str = f"{sp_vals.var():.3f}"
+                std_str = f"{sp_vals.std():.3f}"
+            table_data.append({
+                "Species": sp,
+                "Mean": mean_str,
+                "Variance": variance_str,
+                "Std Dev": std_str
+            })
+        st.table(pd.DataFrame(table_data).set_index("Species"))
+
+# === 5. REPLICATE DIFFERENCE TESTING ===
+st.subheader("Replicate Difference Testing")
+
+test_mode = st.radio(
+    "Test replicate similarity using:",
+    ["All proteins", "Constant proteome only"],
+    index=1
+)
+
+if test_mode == "Constant proteome only":
+    if "Species" not in df.columns:
+        st.error("Species column missing")
+        st.stop()
+    constant_species = st.selectbox(
+        "Select constant proteome (reference)",
+        options=["HUMAN", "ECOLI", "YEAST"],
+        index=0
+    )
+    reference_df = df[df["Species"] == constant_species]
+else:
+    constant_species = "All proteins"
+    reference_df = df
+
+# KS test: each replicate vs reference
+ks_results = []
+for rep in all_reps:
+    ref_vals = np.log10(reference_df[rep].replace(0, np.nan).dropna())
+    rep_vals = np.log10(df[rep].replace(0, np.nan).dropna())
+    
+    if len(ref_vals) < 10 or len(rep_vals) < 10:
+        ks_results.append({"Replicate": rep, "KS p-value": "—", "Different?": "—"})
+        continue
+    
+    _, p = stats.ks_2samp(ref_vals, rep_vals)
+    different = "Yes" if p < 0.05 else "No"
+    ks_results.append({
+        "Replicate": rep,
+        "vs": constant_species,
+        "KS p-value": f"{p:.2e}",
+        "Different?": different
+    })
+
+ks_df = pd.DataFrame(ks_results)
+st.table(ks_df.style.apply(
+    lambda x: ["background: #ffcccc" if v == "Yes" else "background: #ccffcc" for v in x],
+    subset=["Different?"]
+))
+
+if any(r["Different?"] == "Yes" for r in ks_results if r["Different?"] != "—"):
+    st.error("**Significant differences** detected — check technical bias")
+else:
+    st.success("**All replicates similar** — excellent technical quality")
+
+st.info("**Kolmogorov-Smirnov test** — Schessner et al., 2022 Figure 4B")
+
+# === 6. FINAL FILTER & ACCEPT ===
+st.subheader("Final Filter Strategy")
 filter_strategy = st.radio(
     "Choose filtering strategy:",
     ["Raw data", "Low intensity filtered", "±2σ filtered (on raw data)", "Combined"],
     index=0
 )
 
-# === 6. REPLICATE DIFFERENCE TESTING — ONLY HERE: CONSTANT SPECIES SELECTION ===
-st.subheader("Replicate Difference Testing (vs Constant Proteome)")
+# [Your filtering & count table code here]
 
-if "Species" not in df.columns:
-    st.error("Species column missing")
-    st.stop()
-
-constant_species = st.selectbox(
-    "Select constant proteome (reference for KS test)",
-    options=["HUMAN", "ECOLI", "YEAST"],
-    index=0
-)
-
-# Apply final filter first
-df_final = df.copy()
-log10_final = np.log10(df[all_reps].replace(0, np.nan))
-
-if filter_strategy in ["Low intensity filtered", "Combined"]:
-    mask = pd.Series(True, index=df.index)
-    for rep in all_reps:
-        mask &= (log10_final[rep] >= 0.5)
-    df_final = df[mask]
-    log10_final = log10_final.loc[mask]
-
-if filter_strategy == "±2σ filtered (on raw data)":
-    mask = pd.Series(True, index=df_final.index)
-    for rep in all_reps:
-        vals = log10_final[rep].dropna()
-        if len(vals) == 0: continue
-        mean = vals.mean()
-        std = vals.std()
-        mask &= (log10_final[rep] >= mean - 2*std) & (log10_final[rep] <= mean + 2*std)
-    df_final = df_final[mask]
-
-elif filter_strategy == "Combined":
-    mask = pd.Series(True, index=df_final.index)
-    for rep in all_reps:
-        vals = log10_final[rep].dropna()
-        if len(vals) == 0: continue
-        mean = vals.mean()
-        std = vals.std()
-        mask &= (log10_final[rep] >= mean - 2*std) & (log10_final[rep] <= mean + 2*std)
-    df_final = df_final[mask]
-
-# KS test: each replicate vs constant proteome
-df_const = df_final[df_final["Species"] == constant_species]
-if len(df_const) == 0:
-    st.error(f"No proteins found for {constant_species}")
-else:
-    ks_results = []
-    for rep in all_reps:
-        const_vals = np.log10(df_const[rep].replace(0, np.nan).dropna())
-        rep_vals = np.log10(df_final[rep].replace(0, np.nan).dropna())
-        if len(const_vals) < 10 or len(rep_vals) < 10:
-            ks_results.append({"Replicate": rep, "KS p-value": "—", "Different?": "—"})
-            continue
-        _, p = stats.ks_2samp(const_vals, rep_vals)
-        different = "Yes" if p < 0.05 else "No"
-        ks_results.append({
-            "Replicate": rep,
-            "KS p-value": f"{p:.2e}",
-            "Different?": different
-        })
-
-    ks_df = pd.DataFrame(ks_results)
-    st.table(ks_df.style.apply(
-        lambda x: ["background: #ffcccc" if v == "Yes" else "background: #ccffcc" for v in x],
-        subset=["Different?"]
-    ))
-
-    if any(r["Different?"] == "Yes" for r in ks_results if r["Different?"] != "—"):
-        st.error("**Significant differences** detected — check technical bias")
-    else:
-        st.success("**All replicates similar** to constant proteome — excellent technical quality")
-
-st.info("**Kolmogorov-Smirnov test** (Schessner et al., 2022 Figure 4B)")
-
-# === 7. ACCEPT ===
 if st.button("Accept Final Filtering", type="primary"):
     st.session_state.df_filtered = df_final
     st.session_state.qc_accepted = True
