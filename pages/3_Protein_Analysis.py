@@ -2,21 +2,16 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import numpy as np
 import plotly.graph_objects as go
 from scipy import stats
 from scipy.stats import boxcox, yeojohnson
 
-# === CRITICAL FIX: USE THE CORRECT SESSION STATE KEYS FROM IMPORT PAGE ===
-required_keys = ["prot_df", "prot_c1", "prot_c2"]
-missing = [k for k in required_keys if k not in st.session_state or st.session_state[k] is None]
-
-if missing:
-    st.error("No protein data found! Please complete **Protein Import** first.")
-    if st.button("Go to Protein Import"):
-        st.switch_page("pages/1_Protein_Import.py")
+# Load data
+if "prot_df" not in st.session_state:
+    st.error("No protein data found! Please go to Protein Import first.")
     st.stop()
 
-# === LOAD DATA USING THE CORRECT KEYS ===
 df = st.session_state.prot_df.copy()
 c1 = st.session_state.prot_c1.copy()
 c2 = st.session_state.prot_c2.copy()
@@ -24,20 +19,9 @@ all_reps = c1 + c2
 
 st.title("Protein-Level QC & Transformation")
 
-# === 1. NORMALITY TESTING & TRANSFORMATION RECOMMENDATION (AT TOP) ===
-st.subheader("1. Normality Testing & Recommended Transformation")
+# === 1. NORMALITY TESTING ON RAW DATA — SHAPIRO-WILK W STATISTIC (Schessner et al., 2022) ===
+st.subheader("1. Normality Testing on Raw Data (Shapiro-Wilk)")
 
-# Choose dataset
-data_source = st.radio(
-    "Test normality on:",
-    ["All original data", "Final filtered data (after filtering below)"],
-    index=1,
-    key="normality_data_source"
-)
-
-test_df = df if data_source == "All original data" else df  # will be updated later
-
-# Test transformations
 transform_options = {
     "Raw": lambda x: x,
     "log₂": lambda x: np.log2(x + 1),
@@ -49,25 +33,22 @@ transform_options = {
 
 results = []
 best_transform = "Raw"
-best_score = float('inf')
+best_w = 0
 
 for rep in all_reps:
-    raw_vals = test_df[rep].replace(0, np.nan).dropna()
+    raw_vals = df[rep].replace(0, np.nan).dropna()
     if len(raw_vals) < 8:
         continue
         
     row = {"Replicate": rep}
     
-    # Raw
-    raw_skew = stats.skew(raw_vals)
-    raw_kurt = stats.kurtosis(raw_vals)
-    _, raw_p = stats.shapiro(raw_vals)
-    row["Raw Skew"] = f"{raw_skew:+.3f}"
-    row["Raw Kurtosis"] = f"{raw_kurt:+.3f}"
-    row["Raw p"] = f"{raw_p:.2e}"
+    # Raw W statistic
+    w_raw, p_raw = stats.shapiro(raw_vals)
+    row["Raw W"] = f"{w_raw:.4f}"
+    row["Raw p"] = f"{p_raw:.2e}"
     
     rep_best = "Raw"
-    rep_score = float('inf')
+    rep_w = w_raw
     
     for name, func in transform_options.items():
         if name == "Raw": continue
@@ -75,46 +56,30 @@ for rep in all_reps:
             t_vals = func(raw_vals)
             if t_vals is None or np.any(np.isnan(t_vals)): continue
                 
-            skew = stats.skew(t_vals)
-            kurt = stats.kurtosis(t_vals)
-            _, p = stats.shapiro(t_vals)
+            w, p = stats.shapiro(t_vals)
+            row[f"{name} W"] = f"{w:.4f}"
+            row[f"{name} p"] = f"{p:.2e}"
             
-            score = abs(skew) + abs(kurt - 3)
-            
-            if score < rep_score:
-                rep_score = score
+            if w > rep_w:
+                rep_w = w
                 rep_best = name
         except:
-            continue
+            row[f"{name} W"] = "—"
+            row[f"{name} p"] = "—"
     
-    row["Recommended"] = rep_best
+    row["Best Transform"] = rep_best
+    row["Best W"] = f"{rep_w:.4f}"
     
-    if rep_best != "Raw":
-        try:
-            final_vals = transform_options[rep_best](raw_vals)
-            row["After Skew"] = f"{stats.skew(final_vals):+.3f}"
-            row["After Kurtosis"] = f"{stats.kurtosis(final_vals):+.3f}"
-            _, p_final = stats.shapiro(final_vals)
-            row["After p"] = f"{p_final:.2e}"
-        except:
-            row["After Skew"] = "—"
-            row["After Kurtosis"] = "—"
-            row["After p"] = "—"
-    else:
-        row["After Skew"] = "—"
-        row["After Kurtosis"] = "—"
-        row["After p"] = "—"
-    
-    if rep_score < best_score:
-        best_score = rep_score
+    if rep_w > best_w:
+        best_w = rep_w
         best_transform = rep_best
         
     results.append(row)
 
 st.table(pd.DataFrame(results))
 
-st.success(f"**Recommended transformation: {best_transform}**")
-st.info("Based on minimizing skewness + excess kurtosis — Schessner et al., 2022")
+st.success(f"**Recommended transformation: {best_transform}** (highest Shapiro-Wilk W)")
+st.info("**Shapiro-Wilk W statistic** — closer to 1 = more normal (Schessner et al., 2022, Figure 4)")
 
 # === 2. USER DECIDES: RAW OR TRANSFORMED ===
 st.subheader("2. Proceed With")
@@ -343,7 +308,7 @@ if st.button("Accept & Proceed to Differential Analysis", type="primary"):
     
     st.session_state.intensity_transformed = transformed
     st.session_state.df_filtered = df_final
-    st.session_state.transform_applied = best_transform if proceed_choice.startswith("Transformed") else "Raw"
+    st.session_state.transform_applied = best_transform if "Transformed" in proceed_choice else "Raw"
     st.session_state.qc_accepted = True
     st.success("**Ready for differential analysis!**")
     st.balloons()
