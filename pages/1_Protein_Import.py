@@ -86,6 +86,46 @@ c2 = [f"B{i+1}" for i in range(n)]
 
 st.success(f"Renamed → A: {', '.join(c1)} | B: {', '.join(c2)}")
 
+# pages/1_Protein_Import.py
+# ... all your existing code until after replicate assignment ...
+
+# === USER SELECTS SPECIES COLUMN ===
+st.markdown("### Select Species Column")
+species_candidates = [c for c in df.columns if c not in c1 + c2]
+species_col = st.selectbox(
+    "Which column contains species information? (e.g., 'Species', 'Organism', 'Description')",
+    options=species_candidates,
+    index=0
+)
+
+# Extract species cleanly
+species_keywords = {
+    "HUMAN": ["HUMAN", "HOMO", "HSA"],
+    "MOUSE": ["MOUSE", "MUS", "MMU"],
+    "RAT": ["RAT", "RATTUS", "RNO"],
+    "ECOLI": ["ECOLI", "ESCHERICHIA"],
+    "BOVIN": ["BOVIN", "BOVINE", "BOS"],
+    "YEAST": ["YEAST", "SACCHAROMYCES"],
+    "RABIT": ["RABBIT", "RABIT", "OCU"],
+    "CANFA": ["DOG", "CANIS", "CANFA"],
+    "MACMU": ["MACACA", "RHESUS", "MACMU"],
+    "PANTR": ["CHIMP", "PANTR"]
+}
+
+def get_species(text):
+    if pd.isna(text): return "Other"
+    text = str(text).upper()
+    for species, keywords in species_keywords.items():
+        if any(kw in text for kw in keywords):
+            return species
+    return "Other"
+
+df["Species"] = df[species_col].apply(get_species)
+st.write("Detected species:", df["Species"].value_counts().to_dict())
+
+# === SAVE SPECIES COLUMN NAME ===
+st.session_state.species_column_name = species_col
+st.session_state.prot_final_df = df
 # === SAVE FINAL DATA ===
 st.session_state.prot_df = df
 st.session_state.prot_c1 = c1
