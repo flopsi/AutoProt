@@ -4,6 +4,12 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from scipy import stats
+
 # Load data
 if "prot_final_df" not in st.session_state:
     st.error("No protein data found! Please go to Protein Import first.")
@@ -14,8 +20,27 @@ c1 = st.session_state.prot_final_c1
 c2 = st.session_state.prot_final_c2
 all_reps = c1 + c2
 
-st.title("Protein-Level QC & Advanced Filtering")
+st.title("Protein-Level QC & Replicate Difference Testing")
 
+# === 1. SELECT CONSTANT SPECIES ===
+st.subheader("1. Select Constant Proteome for Replicate Testing")
+if "Species" not in df.columns:
+    st.error("Species column missing")
+    st.stop()
+
+constant_species = st.selectbox(
+    "Choose constant proteome (reference for KS test)",
+    options=["HUMAN", "ECOLI", "YEAST"],
+    index=0
+)
+
+df_const = df[df["Species"] == constant_species].copy()
+
+# === 2. 6 LOG10 DENSITY PLOTS (same as before) ===
+st.subheader("2. Intensity Density Plots (log₁₀)")
+
+raw_plot = df_plot[all_reps].replace(0, np.nan)
+log10_plot = np.log10(raw_plot)
 # === 1. PLOT FILTER: Low intensity (for visualization only) ===
 st.subheader("Plot Filter (Visual QC Only)")
 remove_low_plot = st.checkbox(
@@ -172,9 +197,43 @@ for sp in ["All proteins", "HUMAN", "ECOLI", "YEAST"]:
     count_data.append({"Species": sp, "Unfiltered": base, "After Final Filter": filtered})
 
 st.table(pd.DataFrame(count_data).set_index("Species"))
+# === 3. REPLICATE DIFFERENCE TESTING vs CONSTANT PROTEOME ===
+st.subheader("3. Replicate Difference Testing (vs Constant Proteome)")
 
-# === 7. ACCEPT ===
-if st.button("Accept Final Filtering", type="primary"):
-    st.session_state.df_filtered = df_final
+ks_results = []
+for rep in all_reps:
+    const_vals = np.log10(df_const[rep].replace(0, np.nan).dropna())
+    rep_vals = np.log10(df[rep].replace(0, np.nan).dropna())
+    
+    if len(const_vals) < 10 or len(rep_vals) < 10:
+        ks_results.append({"Replicate": rep, "KS p-value": "—", "Significant?": "—"})
+        continue
+    
+    _, p = stats.ks_2samp(const_vals, rep_vals)
+    sig = "Yes" if p < 0.05 else "No"
+    ks_results.append({
+        "Replicate": rep,
+        "KS p-value": f"{p:.2e}",
+        "Significant?": sig
+    })
+
+# Styled table
+ks_df = pd.DataFrame(ks_results)
+st.table(ks_df.style.apply(
+    lambda x: ["background: #ffcccc" if v == "Yes" else "background: #ccffcc" for v in x],
+    subset=["Significant?"]
+))
+
+# Interpretation
+if any(r["Significant?"] == "Yes" for r in ks_results if r["Significant?"] != "—"):
+    st.error("**Warning**: Some replicates differ significantly from constant proteome — check technical bias")
+else:
+    st.success("**All replicates are statistically similar** to constant proteome — excellent technical quality")
+
+st.info("**Kolmogorov-Smirnov test** (Schessner et al., 2022 Figure 4B) — compares full distribution shape")
+
+# === 4. ACCEPT ===
+if st.button("Accept This Filtering", type="primary"):
+    st.session_state.df_filtered = df_filtered
     st.session_state.qc_accepted = True
-    st.success("**Final filtering accepted** — ready for transformation")
+    st.success("**Accepted** — ready for transformation")
