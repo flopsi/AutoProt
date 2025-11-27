@@ -3,7 +3,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from scipy import stats
 
 # Load data
 if "prot_final_df" not in st.session_state:
@@ -17,132 +16,164 @@ all_reps = c1 + c2
 
 st.title("Protein-Level QC & Advanced Filtering")
 
-# === 1. PLOT MODE: ALL PROTEINS OR INDIVIDUAL SPECIES ===
-st.subheader("1. Select Plot Mode")
-plot_mode = st.selectbox(
+# === 1. SPECIES VIEW DROPDOWN ===
+st.subheader("1. Select View Mode")
+view_species = st.selectbox(
     "Show density plots for:",
-    ["All proteins together", "Each species individually"],
+    ["All proteins", "HUMAN", "ECOLI", "YEAST"],
     index=0
 )
 
-# === 2. 6 LOG10 DENSITY PLOTS ===
+# Filter data for plotting
+if view_species == "All proteins":
+    df_plot = df.copy()
+else:
+    if "Species" not in df.columns:
+        st.error("Species column missing")
+        st.stop()
+    df_plot = df[df["Species"] == view_species].copy()
+
+if len(df_plot) == 0:
+    st.warning(f"No proteins found for {view_species}")
+    st.stop()
+
+# === 2. 6 LOG10 DENSITY PLOTS WITH ±2σ PER REPLICATE ===
 st.subheader("2. Intensity Density Plots (log₁₀)")
 
-raw_data = df[all_reps].replace(0, np.nan)
-log10_data = np.log10(raw_data)
-
-# Prepare species-specific data if needed
-if plot_mode == "Each species individually" and "Species" in df.columns:
-    species_list = df["Species"].dropna().unique()
-    species_data = {sp: df[df["Species"] == sp][all_reps].replace(0, np.nan) for sp in species_list}
-else:
-    species_data = {"All Proteins": raw_data}
+raw_plot = df_plot[all_reps].replace(0, np.nan)
+log10_plot = np.log10(raw_plot)
 
 row1, row2 = st.columns(3), st.columns(3)
+bounds_per_rep = {}
+
 for i, rep in enumerate(all_reps):
     col = row1[i] if i < 3 else row2[i-3]
     with col:
+        vals = log10_plot[rep].dropna()
+        mean = vals.mean()
+        std = vals.std()
+        lower = mean - 2*std
+        upper = mean + 2*std
+        bounds_per_rep[rep] = (lower, upper)
+
         fig = go.Figure()
-        
-        if plot_mode == "Each species individually" and "Species" in df.columns:
-            for sp, data in species_data.items():
-                vals = np.log10(data[rep].dropna())
-                if len(vals) == 0: continue
-                fig.add_trace(go.Histogram(
-                    x=vals,
-                    name=sp,
-                    histnorm="density",
-                    opacity=0.6,
-                    nbinsx=80
-                ))
-                mean = vals.mean()
-                std = vals.std()
-                fig.add_vline(x=mean, line_dash="dash", line_color="black")
-                fig.add_vrect(x0=mean-2*std, x1=mean+2*std, fillcolor="white", opacity=0.3, line_width=1)
-        else:
-            vals = log10_data[rep].dropna()
-            fig.add_trace(go.Histogram(
-                x=vals,
-                nbinsx=80,
-                histnorm="density",
-                name=rep,
-                marker_color="#E71316" if rep in c1 else "#1f77b4",
-                opacity=0.75
-            ))
-        
+        fig.add_trace(go.Histogram(
+            x=vals,
+            nbinsx=80,
+            histnorm="density",
+            name=rep,
+            marker_color="#E71316" if rep in c1 else "#1f77b4",
+            opacity=0.75
+        ))
+        # WHITE ±2σ SHADOW
+        fig.add_vrect(x0=lower, x1=upper, fillcolor="white", opacity=0.35, line_width=2)
+        fig.add_vline(x=mean, line_dash="dash", line_color="black")
         fig.update_layout(
             height=380,
             title=f"<b>{rep}</b>",
             xaxis_title="log₁₀(Intensity)",
             yaxis_title="Density",
-            showlegend=(plot_mode == "Each species individually"),
-            legend_title="Species" if plot_mode == "Each species individually" else None
+            showlegend=False
         )
         st.plotly_chart(fig, use_container_width=True)
 
-# === 3. FILTERING: INTENSITY OR STDEV (MUTUALLY EXCLUSIVE) ===
-st.subheader("3. Filtering Options (Choose One)")
+# === 3. FILTERING OPTIONS — TWO COLUMNS, MUTUALLY EXCLUSIVE ===
+st.subheader("3. Filtering Options (Select One)")
 
-col_left, col_right = st.columns(2)
+col1, col2 = st.columns(2)
 
 intensity_filter = False
 stdev_filter = False
 
-with col_left:
-    intensity_filter = st.checkbox("Intensity-based filter (manual range)", value=False)
+with col1:
+    st.markdown("**Intensity-based Filtering**")
+    intensity_filter = st.checkbox("Enable intensity filter", key="intensity_cb")
+    if intensity_filter:
+        lower_input = st.number_input("Lower bound (log₁₀)", value=-1.0, step=0.1, format="%.2f")
+        upper_input = st.number_input("Upper bound (log₁₀)", value=5.0, step=0.1, format="%.2f")
 
-with col_right:
-    stdev_filter = st.checkbox("StDev-based filter (±σ)", value=False)
+with col2:
+    st.markdown("**StDev-based Filtering**")
+    stdev_filter = st.checkbox("Enable ±σ filter", key="stdev_cb")
+    if stdev_scope = None
+    if stdev_filter:
+        stdev_scope = st.radio("Apply ±σ:", ["Global", "Per species"], index=1)
 
-# Enforce mutual exclusion
+# Prevent both active
 if intensity_filter and stdev_filter:
-    st.error("Please select only one filtering method")
+    st.error("Please select only ONE filtering method")
     st.stop()
 
-# === INTENSITY-BASED FILTER ===
-if intensity_filter:
-    st.markdown("**Intensity Range Selection**")
-    min_val, max_val = st.slider(
-        "log₁₀ intensity range",
-        min_value=float(log10_data.min().min()),
-        max_value=float(log10_data.max().max()),
-        value=(1.5, float(log10_data.max().max())),
-        step=0.1
-    )
-    mask = pd.Series(True, index=df.index)
-    for rep in all_reps:
-        mask &= (log10_data[rep] >= min_val) & (log10_data[rep] <= max_val)
-    df_filtered = df[mask].copy()
+# === 4. APPLY FILTERING ===
+mask = pd.Series(False, index=df.index)  # start empty
 
-# === STDEV-BASED FILTER ===
+if intensity_filter:
+    for rep in all_reps:
+        rep_mask = (np.log10(df[rep].replace(0, np.nan)) >= lower_input) & \
+                   (np.log10(df[rep].replace(0, np.nan)) <= upper_input)
+        mask |= rep_mask  # union across replicates
+
 elif stdev_filter:
-    st.markdown("**StDev Filter Configuration**")
-    stdev_scope = st.radio("Apply ±σ filter:", ["Global (all data)", "Per species"], index=1)
-    
-    if stdev_scope == "Per species" and "Species" in df.columns:
-        species_bounds = {}
+    if stdev_scope == "Global":
+        all_vals = np.log10(df[all_reps].replace(0, np.nan)).stack()
+        mean = all_vals.mean()
+        std = all_vals.std()
+        lower, upper = mean - 2*std, mean + 2*std
+        for rep in all_reps:
+            rep_mask = (np.log10(df[rep].replace(0, np.nan)) >= lower) & \
+                       (np.log10(df[rep].replace(0, np.nan)) <= upper)
+            mask |= rep_mask
+    else:
+        # Per species
+        species_sigma = {}
         for sp in df["Species"].dropna().unique():
             sp_data = df[df["Species"] == sp][all_reps].replace(0, np.nan)
-            sp_log10 = np.log10(sp_data)
-            mean = sp_log10.mean().mean()
-            std = sp_log10.stack().std()
-            species_bounds[sp] = (mean - 2*std, mean + 2*std)
+            sp_log = np.log10(sp_data)
+            mean = sp_log.mean().mean()
+            std = sp_log.stack().std()
+            species_sigma[sp] = (mean - 2*std, mean + 2*std)
         
-        selected_sp = st.selectbox("Select species for StDev bounds", options=list(species_bounds.keys()))
-        lower, upper = species_bounds[selected_sp]
-    else:
-        mean = log10_data.mean().mean()
-        std = log10_data.stack().std()
-        lower, upper = mean - 2*std, mean + 2*std
-    
-    st.info(f"Using ±2σ bounds: [{lower:.2f}, {upper:.2f}]")
-    
-    mask = pd.Series(True, index=df.index)
-    for rep in all_reps:
-        mask &= (log10_data[rep] >= lower) & (log10_data[rep] <= upper)
-    df_filtered = df[mask].copy()
+        selected_sp = st.multiselect(
+            "Select species to include (with their ±2σ)",
+            options=list(species_sigma.keys()),
+            default=list(species_sigma.keys())[:1]
+        )
+        for sp in selected_sp:
+            lower, upper = species_sigma[sp]
+            sp_mask = df["Species"] == sp
+            for rep in all_reps:
+                rep_mask = sp_mask & (np.log10(df[rep].replace(0, np.nan)) >= lower) & \
+                                      (np.log10(df[rep].replace(0, np.nan)) <= upper)
+                mask |= rep_mask
 
 else:
-    df_filtered = df.copy()
+    mask = pd.Series(True, index=df.index)  # no filter
 
+df_filtered = df[mask].copy()
 st.write(f"**Final dataset**: {len(df_filtered):,} proteins retained")
+
+# === 5. TRANSFORMATION & ACCEPT ===
+st.markdown("### 5. Apply Transformation")
+transform = st.selectbox("Choose transformation", ["log₂", "log₁₀", "Yeo-Johnson", "None"], index=1)
+
+if transform == "log₂":
+    transformed = np.log2(df_filtered[all_reps].replace(0, np.nan))
+elif transform == "log₁₀":
+    transformed = np.log10(df_filtered[all_reps].replace(0, np.nan))
+elif transform == "Yeo-Johnson":
+    from scipy.stats import yeojohnson
+    transformed = pd.DataFrame(yeojohnson(df_filtered[all_reps].values.flatten())[0].reshape(df_filtered[all_reps].shape),
+                               index=df_filtered.index, columns=all_reps)
+else:
+    transformed = df_filtered[all_reps].replace(0, np.nan)
+
+st.markdown("### 6. Confirm Setup")
+if st.button("Accept This Filtering & Transformation", type="primary"):
+    st.session_state.intensity_transformed = transformed
+    st.session_state.df_filtered = df_filtered
+    st.session_state.qc_accepted = True
+    st.success("Accepted — ready for analysis")
+
+if st.session_state.get("qc_accepted", False):
+    if st.button("Go to Differential Analysis", type="primary", use_container_width=True):
+        st.switch_page("pages/4_Differential_Analysis.py")
