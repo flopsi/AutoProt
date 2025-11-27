@@ -7,10 +7,14 @@ import plotly.express as px
 from scipy.cluster.hierarchy import linkage, leaves_list
 from scipy.spatial.distance import pdist
 
-# Load final processed data
-if "intensity_final" not in st.session_state or "df_final" not in st.session_state:
-    st.error("No final processed data found! Please complete Protein Analysis first.")
-    st.stop()
+# Load final data
+intensity_final = st.session_state.intensity_final
+df_final = st.session_state.df_final
+
+st.subheader("Final Processed Data (5-row snapshot)")
+st.write("**Transformation:** log₂ | **Filtering:** Applied | **For differential analysis**")
+st.dataframe(intensity_final.head(5).round(3), use_container_width=True)
+
 
 intensity_final = st.session_state.intensity_final.copy()
 df_final = st.session_state.df_final.copy()
