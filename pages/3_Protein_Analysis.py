@@ -46,7 +46,6 @@ if remove_low_plot:
 else:
     st.info(f"No plot filter → showing all {len(df_plot):,} proteins")
 
-st.success(f"Loaded **{len(df):,}** proteins | Condition A: **{len(c1)}** reps | Condition B: **{len(c2)}** reps")
 # === 2. RECALCULATE LOG10 CACHE BASED ON CURRENT df_plot ===
 # This is the key: cache must reflect the current df_plot!
 if "log10_plot_cache" not in st.session_state or st.session_state.get("last_plot_df_hash") != hash(df_plot.to_string()):
