@@ -1,13 +1,9 @@
+# pages/1_Protein_Import.py
 import streamlit as st
 import pandas as pd
 import io
-from shared import restart_button
 import numpy as np
-
-def ss(key, default=None):
-    if key not in st.session_state:
-        st.session_state[key] = default
-    return st.session_state[key]
+from shared import restart_button
 
 st.set_page_config(page_title="Protein Import", layout="wide")
 st.markdown("""
@@ -19,160 +15,147 @@ st.markdown("""
 """, unsafe_allow_html=True)
 st.markdown('<div class="header"><h1>DIA Proteomics Pipeline</h1><p>Protein Import</p></div>', unsafe_allow_html=True)
 
-# === UPLOAD ONCE, KEEP FOREVER ===
-if "uploaded_protein_bytes" not in st.session_state:
-    st.markdown("### Upload Protein File")
-    uploaded = st.file_uploader("CSV / TSV / TXT", type=["csv","tsv","txt"])
-    if uploaded:
-        st.session_state.uploaded_protein_bytes = uploaded.getvalue()
-        st.session_state.uploaded_protein_name = uploaded.name
-        st.rerun()
+# === UPLOAD BOTH FILES ===
+col1, col2 = st.columns(2)
+with col1:
+    if "protein_bytes" not in st.session_state:
+        uploaded_prot = st.file_uploader("Upload Protein File (wide format)", type=["csv","tsv","txt"])
+        if uploaded_prot:
+            st.session_state.protein_bytes = uploaded_prot.getvalue()
+            st.session_state.protein_name = uploaded_prot.name
+            st.rerun()
     else:
-        restart_button()
-        st.stop()
-else:
-    st.success(f"Protein file ready: **{st.session_state.uploaded_protein_name}**")
+        st.success(f"Protein: **{st.session_state.protein_name}**")
 
-# === LOAD FROM BYTES (safe) ===
-@st.cache_data(show_spinner="Loading protein data...")
-def load_protein_data(_bytes):
-    text = _bytes.decode("utf-8", errors="replace")
-    if text.startswith("\ufeff"):
-        text = text[1:]
+with col2:
+    if "metadata_bytes" not in st.session_state:
+        uploaded_meta = st.file_uploader("Upload Metadata File (metadata.tsv)", type=["tsv","csv","txt"])
+        if uploaded_meta:
+            st.session_state.metadata_bytes = uploaded_meta.getvalue()
+            st.session_state.metadata_name = uploaded_meta.name
+            st.rerun()
+    else:
+        st.success(f"Metadata: **{st.session_state.metadata_name}**")
+
+if "protein_bytes" not in st.session_state or "metadata_bytes" not in st.session_state:
+    st.info("Please upload both files to continue.")
+    restart_button()
+    st.stop()
+
+# === LOAD DATA ===
+@st.cache_data
+def load_df(bytes_data):
+    text = bytes_data.decode("utf-8", errors="replace")
+    if text.startswith("\ufeff"): text = text[1:]
     return pd.read_csv(io.StringIO(text), sep=None, engine="python")
 
-df_raw = load_protein_data(st.session_state.uploaded_protein_bytes)
-st.write(f"**{len(df_raw):,}** rows × **{len(df_raw.columns)}** columns (raw)")
+df_prot = load_df(st.session_state.protein_bytes)
+meta = load_df(st.session_state.metadata_bytes)
 
-# NEW: Detect if this is long format (e.g., like test5_pg.tsv)
-# - Look for a 'sample' column (contains "File" or "Sample" in name)
-# - Look for a single 'quantity' column (contains "Quantity" or "Intensity")
-# - Look for a 'protein' column (contains "Protein" in name, e.g., PG.ProteinGroups)
-sample_col_candidates = [c for c in df_raw.columns if "file" in c.lower() or "sample" in c.lower()]
-quantity_col_candidates = [c for c in df_raw.columns if "quantity" in c.lower() or "intensity" in c.lower() or "abundance" in c.lower()]
-protein_col_candidates = [c for c in df_raw.columns if "protein" in c.lower()]
+st.write(f"Protein data: **{df_prot.shape[0]:,}** proteins × **{df_prot.shape[1]}** columns")
+st.write(f"Metadata: **{len(meta)}** runs")
 
-is_long_format = len(sample_col_candidates) > 0 and len(quantity_col_candidates) == 1 and len(protein_col_candidates) > 0
+# === AUTO-MATCH RUNS USING METADATA ===
+# Find columns in protein data that match "File Name" or "Run Label" in metadata
+run_col_in_prot = None
+for col in df_prot.columns:
+    if col in meta["File Name"].astype(str).values or col in meta["Run Label"].astype(str).values:
+        run_col_in_prot = col
+        break
 
-if is_long_format:
-    sample_col = sample_col_candidates[0]  # Take first match (e.g., "R.FileName")
-    quantity_col = quantity_col_candidates[0]  # e.g., "PG.Quantity"
-    protein_col = protein_col_candidates[0]  # e.g., "PG.ProteinGroups"
-    
-    st.info(f"Detected long format. Pivoting on sample column '**{sample_col}**', quantity '**{quantity_col}**', protein '**{protein_col}**'.")
-    
-    # Pivot to wide format: Proteins as rows, samples as columns, quantities as values
-    # Aggregate with mean if duplicates (rare, but safe)
-    # Keep other columns (e.g., PG.ProteinNames, PG.Qvalue) by merging back the unique ones
-    other_cols = [c for c in df_raw.columns if c not in [sample_col, quantity_col, protein_col]]
-    df_unique_meta = df_raw[[protein_col] + other_cols].drop_duplicates(subset=[protein_col])
-    
-    df_pivot = pd.pivot_table(
-        df_raw,
-        values=quantity_col,
-        index=protein_col,
-        columns=sample_col,
-        aggfunc='mean'  # Or 'first' if no duplicates expected
-    ).reset_index()
-    
-    # Merge back metadata columns (e.g., PG.ProteinNames)
-    df_raw = pd.merge(df_pivot, df_unique_meta, on=protein_col, how='left')
-    
-    st.write(f"After pivot: **{len(df_raw):,}** proteins × **{len(df_raw.columns)}** columns")
-
-# === INTENSITY COLUMNS ===
-intensity_cols = []
-for col in df_raw.columns:
-    cleaned = pd.to_numeric(df_raw[col].astype(str).str.replace(r"[,\#NUM!]", "", regex=True), errors='coerce')
-    if cleaned.notna().mean() > 0.3:
-        df_raw[col] = cleaned
-        intensity_cols.append(col)
-
-if not intensity_cols:
-    st.error("No quantitative columns found")
+if not run_col_in_prot:
+    st.error("Could not match any column in protein file to metadata 'File Name' or 'Run Label'")
     st.stop()
 
-# === REPLICATES ===
-st.markdown("### Assign Replicates (must be equal)")
-rows = [{"Column": c, "A": True, "B": False} for c in intensity_cols]
-edited = st.data_editor(
-    pd.DataFrame(rows),
-    column_config={
-        "Column": st.column_config.TextColumn(disabled=True),
-        "A": st.column_config.CheckboxColumn("Condition A"),
-        "B": st.column_config.CheckboxColumn("Condition B"),
-    },
-    hide_index=True, use_container_width=True, num_rows="fixed"
-)
-a_cols = edited[edited["A"]]["Column"].tolist()
-b_cols = edited[edited["B"]]["Column"].tolist()
-if len(a_cols) != len(b_cols) or len(a_cols) == 0:
-    st.error("Must have equal replicates")
+# Map protein columns → condition via metadata
+col_to_condition = {}
+col_to_replicate = {}
+col_to_correction = {}
+
+for _, row in meta.iterrows():
+    file_key = str(row["File Name"])
+    label_key = str(row["Run Label"])
+    condition = row["Condition"]
+    replicate = row["Replicate"]
+    factor = row.get("Quantity Correction Factor", 1.0)
+
+    for col in df_prot.columns:
+        if str(col) == file_key or str(col) == label_key:
+            col_to_condition[col] = condition
+            col_to_replicate[col] = f"{condition}{replicate}"
+            col_to_correction[col] = float(factor)
+            break
+
+matched_cols = list(col_to_condition.keys())
+if len(matched_cols) < 2:
+    st.error("Less than 2 runs matched. Check file names.")
     st.stop()
 
-# === RENAME REPLICATES ===
-n = len(a_cols)
-rename_map = {a_cols[i]: f"A{i+1}" for i in range(n)}
-rename_map.update({b_cols[i]: f"B{i+1}" for i in range(n)})
-df = df_raw.rename(columns=rename_map).copy()
-c1 = [f"A{i+1}" for i in range(n)]
-c2 = [f"B{i+1}" for i in range(n)]
-st.success(f"Renamed → A: {', '.join(c1)} | B: {', '.join(c2)}")
+st.success(f"Matched **{len(matched_cols)}** runs from metadata")
 
-# === CRITICAL: REPLACE 0 AND NaN WITH 1.0 ===
+# === RENAME COLUMNS AUTOMATICALLY ===
+rename_map = {col: col_to_replicate[col] for col in matched_cols}
+df = df_prot.rename(columns=rename_map).copy()
+
+# Extract condition A and B
+conditions = meta["Condition"].unique()
+if len(conditions) != 2:
+    st.error("Metadata must have exactly 2 conditions (A and B)")
+    st.stop()
+
+cond_a, cond_b = conditions
+c1 = sorted([c for c in df.columns if c.startswith(cond_a)])
+c2 = sorted([c for c in df.columns if c.startswith(cond_b)])
+
+st.success(f"Auto-assigned → **{cond_a}**: {', '.join(c1)} | **{cond_b}**: {', '.join(c2)}")
+
+# === APPLY CORRECTION FACTORS (optional) ===
+if st.checkbox("Apply Quantity Correction Factors from metadata", value=True):
+    for old_col, factor in col_to_correction.items():
+        new_col = rename_map.get(old_col)
+        if new_col and factor != 1.0:
+            df[new_col] = df[new_col] * factor
+    st.info("Correction factors applied")
+
+# === REPLACE 0 / NaN → 1.0 ===
 intensity_cols = c1 + c2
 df[intensity_cols] = df[intensity_cols].replace([0, np.nan], 1.0)
 
-# === SAVE FINAL DATA ===
-st.session_state.prot_final_df = df
-st.session_state.prot_final_c1 = c1
-st.session_state.prot_final_c2 = c2
+# === SPECIES DETECTION ===
+st.markdown("### Select Column for Species Detection")
+candidate_cols = [c for c in df.columns if c not in intensity_cols]
+species_col = st.selectbox("Column with protein description/accession", candidate_cols, index=0)
 
-# === USER SELECTS SPECIES COLUMN ===
-st.markdown("### Select Species Column")
-species_candidates = [c for c in df.columns if c not in c1 + c2]
-species_col = st.selectbox(
-    "Which column contains species information? (e.g., 'Species', 'Organism', 'Description')",
-    options=species_candidates,
-    index=0
-)
-
-# Extract species cleanly
-species_keywords = {
+species_map = {
     "HUMAN": ["HUMAN", "HOMO", "HSA"],
     "MOUSE": ["MOUSE", "MUS", "MMU"],
-    "RAT": ["RAT", "RATTUS", "RNO"],
+    "YEAST": ["YEAST", "SACCHA"],
     "ECOLI": ["ECOLI", "ESCHERICHIA"],
-    "BOVIN": ["BOVIN", "BOVINE", "BOS"],
-    "YEAST": ["YEAST", "SACCHAROMYCES"],
-    "RABIT": ["RABBIT", "RABIT", "OCU"],
-    "CANFA": ["DOG", "CANIS", "CANFA"],
-    "MACMU": ["MACACA", "RHESUS", "MACMU"],
-    "PANTR": ["CHIMP", "PANTR"]
+    "Other": []
 }
-
-def get_species(text):
-    if pd.isna(text): return "Other"
-    text = str(text).upper()
-    for species, keywords in species_keywords.items():
-        if any(kw in text for kw in keywords):
-            return species
+def detect_species(x):
+    if pd.isna(x): return "Other"
+    x = str(x).upper()
+    for sp, keywords in species_map.items():
+        if any(k in x for k in keywords):
+            return sp
     return "Other"
 
-df["Species"] = df[species_col].apply(get_species)
-st.write("Detected species:", df["Species"].value_counts().to_dict())
+df["Species"] = df[species_col].apply(detect_species)
+st.write("Species distribution:", df["Species"].value_counts().to_dict())
 
-# === SAVE SPECIES COLUMN NAME ===
-st.session_state.species_column_name = species_col
-st.session_state.prot_final_df = df
-
-# === SAVE FINAL DATA ===
+# === SAVE TO SESSION ===
 st.session_state.prot_df = df
 st.session_state.prot_c1 = c1
 st.session_state.prot_c2 = c2
-st.success("Protein data saved — ready for analysis")
+st.session_state.species_column_name = species_col
+st.session_state.condition_colors = {
+    cond_a: meta[meta["Condition"] == cond_a]["Color"].iloc[0],
+    cond_b: meta[meta["Condition"] == cond_b]["Color"].iloc[0],
+}
 
-# === GO TO ANALYSIS ===
+st.success("Protein data ready with metadata!")
+
 if st.button("Go to Protein Analysis", type="primary", use_container_width=True):
     st.switch_page("pages/3_Protein_Analysis.py")
 
