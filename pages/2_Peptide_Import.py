@@ -28,7 +28,7 @@ st.markdown('<div class="header"><h1>DIA Proteomics Pipeline</h1><p>Peptide Impo
 col1, col2 = st.columns(2)
 with col1:
     if "peptide_bytes" not in st.session_state:
-        uploaded_pep = st.file_uploader("Upload Wide-Format Peptide File",type=["csv", "tsv", "txt"])
+        uploaded_pep = st.file_uploader("Upload Wide-Format Peptide File", type=["csv", "tsv", "txt"])
         if uploaded_pep:
             st.session_state.peptide_bytes = uploaded_pep.getvalue()
             st.session_state.peptide_name = uploaded_pep.name
@@ -103,67 +103,35 @@ def detect_peptide_sequence_column(df):
     candidates = []
     for col in df.columns:
         if df[col].dtype != "object": continue
-        sample = df[col].dropna().astype(str).head(1000)
+        sample = df[col].dropna().astype(str).head(2000)
         if sample.empty: continue
-        # Check pattern: ends with K or R before optional modification like _
-        pattern = r'[KR](?=[_\.])|[KR]$'
+        # Pattern: ends with K or R before _ or end of string
+        pattern = r'[KR](?=[_\.]|$)'  # K/R followed by _, ., or end
         matches = sample.str.contains(pattern, regex=True)
-        if matches.mean() > 0.90:
-            candidates.append((col, matches.mean()))
+        ratio = matches.mean()
+        if ratio > 0.90:
+            candidates.append((col, ratio))
     if candidates:
         candidates.sort(key=lambda x: x[1], reverse=True)
         return candidates[0][0]
     return None
 
 auto_seq_col = detect_peptide_sequence_column(df)
-# === SPECIES DETECTION FROM PROTEIN NAME ===
 
-st.subheader("Species Assignment")
-species_keywords = {
-    "HUMAN": ["HUMAN", "HOMO", "HSA"],
-    "MOUSE": ["MOUSE", "MUS", "MMU"],
-    "RAT":   ["RAT", "RATTUS", "RNO"],
-    "ECOLI": ["ECOLI", "ESCHERICHIA"],
-    "YEAST": ["YEAST", "SACCHA", "CEREVISIAE"],
-    "BOVIN": ["BOVIN", "BOVINE", "BOS"],
-}
+# === AUTO-DETECT PROTEIN GROUP COLUMN ===
+pg_candidates = ["Leading razor protein", "Protein IDs", "Fasta headers", "Protein names"]
+auto_pg_col = next((c for c in pg_candidates if c in df.columns), df.columns[1])
 
-selected = st.multiselect(
-    "Which species are present?",
-    options=list(species_keywords.keys()),
-    default=["HUMAN", "ECOLI","YEAST"]
-)
-
-species_lookup = {}
-for sp in selected:
-    for kw in species_keywords[sp]:
-        species_lookup[kw] = sp
-
-def get_species(name):
-    if pd.isna(name):
-        return "Other"
-    name_up = str(name).upper()
-    for kw, sp in species_lookup.items():
-        if kw in name_up:
-            return sp
-    return "Other"
-
-df["Species"] = df["Name"].apply(get_species)
 # === USER COLUMN ASSIGNMENT ===
 st.subheader("Column Assignment")
-
-# Default selections
-default_seq = auto_seq_col or df.columns[0]
-pg_cols = [c for c in df.columns if any(x in c.lower() for x in ["protein", "pg.", "leading", "fasta"])]
-default_pg = pg_cols[0] if pg_cols else df.columns[1]
 
 rows = []
 for col in df.columns:
     preview = " | ".join(df[col].dropna().astype(str).unique()[:3])
     rows.append({
         "Rename": col,
-        "Peptide Sequence": col == default_seq,
-        "Protein Group": col == default_pg,
+        "Peptide Sequence": col == auto_seq_col,
+        "Protein Group": col == auto_pg_col,
         "Original Name": col,
         "Preview": preview,
         "Type": "Intensity" if col in all_intensity_cols else "Metadata"
@@ -215,17 +183,19 @@ df_final = df.rename(columns=rename_map).copy()
 df_final["Sequence"] = df_final[pep_seq_col]
 df_final["PG"] = df_final[pep_pg_col].astype(str).str.split(";").str[0]
 
-# Species from protein name
-species_keywords = {
-    "HUMAN": ["HUMAN", "HOMO"], "ECOLI": ["ECOLI"], "YEAST": ["YEAST", "SACCHA"]
+# Species from protein accession
+species_map = {
+    "HUMAN": "HUMAN", "ECOLI": "ECOLI", "YEAST": "YEAST",
+    "HOMO": "HUMAN", "SACCHA": "YEAST", "ESCHERICHIA": "ECOLI"
 }
 def get_species(pg):
     if pd.isna(pg): return "Other"
     pg_up = str(pg).upper()
-    for sp, kws in species_keywords.items():
-        if any(kw in pg_up for kw in kws):
+    for key, sp in species_map.items():
+        if key in pg_up:
             return sp
     return "Other"
+
 df_final["Species"] = df_final["PG"].apply(get_species)
 
 final_cols = ["Sequence", "PG", "Species"] + all_intensity_cols
