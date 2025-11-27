@@ -25,7 +25,7 @@ def load(file):
     df = pd.read_csv(file, sep=None, engine="python", header=0,index_col=0)
     return df
 
-df_prot=pd.DatFrame(load(uploaded_prot)
+data_df=pd.DatFrame(load(uploaded_prot)
                     {"widgets":["st.selectbox", "st.number_input", "st.text_area", "st.button"],
     }
 )
