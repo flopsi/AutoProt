@@ -151,4 +151,30 @@ elif filter_strategy == "Combined (low intensity → recalculate mean/std → ±
     mask = pd.Series(True, index=df.index)
     for rep in all_reps:
         mask &= (log10_full[rep] >= 0.5)
-    df_step
+    df_step1 = df[mask]
+    log10_step1 = log10_full.loc[mask]
+    
+    # Step 2: recalculate mean/std and apply ±2σ
+    mask = pd.Series(True, index=df_step1.index)
+    for rep in all_reps:
+        vals = log10_step1[rep].dropna()
+        if len(vals) == 0: continue
+        mean = vals.mean()
+        std = vals.std()
+        mask &= (log10_step1[rep] >= mean - 2*std) & (log10_step1[rep] <= mean + 2*std)
+    df_final = df_step1[mask]
+
+# Count table
+count_data = []
+for sp in ["All proteins", "HUMAN", "ECOLI", "YEAST"]:
+    base = len(df[df["Species"] == sp]) if sp != "All proteins" and "Species" in df.columns else len(df)
+    filtered = len(df_final[df_final["Species"] == sp]) if sp != "All proteins" and "Species" in df_final.columns else len(df_final)
+    count_data.append({"Species": sp, "Unfiltered": base, "After Final Filter": filtered})
+
+st.table(pd.DataFrame(count_data).set_index("Species"))
+
+# === 7. ACCEPT ===
+if st.button("Accept Final Filtering", type="primary"):
+    st.session_state.df_filtered = df_final
+    st.session_state.qc_accepted = True
+    st.success("**Final filtering accepted** — ready for transformation")
