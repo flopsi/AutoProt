@@ -20,10 +20,52 @@ all_reps = c1 + c2
 st.title("Protein-Level Exploratory Analysis")
 st.success(f"Analyzing {len(df):,} proteins • {len(c1)} vs {len(c2)} replicates")
 
-# === 1. 6 INDIVIDUAL DENSITY PLOTS (RAW) ===
-st.subheader("1. Individual Intensity Density Plots (Raw Data)")
+# === DETECT SPECIES ===
+species_list = ["HUMAN","MOUSE","RAT","ECOLI","BOVIN","YEAST","RABIT","CANFA","MACMU","PANTR"]
+def find_species_col(df):
+    pattern = "|".join(species_list)
+    for c in df.columns:
+        if c in all_reps: continue
+        if df[c].astype(str).str.upper().str.contains(pattern).any():
+            return c
+    return None
 
-raw_data = df[all_reps].replace(0, np.nan)
+sp_col = find_species_col(df)
+
+if sp_col and sp_col != "Not found":
+    df["Species"] = df[sp_col].astype(str).str.upper().apply(
+        lambda x: next((s for s in species_list if s in x), "Other")
+    )
+    detected_species = df["Species"].dropna().unique()
+else:
+    detected_species = ["HUMAN"]  # fallback
+    df["Species"] = "HUMAN"
+
+# === USER SELECTS CONSTANT SPECIES ===
+st.subheader("1. Select Constant (Reference) Species for QC")
+if len(detected_species) > 1:
+    constant_species = st.selectbox(
+        "Multiple species detected — which is the constant reference?",
+        options=sorted(detected_species),
+        index=0
+    )
+    st.info(f"KS test will be performed **only on {constant_species}** proteins")
+else:
+    constant_species = detected_species[0]
+    st.success(f"Only one species detected: **{constant_species}** — using as reference")
+
+# Filter to constant species
+df_const = df[df["Species"] == constant_species].copy()
+if len(df_const) == 0:
+    st.error(f"No proteins found for species {constant_species}")
+    st.stop()
+
+st.write(f"Using **{len(df_const):,}** {constant_species} proteins for distribution testing")
+
+# === 6 INDIVIDUAL DENSITY PLOTS (RAW) ===
+st.subheader("2. Individual Intensity Density Plots (Raw — Constant Species Only)")
+
+raw_data = df_const[all_reps].replace(0, np.nan)
 
 row1 = st.columns(3)
 row2 = st.columns(3)
@@ -47,13 +89,12 @@ for i, rep in enumerate(all_reps):
             title=f"<b>{rep}</b>",
             xaxis_title="Raw Intensity",
             yaxis_title="Density",
-            showlegend=False,
-            plot_bgcolor="white"
+            showlegend=False
         )
         st.plotly_chart(fig, use_container_width=True)
 
-# === 2. KS TEST ON RAW DATA + TEXT SUMMARY ONLY ===
-st.subheader("2. Distribution Similarity (Kolmogorov-Smirnov Test)")
+# === KS TEST ON CONSTANT SPECIES ONLY ===
+st.subheader("3. Distribution Similarity Test (KS) — Constant Species Only")
 
 significant_pairs = []
 for rep1, rep2 in combinations(all_reps, 2):
@@ -65,17 +106,16 @@ for rep1, rep2 in combinations(all_reps, 2):
             significant_pairs.append(f"{rep1} vs {rep2}")
 
 if significant_pairs:
-    st.error("**Warning: Significant distribution differences detected (p < 0.05):**  \n" + " • ".join(significant_pairs))
-    st.info("This is expected on raw intensities — we will now apply log₂ transformation (standard practice)")
+    st.error(f"**Significant differences detected** in {constant_species} distributions:\n" + " • ".join(significant_pairs))
+    st.info("This may indicate technical bias — check injection, digestion, or labeling")
 else:
-    st.success("**All replicates have statistically similar distributions** — excellent technical quality")
+    st.success(f"**All {constant_species} replicates have similar distributions** — excellent technical quality!")
 
-# === 3. LOG₂ TRANSFORMATION & STANDARD PLOTS ===
-st.markdown("### 3. Standard log₂ Transformation (Schessner et al., 2022)")
+# === LOG₂ TRANSFORMATION & FINAL PLOTS ===
+st.markdown("### 4. Standard log₂ Transformation")
+log_data = np.log2(df_const[all_reps])
 
-log_data = np.log2(raw_data)
-
-# Overlay histogram (Figure 4A)
+# Overlay histogram
 st.subheader("Overlay Histogram — log₂(Intensity)")
 fig_overlay = go.Figure()
 for rep in all_reps:
@@ -104,8 +144,7 @@ fig_violin.update_traces(box_visible=True, meanline_visible=True)
 fig_violin.update_layout(height=650)
 st.plotly_chart(fig_violin, use_container_width=True)
 
-st.success("**log₂ transformation applied — gold standard in proteomics**")
-st.info("Data ready for differential analysis, PCA, volcano plot, etc.")
+st.success("**log₂ transformation applied — ready for analysis**")
 
 if st.button("Go to Differential Analysis", type="primary", use_container_width=True):
     st.switch_page("pages/4_Differential_Analysis.py")
