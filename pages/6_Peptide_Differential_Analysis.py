@@ -9,9 +9,12 @@ from scipy.cluster.hierarchy import linkage, leaves_list
 from scipy.spatial.distance import pdist
 
 # Load peptide data
-if "pep_intensity_final" not in st.session_state or "pep_df_final" not in st.session_state:
+if "pep_intensity_final" not in st.session_state:
     st.error("No final peptide data found! Please complete Peptide Analysis first.")
     st.stop()
+
+intensity_final = st.session_state.pep_intensity_final
+df_final = st.session_state.pep_df_final
 
 intensity_final = st.session_state.pep_intensity_final.copy()
 df_final = st.session_state.pep_df_final.copy()
