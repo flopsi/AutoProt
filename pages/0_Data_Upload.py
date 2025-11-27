@@ -25,24 +25,6 @@ def load(file):
     df = pd.read_csv(file, sep=None, engine="python", header=0,index_col=0)
     return df
 
-data_df=load(uploaded_prot)
+df_prot=load(uploaded_prot)
+st.success(f"Loaded: {len(df_prot):,} features × {len(df.columns):,} columns")
 
-data_df=pd.DataFrame(
-                    {
-                        "widgets":["st.selectbox", "st.number_input", "st.text_area", "st.button"],
-                    }
-)
-
-st.data_editor(
-    data_df,
-    column_config={
-        "widgets": st.column_config.Column(
-            "Streamlit Widgets",
-            help="Streamlit **widget** commands 🎈",
-            width="medium",
-            required=True,
-        )
-    },
-    hide_index=True,
-    num_rows="dynamic",
-)
