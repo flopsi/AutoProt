@@ -14,7 +14,7 @@ c1 = st.session_state.prot_c1
 c2 = st.session_state.prot_c2
 all_reps = c1 + c2
 
-st.title("Differential Analysis & Data Summary (Schessner et al., 2022 Figure 5)")
+st.title("Differential Analysis & Data Summary")
 
 # === 5-ROW SNAPSHOT OF FINAL DATA ===
 st.subheader("Final Processed Data (5-row snapshot)")
