@@ -27,8 +27,8 @@ if "PG" in df_final.columns:
     display_df.index = df_final["PG"]
 st.dataframe(display_df.head(5).round(3), use_container_width=True)
 
-# === 1. CLUSTERMAP — EXACTLY LIKE SCHESSNER ET AL., 2022 FIGURE 5 ===
-st.subheader("Clustermap of Replicate Profiles (Z-score)")
+# === 1. CLUSTERMAP — POSITIVE VALUES ONLY, INDEXED BY PG (Schessner et al., 2022 Figure 5) ===
+st.subheader("Clustermap of Replicate Profiles (Z-score across samples)")
 
 from sklearn.preprocessing import StandardScaler
 from scipy.cluster.hierarchy import linkage, leaves_list
@@ -38,50 +38,53 @@ from scipy.spatial.distance import pdist
 data = intensity_final[all_reps].copy()
 data = data.dropna()
 
-# Z-score across proteins
+# Z-score across samples (columns) — this gives positive + negative
 z_data = pd.DataFrame(
-    StandardScaler().fit_transform(data),
+    StandardScaler().fit_transform(data.T).T,  # ← transpose → standardize across samples
     index=data.index,
     columns=data.columns
 )
 
+# Convert negative values to positive (Schessner et al. style)
+z_positive = z_data.abs()  # or z_data + z_data.min() + 1 if you want to preserve scale
+
 # Cluster columns (samples)
-col_dist = pdist(z_data.T, metric='euclidean')
+col_dist = pdist(z_positive.T, metric='euclidean')
 col_linkage = linkage(col_dist, method='average')
 col_order = leaves_list(col_linkage)
 
 # Cluster rows (proteins)
-row_dist = pdist(z_data, metric='euclidean')
+row_dist = pdist(z_positive, metric='euclidean')
 row_linkage = linkage(row_dist, method='average')
 row_order = leaves_list(row_linkage)
 
 # Reorder
-z_ordered = z_data.iloc[row_order, col_order]
-ordered_samples = z_data.columns[col_order]
+z_ordered = z_positive.iloc[row_order, col_order]
+ordered_samples = z_positive.columns[col_order]
+ordered_pg = df_final.loc[z_positive.index[row_order], "PG"].astype(str).tolist()
 
 # Plot
 fig = go.Figure(data=go.Heatmap(
     z=z_ordered.values,
     x=ordered_samples,
-    y=[f"Protein {i}" for i in range(len(z_ordered))],
-    colorscale="RdBu_r",
-    zmid=0,
+    y=ordered_pg,
+    colorscale="Reds",
+    zmin=0,
+    zmax=z_ordered.values.max(),
     showscale=True,
     hoverongaps=False
 ))
 
 fig.update_layout(
-    title="Clustermap (Z-score across proteins, hierarchical clustering)",
+    title="Clustermap (Z-score across samples, positive values only)",
     height=800,
-    width=1000,
     xaxis_title="Samples",
-    yaxis_title="Proteins",
+    yaxis_title="Protein Group ID",
     template="simple_white",
-    margin=dict(l=50, r=50, t=80, b=50)
+    margin=dict(l=100, r=50, t=80, b=50)
 )
 
 st.plotly_chart(fig, use_container_width=True)
-
 # === 2. INTENSITY DISTRIBUTION — EXACTLY LIKE SCHESSNER ET AL., 2022 FIGURE 5A ===
 st.subheader("Intensity Distribution (log₂ transformed)")
 
