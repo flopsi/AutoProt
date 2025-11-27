@@ -8,7 +8,7 @@ proteomes = st_tags(label="#Type the proteomes in your sample:",
                     text = "Press enter to add more",
                     value = ["HUMAN","YEAST","ECOLI","RAT"],
                     suggestions = ["TEST"],
-                    maxtags=maxtags,
+                    maxtags=5,
                     key="proteomes")
                     
 st.set_page_config(page_title="Import", layout="wide")
