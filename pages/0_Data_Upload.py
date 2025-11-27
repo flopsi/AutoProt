@@ -21,7 +21,7 @@ if not uploaded_prot:
 
 @st.cache_data  # 👈 Add the caching decorator
 def load_prot(file):
-    df = pd.read_csv(file, sep=None, engine="pythong")
+    df = pd.read_csv(file, sep=None, engine="python")
     return df
 
 df_prot=load_prot(uploaded_prot)
