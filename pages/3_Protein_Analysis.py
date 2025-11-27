@@ -26,7 +26,7 @@ all_reps = c1 + c2
 
 
 # === 1. LOW INTENSITY FILTER FOR PLOTS ONLY (NOW 100% WORKING) ===
-st.subheader("Plot Filter (Visual QC Only)")
+st.subheader("Visual Exploratory Data Anaylsis")
 remove_low_plot = st.checkbox(
     "Remove proteins with log₁₀ intensity < 0.5 in ALL replicates (plots only)",
     value=False
@@ -66,7 +66,7 @@ if "log10_plot_cache" not in st.session_state or st.session_state.get("last_plot
     st.session_state.last_plot_df_hash = hash(df_plot.to_string())  # prevent re-caching
 
 selected_species = st.radio(
-    "Show in plots:",
+    "Plot:",
     options=["All proteins"] + (["HUMAN", "ECOLI", "YEAST"] if "Species" in df.columns else []),
     index=0,
     horizontal=True
