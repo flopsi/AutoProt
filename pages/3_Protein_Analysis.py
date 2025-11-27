@@ -33,7 +33,7 @@ else:
         st.stop()
     df_plot = df[df["Species"] == view_species].copy()
 
-# === 2. 6 LOG10 DENSITY PLOTS WITH ±2σ WHITE SHADOW ===
+# === 2. 6 LOG10 DENSITY PLOTS + TABLE BELOW EACH ===
 st.subheader("2. Intensity Density Plots (log₁₀)")
 
 raw_plot = df_plot[all_reps].replace(0, np.nan)
@@ -49,6 +49,7 @@ for i, rep in enumerate(all_reps):
         lower = mean - 2*std
         upper = mean + 2*std
 
+        # Plot
         fig = go.Figure()
         fig.add_trace(go.Histogram(
             x=vals,
@@ -58,7 +59,6 @@ for i, rep in enumerate(all_reps):
             marker_color="#E71316" if rep in c1 else "#1f77b4",
             opacity=0.75
         ))
-        # WHITE ±2σ SHADOW
         fig.add_vrect(x0=lower, x1=upper, fillcolor="white", opacity=0.35, line_width=2)
         fig.add_vline(x=mean, line_dash="dash", line_color="black")
         fig.update_layout(
@@ -69,6 +69,31 @@ for i, rep in enumerate(all_reps):
             showlegend=False
         )
         st.plotly_chart(fig, use_container_width=True)
+
+        # === 4×3 TABLE BELOW EACH PLOT ===
+        table_data = []
+        for sp in ["All proteins", "HUMAN", "ECOLI", "YEAST"]:
+            if sp == "All proteins":
+                subset = df
+            else:
+                subset = df[df["Species"] == sp] if "Species" in df.columns else pd.DataFrame()
+            
+            if len(subset) == 0:
+                table_data.append({"Species": sp, "Mean": "—", "Variance": "—", "Std Dev": "—"})
+                continue
+            
+            rep_vals = np.log10(subset[rep].replace(0, np.nan).dropna())
+            if len(rep_vals) == 0:
+                table_data.append({"Species": sp, "Mean": "—", "Variance": "—", "Std Dev": "—"})
+            else:
+                table_data.append({
+                    "Species": sp,
+                    "Mean": f"{rep_vals.mean():.3f}",
+                    "Variance": f"{rep_vals.var():.3f}",
+                    "Std Dev": f"{rep_vals.std():.3f}"
+                })
+        
+        st.table(pd.DataFrame(table_data).set_index("Species"))
 
 # === 3. FILTERING OPTIONS — TWO COLUMNS ===
 st.subheader("3. Filtering Options (Choose One)")
@@ -116,7 +141,6 @@ elif stdev_filter:
                        (np.log10(df[rep].replace(0, np.nan)) <= upper)
             mask |= rep_mask
     else:
-        # Per species
         species_sigma = {}
         for sp in df["Species"].dropna().unique():
             sp_data = df[df["Species"] == sp][all_reps].replace(0, np.nan)
