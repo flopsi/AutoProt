@@ -169,94 +169,59 @@ if "Species" in df_processed.columns:
         count_data.append({"Species": sp, "Proteins": df_processed["Species"].value_counts()[sp]})
 st.table(pd.DataFrame(count_data))
 
-# === 5. PCA ON FINAL PROCESSED DATA (Schessner et al., 2022 Figure 4) ===
-st.subheader("PCA on Final Processed Data (Mean Intensity per Replicate)")
+# === 5. PCA ON FINAL PROCESSED DATA — EXACTLY LIKE SCHESSNER ET AL., 2022 FIGURE 4 ===
+st.subheader("PCA on Final Processed Data (Schessner et al., 2022 Figure 4)")
 
-# Compute mean intensity per replicate
-mean_intensities = []
-rep_labels = []
-rep_colors = []
+# Use the final processed data (after transformation + filtering)
+df_pca = df_processed[all_reps].copy()
 
-for rep in all_reps:
-    # Use the final processed data (after transformation + filtering)
-    vals = df_processed[rep].replace(0, np.nan).dropna()
-    if len(vals) == 0:
-        continue
-    mean_intensities.append(vals.mean())
-    rep_labels.append(rep)
-    rep_colors.append("#E71316" if rep in c1 else "#1f77b4")
+# Remove proteins with missing values in any replicate
+df_pca = df_pca.dropna(how='any')
 
-# Convert to array: shape (n_replicates, 1)
-X = np.array(mean_intensities).reshape(-1, 1)
-
-if len(X) < 2:
-    st.write("Not enough replicates for PCA")
+if len(df_pca) < 10:
+    st.error("Not enough proteins after filtering for reliable PCA")
 else:
-    # Standardize and perform PCA
-    X_scaled = StandardScaler().fit_transform(X)
+    # Impute any remaining missing values with median (rare)
+    df_pca = df_pca.fillna(df_pca.median())
+
+    # Standardize across proteins
+    X = StandardScaler().fit_transform(df_pca.values)  # shape: (n_proteins, n_replicates)
+
+    # PCA: samples = replicates → transpose
     pca = PCA(n_components=2)
-    pc = pca.fit_transform(X_scaled)
+    pc_scores = pca.fit_transform(X.T)  # shape: (6, 2) — one row per replicate
 
-# === 5. PCA ON FINAL PROCESSED DATA (Schessner et al., 2022 Figure 4) ===
-st.subheader("PCA on Final Processed Data (Mean Intensity per Replicate)")
-
-# Compute mean intensity per replicate
-mean_intensities = []
-rep_labels = []
-rep_colors = []
-
-for rep in all_reps:
-    vals = df_processed[rep].replace(0, np.nan).dropna()
-    if len(vals) == 0:
-        st.warning(f"No valid values in replicate: {rep}")
-        continue
-    mean_intensities.append(vals.mean())
-    rep_labels.append(rep)
-    rep_colors.append("#E71316" if rep in c1 else "#1f77b4")
-
-if len(mean_intensities) < 2:
-    st.error("Not enough valid replicates for PCA (need at least 2)")
-else:
-    # Create dummy 2D data: [mean_intensity, 0] — forces 2D space
-    X = np.array([[val, 0] for val in mean_intensities])  # shape: (n_replicates, 2)
-
-    # Standardize
-    X_scaled = StandardScaler().fit_transform(X)
-
-    # PCA (now safe: n_features = 2, n_samples >= 2)
-    pca = PCA(n_components=2)
-    pc = pca.fit_transform(X_scaled)
-
-    # Plot
+    # Create plot
     fig = go.Figure()
 
-    for i, label in enumerate(rep_labels):
+    for i, rep in enumerate(all_reps):
+        color = "#E71316" if rep in c1 else "#1f77b4"
         fig.add_trace(go.Scatter(
-            x=[pc[i, 0]],
-            y=[pc[i, 1]],
+            x=[pc_scores[i, 0]],
+            y=[pc_scores[i, 1]],
             mode='markers+text',
-            name=label,
+            name=rep,
             marker=dict(
-                color=rep_colors[i],
-                size=18,
+                color=color,
+                size=20,
                 line=dict(width=3, color='black')
             ),
-            text=label,
+            text=rep,
             textposition="top center",
-            textfont=dict(size=14, color="black", family="Arial Black")
+            textfont=dict(size=14, family="Arial Black", color="black")
         ))
 
     fig.update_layout(
-        title="PCA of Replicate Mean Intensities<br>"
-              f"<sub>PC1: {pca.explained_variance_ratio_[0]:.1%} • PC2: {pca.explained_variance_ratio_[1]:.1%}</sub>",
+        title="PCA of Replicate Profiles<br>"
+              f"<sub>PC1: {pca.explained_variance_ratio_[0]:.1%} • PC2: {pca.explained_variance_ratio_[1]:.1%} variance explained</sub>",
         xaxis_title=f"PC1 ({pca.explained_variance_ratio_[0]:.1%} variance)",
         yaxis_title=f"PC2 ({pca.explained_variance_ratio_[1]:.1%} variance)",
         height=600,
         showlegend=False,
         template="simple_white",
         plot_bgcolor="white",
-        xaxis=dict(showgrid=True, gridcolor='lightgray', zeroline=True, zerolinecolor='black'),
-        yaxis=dict(showgrid=True, gridcolor='lightgray', zeroline=True, zerolinecolor='black')
+        xaxis=dict(showgrid=True, gridcolor='lightgray', zeroline=True, zerolinecolor='gray'),
+        yaxis=dict(showgrid=True, gridcolor='lightgray', zeroline=True, zerolinecolor='gray')
     )
 
     st.plotly_chart(fig, use_container_width=True)
