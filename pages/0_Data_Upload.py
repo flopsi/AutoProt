@@ -2,7 +2,14 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+from streamlit_tags import st_tags, st_tags_sidebar
 
+proteomes = st.tags(label="#Type the proteomes in your sample:",
+                    text = "Press enter to add more",
+                    value = ["HUMAN","YEAST","ECOLI","RAT"],
+                    maxtags=maxtags,
+                    key="proteomes")
+                    
 st.set_page_config(page_title="Import", layout="wide")
 st.title("Proteomics Data Import — Professional Mode (Schessner et al., 2022)")
 
@@ -27,4 +34,4 @@ def load(file):
 
 df_prot=load(uploaded_prot)
 st.success(f"Loaded: {len(df_prot):,} features × {len(df_prot.columns):,} columns")
-
+st.write(proteomes)
