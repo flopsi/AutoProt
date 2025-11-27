@@ -17,6 +17,18 @@ all_reps = c1 + c2
 st.title("Differential Analysis & Data Summary")
 
 # === 5-ROW SNAPSHOT OF FINAL DATA ===
+# === 5-ROW SNAPSHOT — INDEXED BY PROTEIN GROUP (Schessner et al., 2022) ===
+st.subheader("Final Processed Data (5-row snapshot)")
+
+# Ensure PG is the index
+display_df = intensity_final.copy()
+if "PG" in df_final.columns:
+    display_df.index = df_final["PG"]
+
+# Show only intensity columns, indexed by PG
+st.write("**Index:** Protein Group ID | **Transformation:** log₂ | **Filtering:** Applied")
+st.dataframe(display_df.head(5).round(3), use_container_width=True)
+
 st.subheader("Final Processed Data (5-row snapshot)")
 st.write("**Index:** Protein Group ID | **Transformation:** log₂ | **Filtering:** Applied")
 st.dataframe(intensity_final.head(5).round(3), use_container_width=True)
