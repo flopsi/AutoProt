@@ -85,7 +85,7 @@ for i, rep in enumerate(all_reps):
             
             table_data.append({
                 "Species": sp,
-                "Mean": meaned mean_str,
+                "Mean": mean_str,
                 "Variance": variance_str,
                 "Std Dev": std_str
             })
