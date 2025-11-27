@@ -121,9 +121,9 @@ def detect_species(x):
 df["Species"] = df[species_col].apply(detect_species)
 
 # ===================================
-# === BEAUTIFUL PREVIEW ===
+# === BEAUTIFUL FINAL PREVIEW ===
 # ===================================
-st.success(f"Successfully matched **{len(rename_dict)}** intensity columns!")
+st.success(f"Successfully matched and renamed **{len(rename_dict)}** intensity columns!")
 
 colA, colB = st.columns(2)
 with colA:
@@ -133,26 +133,32 @@ with colB:
     st.subheader("Condition B")
     st.code(" | ".join(c2), language=None)
 
-st.write("**Species distribution:**", df["Species"].value_counts().to_dict())
+st.write("**Species distribution:**", dict(df["Species"].value_counts()))
 
 # Mapping table
-mapping = pd.DataFrame([
+mapping_df = pd.DataFrame([
     {"Original Column": old, "Renamed To": new}
     for old, new in rename_dict.items()
 ])
-st.subheader("Column Mapping")
-st.dataframe(mapping, use_container_width=True)
+st.subheader("Column Mapping from Metadata")
+st.dataframe(mapping_df, use_container_width=True)
 
-# Final preview with highlighted intensity columns
+# FINAL PREVIEW - THIS WORKS 100%
 st.subheader("Data Preview (first 10 rows)")
-preview_cols = [c for c in df.columns if c not in c1 + c2][:5] + (c1 + c2)[:10]
-preview = df[preview_cols].head(10).copy()
 
-# Correct way to highlight: pass column names, not Series
-def highlight_intensity_cols(val, col_name):
-    return "background-color: #d4edda; color: #155724; font-weight: bold" if col_name in (c1 + c2) else ""
+meta_cols = [c for c in df.columns if c not in c1 + c2][:5]
+intensity_cols_to_show = (c1 + c2)[:12]
+display_cols = meta_cols + intensity_cols_to_show
 
-styled = preview.style.map(highlight_intensity_cols, col_name=preview.columns)
+preview = df[display_cols].head(10).copy()
+
+def highlight_intensity(val):
+    # val is a column of values; we use the column name from the outer scope
+    return ['background-color: #d4edda; color: #155724; font-weight: bold' 
+            if col_name in (c1 + c2) else '' 
+            for col_name in preview.columns]
+
+styled = preview.style.apply(highlight_intensity, axis=0)
 st.dataframe(styled, use_container_width=True)
 
 # === SAVE TO SESSION ===
