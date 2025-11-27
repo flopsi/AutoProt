@@ -49,7 +49,7 @@ if "log10_plot_cache" not in st.session_state or st.session_state.get("last_plot
     st.session_state.last_plot_filter = remove_low_plot
 
 # === 3. SPECIES SELECTION FOR PLOTS ===
-st.subheader("Select Species for Plots")
+#st.subheader("Select Species for Plots")
 selected_species = st.radio(
     "Show in plots:",
     ["All proteins", "HUMAN", "ECOLI", "YEAST"],
@@ -60,7 +60,7 @@ selected_species = st.radio(
 current_data = st.session_state.log10_plot_cache[selected_species]
 
 # === 4. 6 LOG10 DENSITY PLOTS + TABLE UNDER EACH ===
-st.subheader("Intensity Density Plots (log₁₀)")
+#st.subheader("Intensity Density Plots (log₁₀)")
 
 row1, row2 = st.columns(3), st.columns(3)
 for i, rep in enumerate(all_reps):
