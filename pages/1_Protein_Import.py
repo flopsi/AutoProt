@@ -80,21 +80,25 @@ if len(a_cols) != len(b_cols) or len(a_cols) == 0:
     st.error("Must have equal replicates")
     st.stop()
 
+# === RENAME REPLICATES ===
 n = len(a_cols)
-df = df_raw.rename(columns={a_cols[i]: f"A{i+1}" for i in range(n)} | {b_cols[i]: f"B{i+1}" for i in range(n)}).copy()
+rename_map = {a_cols[i]: f"A{i+1}" for i in range(n)}
+rename_map.update({b_cols[i]: f"B{i+1}" for i in range(n)})
+df = df_raw.rename(columns=rename_map).copy()
+
 c1 = [f"A{i+1}" for i in range(n)]
 c2 = [f"B{i+1}" for i in range(n)]
 
 st.success(f"Renamed → A: {', '.join(c1)} | B: {', '.join(c2)}")
 
-df = df_raw.rename(columns=rename_map).copy()
-
-# THIS LINE REPLACES 0 AND NaN WITH 1.0 — CRITICAL
+# === CRITICAL: REPLACE 0 AND NaN WITH 1.0 ===
 intensity_cols = c1 + c2
 df[intensity_cols] = df[intensity_cols].replace([0, np.nan], 1.0)
 
-# Save final
+# === SAVE FINAL DATA ===
 st.session_state.prot_final_df = df
+st.session_state.prot_final_c1 = c1
+st.session_state.prot_final_c2 = c2
 
 # === USER SELECTS SPECIES COLUMN ===
 st.markdown("### Select Species Column")
