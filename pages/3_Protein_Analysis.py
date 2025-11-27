@@ -96,8 +96,8 @@ with col2:
     st.markdown("**StDev-based Filtering**")
     stdev_filter = st.checkbox("Enable ±σ filter", key="stdev_cb")
     if stdev_scope := None:
-    if stdev_filter:
-        stdev_scope = st.radio("Apply ±σ:", ["Global", "Per species"], index=1)
+        if stdev_filter:
+            stdev_scope = st.radio("Apply ±σ:", ["Global", "Per species"], index=1)
 
 # Prevent both active
 if intensity_filter and stdev_filter:
