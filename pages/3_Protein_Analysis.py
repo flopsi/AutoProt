@@ -5,7 +5,6 @@ import numpy as np
 import plotly.graph_objects as go
 
 # Load data
-if "prot_final_df" must exist
 if "prot_final_df" not in st.session_state:
     st.error("No protein data found! Please go to Protein Import first.")
     st.stop()
@@ -19,9 +18,9 @@ st.title("Protein-Level QC & Species-Specific Visualization")
 
 # === PRE-CALCULATE LOG10 DATA ===
 if "log10_cache" not in st.session_state:
-    raw = df[all_reps].replace(replace(0, np.nan))
+    raw = df[all_reps].replace(0, np.nan)
     log10_all = np.log10(raw)
-
+    
     cache = {"All proteins": log10_all}
     if "Species" in df.columns:
         for sp in ["HUMAN", "ECOLI", "YEAST"]:
@@ -31,7 +30,7 @@ if "log10_cache" not in st.session_state:
     st.session_state.log10_cache = cache
     st.session_state.species_options = ["All proteins", "HUMAN", "ECOLI", "YEAST"]
 
-# Default selection
+# Default
 if "selected_species" not in st.session_state:
     st.session_state.selected_species = "All proteins"
 
@@ -94,14 +93,14 @@ for i, rep in enumerate(all_reps):
 
         df_table = pd.DataFrame(table_data)
 
-        # Only top-left plot gets radio buttons in column 0
+        # Only top-left plot has radio buttons in column 0
         if i == 0:
             selected = st.radio(
                 "Select species to display",
                 options=st.session_state.species_options,
                 index=st.session_state.species_options.index(st.session_state.selected_species),
                 format_func=lambda x: x,
-                key="species_selector"
+                key="species_radio"
             )
             if selected != st.session_state.selected_species:
                 st.session_state.selected_species = selected
