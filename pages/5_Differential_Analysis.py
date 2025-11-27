@@ -7,6 +7,21 @@ import plotly.express as px
 from scipy.cluster.hierarchy import linkage, leaves_list
 from scipy.spatial.distance import pdist
 # Load final data
+import pandas.api.types as pdtypes
+
+from plotnine import (
+    ggplot,
+    aes,
+    stage,
+    geom_violin,
+    geom_point,
+    geom_line,
+    geom_boxplot,
+    guides,
+    scale_fill_manual,
+    theme,
+    theme_classic,
+)
 if "intensity_final" not in st.session_state or "df_final" not in st.session_state:
     st.error("No final processed data found! Please complete Protein Analysis first.")
     st.stop()
