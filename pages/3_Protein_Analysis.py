@@ -18,7 +18,7 @@ c1 = st.session_state.prot_c1.copy()
 c2 = st.session_state.prot_c2.copy()
 all_reps = c1 + c2
 
-st.title("Protein-Level QC (Schessner et al., 2022 Figure 4)")
+st.title("Protein-Level QC")
 
 # === 1. NORMALITY TESTING & RECOMMENDED TRANSFORMATION ===
 st.subheader("1. Normality Testing & Recommended Transformation")
