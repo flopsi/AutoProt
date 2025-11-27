@@ -193,9 +193,10 @@ fig.update_layout(height=600, barmode='stack', template="simple_white")
 st.plotly_chart(fig, use_container_width=True)
 
 # === 5-ROW SNAPSHOT BELOW THE PLOT ===
-st.markdown("### Final Processed Data (5-row snapshot)")
-st.write("**Transformation:** log₂ | **Filtering:** Applied | **Used for differential analysis**")
+st.subheader("Final Processed Data (5-row snapshot)")
+st.write("**Index:** Protein Group ID | **Transformation:** log₂ | **Filtering:** Applied")
 st.dataframe(intensity_final.head(5).round(3), use_container_width=True)
+
 
 # === FINAL ACCEPT ===
 if st.button("Complete Analysis & Export Results", type="primary"):
