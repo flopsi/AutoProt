@@ -180,55 +180,90 @@ for sp in species_list:
 
 st.table(pd.DataFrame(count_data).set_index("Species"))
 
-# === REPLICATE DIFFERENCE TESTING (ON FINAL FILTERED DATA) ===
-st.subheader("Replicate Difference Testing (Kolmogorov–Smirnov Test)")
+# === REPLICATE DIFFERENCE TESTING — WITHIN EACH CONDITION (Schessner et al., 2022 Figure 4B) ===
+st.subheader("Replicate Difference Testing — Within Each Condition")
 
 test_mode = st.radio(
-    "Test using:",
-    ["All proteins", "Constant proteome only"],
+    "Compare replicates using:",
+    ["All proteins in condition", "Constant proteome only"],
     index=1,
-    key="ks_test_mode_radio"
+    key="ks_within_condition_mode"
 )
 
 if test_mode == "Constant proteome only":
     if "Species" not in df_final.columns:
-        st.error("Species column missing in filtered data")
+        st.error("Species column missing")
         st.stop()
     constant_species = st.selectbox(
         "Select constant proteome (reference)",
         options=["HUMAN", "ECOLI", "YEAST"],
         index=0,
-        key="constant_species_select"
+        key="constant_species_ks"
     )
-    reference_df = df_final[df_final["Species"] == constant_species]
+    ref_A = df_final[(df_final["Species"] == constant_species)]
+    ref_B = ref_A.copy()
     ref_label = constant_species
 else:
-    reference_df = df_final
+    ref_A = df_final[df_final.index.isin(df.index)]  # all in condition A
+    ref_B = ref_A.copy()
     ref_label = "All proteins"
 
-# KS test on final filtered data
+# KS test: pairwise within condition A and within condition B
 ks_results = []
-for rep in all_reps:
-    ref_vals = np.log10(reference_df[rep].replace(0, np.nan).dropna())
-    rep_vals = np.log10(df_final[rep].replace(0, np.nan).dropna())
-    
-    if len(ref_vals) < 10 or len(rep_vals) < 10:
+
+# Condition A replicates
+for i, rep1 in enumerate(c1):
+    for j in range(i+1, len(c1)):
+        rep2 = c1[j]
+        
+        if test_mode == "Constant proteome only":
+            ref_vals = np.log10(ref_A[rep1].replace(0, np.nan).dropna())
+            test_vals = np.log10(ref_A[rep2].replace(0, np.nan).dropna())
+        else:
+            ref_vals = np.log10(df_final[rep1].replace(0, np.nan).dropna())
+            test_vals = np.log10(df_final[rep2].replace(0, np.nan).dropna())
+        
+        if len(ref_vals) < 10 or len(test_vals) < 10:
+            ks_results.append({"Condition": "A", "Rep1": rep1, "Rep2": rep2, "vs": ref_label, "p-value": "—", "Different?": "—"})
+            continue
+        
+        _, p = stats.ks_2samp(ref_vals, test_vals)
+        different = "Yes" if p < 0.05 else "No"
         ks_results.append({
-            "Replicate": rep,
+            "Condition": "A",
+            "Rep1": rep1,
+            "Rep2": rep2,
             "vs": ref_label,
-            "p-value": "—",
-            "Different?": "—"
+            "p-value": f"{p:.2e}",
+            "Different?": different
         })
-        continue
-    
-    _, p = stats.ks_2samp(ref_vals, rep_vals)
-    different = "Yes" if p < 0.05 else "No"
-    ks_results.append({
-        "Replicate": rep,
-        "vs": ref_label,
-        "p-value": f"{p:.2e}",
-        "Different?": different
-    })
+
+# Condition B replicates
+for i, rep1 in enumerate(c2):
+    for j in range(i+1, len(c2)):
+        rep2 = c2[j]
+        
+        if test_mode == "Constant proteome only":
+            ref_vals = np.log10(ref_B[rep1].replace(0, np.nan).dropna())
+            test_vals = np.log10(ref_B[rep2].replace(0, np.nan).dropna())
+        else:
+            ref_vals = np.log10(df_final[rep1].replace(0, np.nan).dropna())
+            test_vals = np.log10(df_final[rep2].replace(0, np.nan).dropna())
+        
+        if len(ref_vals) < 10 or len(test_vals) < 10:
+            ks_results.append({"Condition": "B", "Rep1": rep1, "Rep2": rep2, "vs": ref_label, "p-value": "—", "Different?": "—"})
+            continue
+        
+        _, p = stats.ks_2samp(ref_vals, test_vals)
+        different = "Yes" if p < 0.05 else "No"
+        ks_results.append({
+            "Condition": "B",
+            "Rep1": rep1,
+            "Rep2": rep2,
+            "vs": ref_label,
+            "p-value": f"{p:.2e}",
+            "Different?": different
+        })
 
 ks_df = pd.DataFrame(ks_results)
 st.table(ks_df.style.apply(
@@ -237,12 +272,11 @@ st.table(ks_df.style.apply(
 ))
 
 if any(r["Different?"] == "Yes" for r in ks_results if r["Different?"] != "—"):
-    st.error("Significant differences detected — check technical bias")
+    st.error("**Significant differences within condition** — check technical reproducibility")
 else:
-    st.success("Excellent technical reproducibility — all replicates similar")
+    st.success("**Excellent within-condition reproducibility** — all replicates similar")
 
-st.info("Kolmogorov–Smirnov test — Schessner et al., 2022, Figure 4B")
-# === ACCEPT FILTERING ===
+st.info("**Kolmogorov–Smirnov test within each condition** — Schessner et al., 2022, Figure 4B")
 if st.button("Accept Final Filtering & Proceed", type="primary"):
     st.session_state.df_filtered = df_final
     st.session_state.qc_accepted = True
