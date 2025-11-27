@@ -5,30 +5,32 @@ import numpy as np
 import plotly.graph_objects as go
 from scipy import stats
 
-
-
-# === SAFETY CHECK: MUST HAVE PROTEIN DATA ===
+# === SAFETY CHECK ===
 required_keys = ["prot_df", "prot_c1", "prot_c2"]
 missing = [k for k in required_keys if k not in st.session_state]
-
 if missing or st.session_state.prot_df is None or len(st.session_state.prot_df) == 0:
     st.error("No protein data found! Please complete **Protein Import** first.")
     if st.button("Go to Protein Import"):
         st.switch_page("pages/1_Protein_Import.py")
     st.stop()
 
-# === DATA IS SAFE — LOAD IT ===
+# === LOAD DATA ===
 df = st.session_state.prot_df
 c1 = st.session_state.prot_c1
 c2 = st.session_state.prot_c2
 
-st.success(f"Loaded **{len(df):,}** proteins | Condition A: **{len(c1)}** reps | Condition B: **{len(c2)}** reps")
+# === DEFINE ALL_REPS AND CONDITIONS (THIS WAS MISSING!) ===
+all_reps = c1 + c2
+condition_a_name = "Condition A"
+condition_b_name = "Condition B"
 
-# === Rest of your analysis code below ===
-st.header("Protein Analysis")
-# ... volcano plot, stats, etc.
+st.success(f"Loaded **{len(df):,}** proteins | {condition_a_name}: **{len(c1)}** reps | {condition_b_name}: **{len(c2)}** reps")
 
-# === Schessner et al., 2022 ===")
+# Optional: make it more flexible if you ever have >2 conditions
+conditions = {
+    condition_a_name: c1,
+    condition_b_name: c2
+}
 
 # === 1. LOW INTENSITY FILTER FOR PLOTS ONLY ===
 st.subheader("Plot Filter (Visual QC Only)")
