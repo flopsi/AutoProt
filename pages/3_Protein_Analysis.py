@@ -15,11 +15,23 @@ c2 = st.session_state.prot_final_c2
 all_reps = c1 + c2
 
 st.title("Protein-Level QC & Advanced Filtering")
-# === 2. 6 LOG10 DENSITY PLOTS + TABLE BELOW EACH ===
-st.subheader("2. Intensity Density Plots (log₁₀)")
-# === 3. FILTERING OPTIONS — TWO COLUMNS ===
 
+# === 1. VIEW MODE ===
+st.subheader("1. Select View Mode")
+view_species = st.selectbox(
+    "Show density plots for:",
+    ["All proteins", "HUMAN", "ECOLI", "YEAST"],
+    index=0
+)
 
+# Prepare data for selected view
+if view_species == "All proteins":
+    df_plot = df.copy()
+else:
+    if "Species" not in df.columns:
+        st.error("Species column missing")
+        st.stop()
+    df_plot = df[df["Species"] == view_species].copy()
 
 # === 2. 6 LOG10 DENSITY PLOTS + TABLE BELOW EACH ===
 st.subheader("2. Intensity Density Plots (log₁₀)")
