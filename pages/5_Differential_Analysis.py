@@ -106,46 +106,66 @@ fig.update_layout(
 )
 st.plotly_chart(fig, use_container_width=True)
 
-# === 3. CVs — VIOLIN PLOTS WITH MEAN & MEDIAN ===
+# === 3. CVs — CALCULATED ON RAW INTENSITIES (Schessner et al., 2022) ===
 st.subheader("Technical Reproducibility (CV within Conditions)")
 
+# Get raw intensities for filtered proteins only
+raw_filtered = st.session_state.raw_intensities.loc[df_final.index]  # ← raw values, filtered
+
 cv_data = []
-for reps, name in [(c1, "Condition A"), (c2, "Condition B")]:
-    if len(reps) >= 2:
-        cv_per_protein = intensity_final[reps].std(axis=1) / intensity_final[reps].mean(axis=1) * 100
-        cv_per_protein = cv_per_protein.dropna()
-        mean_cv = cv_per_protein.mean()
-        median_cv = cv_per_protein.median()
-        st.metric(f"**{name}** — Mean CV", f"{mean_cv:.1f}%")
-        st.metric(f"**{name}** — Median CV", f"{median_cv:.1f}%")
-        cv_data.extend([{"Condition": name, "CV (%)": cv} for cv in cv_per_protein])
+mean_cvs = {}
+median_cvs = {}
 
-cv_df = pd.DataFrame(cv_data)
+for condition, reps in [("Condition A", c1), ("Condition B", c2)]:
+    if len(reps) < 2: 
+        st.warning(f"{condition} has <2 replicates — CV skipped")
+        continue
+    
+    # Use raw intensities (not log-transformed)
+    raw_vals = raw_filtered[reps]
+    cv_per_protein = raw_vals.std(axis=1) / raw_vals.mean(axis=1) * 100
+    cv_per_protein = cv_per_protein.dropna()
+    
+    mean_cv = cv_per_protein.mean()
+    median_cv = cv_per_protein.median()
+    
+    mean_cvs[condition] = mean_cv
+    median_cvs[condition] = median_cv
+    
+    cv_data.extend([{"Condition": condition, "CV (%)": cv} for cv in cv_per_protein])
 
-fig = go.Figure()
+# Display mean/median
+col1, col2 = st.columns(2)
+with col1:
+    st.metric("**Condition A — Mean CV**", f"{mean_cvs.get('Condition A', 'N/A'):.1f}%")
+    st.metric("**Condition A — Median CV**", f"{median_cvs.get('Condition A', 'N/A'):.1f}%")
+with col2:
+    st.metric("**Condition B — Mean CV**", f"{mean_cvs.get('Condition B', 'N/A'):.1f}%")
+    st.metric("**Condition B — Median CV**", f"{median_cvs.get('Condition B', 'N/A'):.1f}%")
 
-for condition, color in [("Condition A", "#E71316"), ("Condition B", "#1f77b4")]:
-    subset = cv_df[cv_df["Condition"] == condition]
-    fig.add_trace(go.Violin(
-        y=subset["CV (%)"],
-        name=condition,
-        line_color=color,
-        meanline_visible=True,
-        box=dict(visible=True, width=0.3),
-        points=False,
+# Violin plot
+if cv_data:
+    cv_df = pd.DataFrame(cv_data)
+    fig = go.Figure()
+    for condition, color in [("Condition A", "#E71316"), ("Condition B", "#1f77b4")]:
+        data = cv_df[cv_df["Condition"] == condition]["CV (%)"]
+        fig.add_trace(go.Violin(
+            y=data,
+            name=condition,
+            line_color=color,
+            meanline_visible=True,
+            box=dict(visible=True, width=0.3),
+            points=False
+        ))
+    
+    fig.update_layout(
+        title="Coefficient of Variation (CV %) Within Conditions — Calculated on Raw Intensities",
+        yaxis_title="CV (%)",
+        height=600,
+        template="simple_white",
         showlegend=True
-    ))
-
-fig.update_layout(
-    title="Coefficient of Variation (CV %) Within Conditions",
-    yaxis_title="CV (%)",
-    height=600,
-    template="simple_white",
-    showlegend=True,
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-)
-st.plotly_chart(fig, use_container_width=True)
-
+    )
+    st.plotly_chart(fig, use_container_width=True)
 # === 4. STACKED BAR PLOTS — PROTEINS PER SAMPLE PER SPECIES ===
 st.subheader("4. Proteins Detected per Sample per Species")
 
