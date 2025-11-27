@@ -175,16 +175,8 @@ st.write("**Species distribution:**", dict(df_final["Species"].value_counts()))
 # ------------------------------
 st.subheader("Data Preview (first 12 proteins)")
 
-preview = df_final.head(12).copy()
+preview = df_final.head(5).copy()
 
-# Perfect, never-failing cell highlighting
-def highlight_cell(val, col):
-    if col in all_intensity:
-        return "background-color: #d4edda; color: #155724; font-weight: bold"
-    return ""
-
-styled = preview.style.applymap(highlight_cell, col_name=preview.columns)
-st.dataframe(styled, use_container_width=True)
 
 # === SAVE TO SESSION ===
 st.session_state.prot_df = df_final
