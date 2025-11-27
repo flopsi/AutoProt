@@ -3,6 +3,8 @@ import streamlit as st
 import pandas as pd
 import io
 from shared import restart_button
+import numpy as np
+
 
 st.set_page_config(page_title="Protein Import", layout="wide")
 st.markdown("""
