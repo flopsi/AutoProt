@@ -26,44 +26,59 @@ if "PG" in df_final.columns:
     display_df.index = df_final["PG"]
 st.dataframe(display_df.head(5).round(3), use_container_width=True)
 
-# === 1. INTERACTIVE CLUSTERMAP (Schessner et al., 2022 Figure 5) ===
-st.subheader("Interactive Clustermap (Hierarchical Clustering)")
+# === 1. CLUSTERMAP — EXACTLY LIKE SCHESSNER ET AL., 2022 FIGURE 5 ===
+st.subheader("Clustermap of Replicate Profiles (Z-score)")
 
-# Prepare data
-data_for_clustermap = intensity_final[all_reps].copy()
-data_for_clustermap = data_for_clustermap.dropna()
+from sklearn.preprocessing import StandardScaler
+from scipy.cluster.hierarchy import linkage, leaves_list
+from scipy.spatial.distance import pdist
+
+# Final data
+data = intensity_final[all_reps].copy()
+data = data.dropna()
 
 # Z-score across proteins
-from sklearn.preprocessing import StandardScaler
 z_data = pd.DataFrame(
-    StandardScaler().fit_transform(data_for_clustermap),
-    index=data_for_clustermap.index,
-    columns=data_for_clustermap.columns
+    StandardScaler().fit_transform(data),
+    index=data.index,
+    columns=data.columns
 )
 
-# Convert to list of lists
-values = z_data.values.tolist()
-row_labels = z_data.index.astype(str).tolist()
-col_labels = z_data.columns.tolist()
+# Cluster columns (samples)
+col_dist = pdist(z_data.T, metric='euclidean')
+col_linkage = linkage(col_dist, method='average')
+col_order = leaves_list(col_linkage)
 
-# Create dashbio Clustergram
-fig = dashbio.Clustergram(
-    data=values,
-    column_labels=col_labels,
-    row_labels=row_labels,
+# Cluster rows (proteins)
+row_dist = pdist(z_data, metric='euclidean')
+row_linkage = linkage(row_dist, method='average')
+row_order = leaves_list(row_linkage)
+
+# Reorder
+z_ordered = z_data.iloc[row_order, col_order]
+ordered_samples = z_data.columns[col_order]
+
+# Plot
+fig = go.Figure(data=go.Heatmap(
+    z=z_ordered.values,
+    x=ordered_samples,
+    y=[f"Protein {i}" for i in range(len(z_ordered))],
+    colorscale="RdBu_r",
+    zmid=0,
+    showscale=True,
+    hoverongaps=False
+))
+
+fig.update_layout(
+    title="Clustermap (Z-score across proteins, hierarchical clustering)",
     height=800,
-    width=1200,
-    color_map="RdBu_r",
-    center_values=True,
-    linkage_type="average",
-    display_ratio=[0.15, 0.15],
-    paper_bgcolor="white",
-    plot_bgcolor="white",
-    line_width=1,
-    hidden_labels=[]
+    width=1000,
+    xaxis_title="Samples",
+    yaxis_title="Proteins",
+    template="simple_white",
+    margin=dict(l=50, r=50, t=80, b=50)
 )
 
-# Display in Streamlit
 st.plotly_chart(fig, use_container_width=True)
 
 # === 2. INTENSITY DISTRIBUTION — EXACTLY LIKE SCHESSNER ET AL., 2022 FIGURE 5A ===
