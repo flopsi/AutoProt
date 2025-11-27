@@ -192,7 +192,7 @@ with col1:
     if len(X_all) < 2:
         st.write("Not enough data")
     else:
-        pca = PCA(n_components=2)
+        pca = PCA(n_components=1)
         pc = pca.fit_transform(StandardScaler().fit_transform(X_all))
         fig = go.Figure()
         for i, label in enumerate(labels_all):
