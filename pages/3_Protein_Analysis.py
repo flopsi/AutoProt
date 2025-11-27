@@ -47,7 +47,7 @@ if remove_low_plot:
 
 # === 2. PRE-CALCULATE LOG10 FOR PLOTS ===
 if "log10_plot_cache" not in st.session_state or st.session_state.get("last_plot_filter") != remove_low_plot:
-    raw = df_plot[all_reps].replace(0, np.nan)
+    raw = df_plot.replace(0, np.nan)
     log10_all = np.log10(raw)
 
     cache = {"All proteins": log10_all}
