@@ -16,23 +16,23 @@ all_reps = c1 + c2
 
 st.title("Protein-Level QC & Advanced Filtering")
 
-# === 1. LOW INTENSITY FILTER FOR PLOTS ONLY ===
+# === 1. PLOT FILTER: Low intensity (for visualization only) ===
 st.subheader("Plot Filter (Visual QC Only)")
-remove_low_intensity_plot = st.checkbox(
-    "Remove proteins with log₁₀ intensity < 0.5 in ALL replicates (for plots only)",
+remove_low_plot = st.checkbox(
+    "Remove proteins with log₁₀ intensity < 0.5 in ALL replicates (plots only)",
     value=False
 )
 
-# Apply to plot data only
+# Apply to plot data
 df_plot = df.copy()
-if remove_low_intensity_plot:
+if remove_low_plot:
     mask = pd.Series(True, index=df.index)
     for rep in all_reps:
         mask &= (np.log10(df[rep].replace(0, np.nan)) >= 0.5)
     df_plot = df[mask]
 
-# === 2. PRE-CALCULATE LOG10 DATA FOR PLOTS ===
-if "log10_cache_plot" not in st.session_state or st.session_state.get("last_plot_filter") != remove_low_intensity_plot:
+# === 2. PRE-CALCULATE LOG10 FOR PLOTS ===
+if "log10_plot_cache" not in st.session_state or st.session_state.get("last_plot_filter") != remove_low_plot:
     raw = df_plot[all_reps].replace(0, np.nan)
     log10_all = np.log10(raw)
 
@@ -42,8 +42,8 @@ if "log10_cache_plot" not in st.session_state or st.session_state.get("last_plot
             subset = df_plot[df_plot["Species"] == sp][all_reps].replace(0, np.nan)
             cache[sp] = np.log10(subset) if len(subset) > 0 else pd.DataFrame()
     
-    st.session_state.log10_cache_plot = cache
-    st.session_state.last_plot_filter = remove_low_intensity_plot
+    st.session_state.log10_plot_cache = cache
+    st.session_state.last_plot_filter = remove_low_plot
 
 # === 3. SPECIES SELECTION FOR PLOTS ===
 st.subheader("Select Species for Plots")
@@ -54,10 +54,10 @@ selected_species = st.radio(
     key="plot_species"
 )
 
+current_data = st.session_state.log10_plot_cache[selected_species]
+
 # === 4. 6 LOG10 DENSITY PLOTS ===
 st.subheader("Intensity Density Plots (log₁₀)")
-
-current_data = st.session_state.log10_cache_plot[selected_species]
 
 row1, row2 = st.columns(3), st.columns(3)
 for i, rep in enumerate(all_reps):
@@ -87,7 +87,7 @@ for i, rep in enumerate(all_reps):
         
         fig.update_layout(
             height=380,
-            title=f"<b>{rep}</b><br>{selected_species}",
+            title=f"<b>{rep}</b>",
             xaxis_title="log₁₀(Intensity)",
             yaxis_title="Density",
             showlegend=False
@@ -97,7 +97,7 @@ for i, rep in enumerate(all_reps):
         # Table under each plot
         table_data = []
         for sp in ["All proteins", "HUMAN", "ECOLI", "YEAST"]:
-            sp_data = st.session_state.log10_cache_plot[sp]
+            sp_data = st.session_state.log10_plot_cache[sp]
             sp_vals = sp_data[rep].dropna()
             if len(sp_vals) == 0:
                 mean_str = variance_str = std_str = "—"
@@ -113,55 +113,42 @@ for i, rep in enumerate(all_reps):
             })
         st.table(pd.DataFrame(table_data).set_index("Species"))
 
-# === 5. FINAL FILTER STRATEGY (for downstream) ===
+# === 5. FINAL FILTER STRATEGY (Schessner et al., 2022 compliant) ===
 st.subheader("Final Filter Strategy (for Downstream Analysis)")
 filter_strategy = st.radio(
-    "Choose filtering strategy for final dataset:",
-    ["Raw data", "Low intensity filtered", "±2σ filtered (after low intensity)", "Combined"],
+    "Choose filtering strategy:",
+    ["Raw data",
+     "Low intensity filtered",
+     "±2σ filtered (on raw data)",
+     "Combined (low intensity → recalculate mean/std → ±2σ)"],
     index=0
 )
 
-# === 6. DYNAMIC COUNT TABLE BASED ON FILTER STRATEGY ===
+# === 6. DYNAMIC COUNT TABLE ===
 st.subheader("Protein Counts After Final Filter")
 
-# Base counts
-base_counts = {"All proteins": len(df)}
-if "Species" in df.columns:
-    for sp in ["HUMAN", "ECOLI", "YEAST"]:
-        base_counts[sp] = len(df[df["Species"] == sp])
-
-# Apply filter strategy
 df_final = df.copy()
 log10_full = np.log10(df[all_reps].replace(0, np.nan))
 
-if filter_strategy in ["Low intensity filtered", "±2σ filtered (after low intensity)", "Combined"]:
+if filter_strategy == "Low intensity filtered":
     mask = pd.Series(True, index=df.index)
     for rep in all_reps:
         mask &= (log10_full[rep] >= 0.5)
     df_final = df[mask]
-    log10_full = log10_full.loc[mask]
 
-if filter_strategy in ["±2σ filtered (after low intensity)", "Combined"]:
-    mask = pd.Series(True, index=df_final.index)
+elif filter_strategy == "±2σ filtered (on raw data)":
+    mask = pd.Series(True, index=df.index)
     for rep in all_reps:
         vals = log10_full[rep].dropna()
         if len(vals) == 0: continue
         mean = vals.mean()
         std = vals.std()
         mask &= (log10_full[rep] >= mean - 2*std) & (log10_full[rep] <= mean + 2*std)
-    df_final = df_final[mask]
+    df_final = df[mask]
 
-# Dynamic table
-count_data = []
-for sp in ["All proteins", "HUMAN", "ECOLI", "YEAST"]:
-    base = base_counts.get(sp, 0)
-    filtered = len(df_final[df_final["Species"] == sp]) if sp != "All proteins" and "Species" in df_final.columns else len(df_final)
-    count_data.append({"Species": sp, "Unfiltered": base, "After Final Filter": filtered})
-
-st.table(pd.DataFrame(count_data).set_index("Species"))
-
-# === 7. ACCEPT ===
-if st.button("Accept Final Filtering", type="primary"):
-    st.session_state.df_filtered = df_final
-    st.session_state.qc_accepted = True
-    st.success("**Final filtering accepted** — ready for transformation")
+elif filter_strategy == "Combined (low intensity → recalculate mean/std → ±2σ)":
+    # Step 1: low intensity
+    mask = pd.Series(True, index=df.index)
+    for rep in all_reps:
+        mask &= (log10_full[rep] >= 0.5)
+    df_step
