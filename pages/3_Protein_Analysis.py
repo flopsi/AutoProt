@@ -155,12 +155,14 @@ for i, rep in enumerate(all_reps):
         fig_box.update_layout(height=200, margin=dict(t=10), showlegend=False)
         st.plotly_chart(fig_box, use_container_width=True)
 
-# === 4. FINAL FILTERING & PROCEED ===
-st.subheader("Final Filter Strategy")
+# === FINAL FILTERING & PROTEIN COUNT TABLE (Schessner et al., 2022 Table 1) ===
+st.subheader("Final Filtering & Protein Counts")
+
 filter_strategy = st.radio(
     "Choose filtering strategy:",
     ["Raw data", "Low intensity filtered", "±2σ filtered", "Combined"],
-    index=0
+    index=0,
+    key="final_filter_strategy"
 )
 
 # Apply final filtering
@@ -183,6 +185,35 @@ if filter_strategy in ["±2σ filtered", "Combined"]:
         std = vals.std()
         mask &= (log10_final[rep] >= mean - 2*std) & (log10_final[rep] <= mean + 2*std)
     df_final = df_final[mask]
+
+# === PROTEIN COUNT TABLE — EXACTLY LIKE SCHESSNER ET AL., 2022 TABLE 1 ===
+st.subheader("Protein Counts After Final Filtering (Schessner et al., 2022 Table 1)")
+
+count_data = []
+
+# All proteins
+count_data.append({
+    "Species": "All proteins",
+    len(df),
+    "After Filter": len(df_final)
+})
+
+# Per species
+if "Species" in df.columns:
+    for sp in ["HUMAN", "ECOLI", "YEAST"]:
+        if sp in df["Species"].values:
+            before = len(df[df["Species"] == sp])
+            after = len(df_final[df_final["Species"] == sp])
+            count_data.append({
+                "Species": sp,
+                "Before Filter": before,
+                "After Filter": after
+            })
+
+count_df = pd.DataFrame(count_data)
+st.table(count_df.style.format({"Before Filter": "{:,}", "After Filter": "{:,}"}))
+
+st.info("**Table 1 from Schessner et al., 2022** — shows impact of filtering on total and species-specific protein numbers")
 
 # === 5. PROCEED BUTTON ===
 st.markdown("### Confirm & Proceed")
