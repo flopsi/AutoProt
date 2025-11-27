@@ -6,6 +6,8 @@ import numpy as np
 from shared import restart_button
 
 st.set_page_config(page_title="Protein Import", layout="wide")
+
+# === STYLING ===
 st.markdown("""
 <style>
     .header {background:linear-gradient(90deg,#E71316,#A6192E); padding:20px 40px; color:white; margin:-80px -80px 40px;}
@@ -15,7 +17,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 st.markdown('<div class="header"><h1>DIA Proteomics Pipeline</h1><p>Protein Import + Metadata</p></div>', unsafe_allow_html=True)
 
-# === UPLOAD ===
+# === UPLOAD FILES ===
 col1, col2 = st.columns(2)
 with col1:
     if "protein_bytes" not in st.session_state:
@@ -29,7 +31,7 @@ with col1:
 
 with col2:
     if "metadata_bytes" not in st.session_state:
-        uploaded_meta = st.file_uploader("Upload Metadata File", type=["tsv","csv","txt"])
+        uploaded_meta = st.file_uploader("Upload Metadata File (metadata.tsv)", type=["tsv","csv","txt"])
         if uploaded_meta:
             st.session_state.metadata_bytes = uploaded_meta.getvalue()
             st.session_state.metadata_name = uploaded_meta.name
@@ -38,7 +40,7 @@ with col2:
         st.success(f"Metadata: **{st.session_state.metadata_name}**")
 
 if "protein_bytes" not in st.session_state or "metadata_bytes" not in st.session_state:
-    st.info("Please upload both files.")
+    st.info("Please upload both files to continue.")
     restart_button()
     st.stop()
 
@@ -52,7 +54,7 @@ def load_df(b):
 df_raw = load_df(st.session_state.protein_bytes)
 df_meta = load_df(st.session_state.metadata_bytes)
 
-# === METADATA MATCHING ===
+# === METADATA MATCHING (Run Label substring) ===
 rename_dict = {}
 used = set()
 
@@ -63,38 +65,35 @@ for _, row in df_meta.iterrows():
     new_name = f"{cond}{rep}"
 
     matches = [c for c in df_raw.columns if label in str(c)]
-    if len(matches) == 0:
-        st.warning(f"Not found: `{label}`")
+    if not matches:
+        st.warning(f"Run Label not found: `{label}`")
         continue
     if len(matches) > 1:
-        st.error(f"Multiple matches: `{label}` → {matches}")
+        st.error(f"Multiple matches for `{label}`: {matches}")
         st.stop()
     col = matches[0]
     if col in used:
-        st.error(f"Duplicate column: `{col}`")
+        st.error(f"Duplicate column match: `{col}`")
         st.stop()
     rename_dict[col] = new_name
     used.add(col)
 
 if not rename_dict:
-    st.error("No columns matched!")
+    st.error("No intensity columns matched!")
     st.stop()
 
-# Rename intensity columns
 df = df_raw.rename(columns=rename_dict).copy()
 
-# Extract A/B columns
 c1 = sorted([v for v in rename_dict.values() if v.startswith("A")])
 c2 = sorted([v for v in rename_dict.values() if v.startswith("B")])
 all_intensity = c1 + c2
 
-# Force float
+# Force float64
 for col in all_intensity:
     df[col] = pd.to_numeric(df[col], errors='coerce').astype('float64')
 df[all_intensity] = df[all_intensity].replace([0, np.nan], 1.0)
 
-# === CLEAN UP COLUMNS ===
-# 1. Keep only first Protein Group (PG)
+# === EXTRACT FIRST PROTEIN GROUP & NAME ===
 pg_candidates = [c for c in df.columns if "Protein" in c and "Group" in c or c.startswith("PG.")]
 if not pg_candidates:
     st.error("No PG.ProteinGroups column found!")
@@ -102,43 +101,64 @@ if not pg_candidates:
 pg_col = pg_candidates[0]
 df["PG"] = df[pg_col].astype(str).str.split(";").str[0]
 
-# 2. Keep only first Protein Name
 name_candidates = [c for c in df.columns if "ProteinNames" in c or "Gene" in c]
 if name_candidates:
     name_col = name_candidates[0]
-    df["ProteinName"] = df[name_col].astype(str).str.split(";").str[0]
+    df["Name"] = df[name_col].astype(str).str.split(";").str[0]
 else:
-    df["ProteinName"] = "Unknown"
+    df["Name"] = "Unknown"
 
-# 3. Species
-species_candidates = [c for c in df.columns if any(x in str(c) for x in ["Fasta", "Description", "Protein"])]
-species_col = st.selectbox("Column for species detection", species_candidates, index=0)
-def get_species(x):
-    if pd.isna(x): return "Other"
-    t = str(x).upper()
-    if any(k in t for k in ["HUMAN", "HOMO", "HSA"]): return "HUMAN"
-    if any(k in t for k in ["MOUSE", "MUS", "MMU"]): return "MOUSE"
-    if any(k in t for k in ["YEAST"]): return "YEAST"
+# === SPECIES MAPPING FROM PROTEIN NAME (e.g., ALBU_HUMAN → HUMAN) ===
+st.subheader("Species Assignment")
+st.write("Species is determined from the **first protein name** (e.g., `ALBU_HUMAN`, `SPIKE_ECOLI`)")
+
+species_options = {
+    "HUMAN": ["HUMAN", "HOMO", "HSA"],
+    "MOUSE": ["MOUSE", "MUS", "MMU"],
+    "RAT":   ["RAT", "RATTUS", "RNO"],
+    "ECOLI": ["ECOLI", "ESCHERICHIA"],
+    "YEAST": ["YEAST", "SACCHA", "CEREVISIAE"],
+    "BOVIN": ["BOVIN", "BOVINE", "BOS"],
+    "Other": []
+}
+
+# Let user choose which species are present
+selected_species = st.multiselect(
+    "Which species are in your sample?",
+    options=list(species_options.keys()),
+    default=["HUMAN", "ECOLI"]  # common default
+)
+
+# Build lookup dictionary
+species_lookup = {}
+for sp, keywords in species_options.items():
+    if sp in selected_species:
+        for kw in keywords:
+            species_lookup[kw] = sp
+
+def assign_species(protein_name):
+    if pd.isna(protein_name):
+        return "Other"
+    name = str(protein_name).upper()
+    for kw, sp in species_lookup.items():
+        if kw in name:
+            return sp
     return "Other"
-df["Species"] = df[species_col].apply(get_species)
 
-# === FILTER: Drop rows with all 6 replicates = 1.0 ===
+df["Species"] = df["Name"].apply(assign_species)
+
+# === FILTER: Remove proteins with no real quantification ===
 before = len(df)
-df = df[df[all_intensity].ne(1.0).any(axis=1)]  # Keep if at least one > 1.0
+df = df[df[all_intensity].ne(1.0).any(axis=1)]
 after = len(df)
-st.info(f"Removed {before - after:,} proteins with only imputed values (all 1.0)")
+st.info(f"Removed {before - after:,} proteins with only imputed values (all = 1.0)")
 
-# === FINAL DATAFRAME: Only desired columns ===
-final_cols = ["PG", "ProteinName", "Species"] + all_intensity
+# === FINAL CLEAN DATAFRAME ===
+final_cols = ["PG", "Name", "Species"] + all_intensity
 df_final = df[final_cols].copy()
 
-# Rename ProteinName → more readable
-df_final = df_final.rename(columns={"ProteinName": "Name"})
-
-# ===================================
 # === PREVIEW ===
-# ===================================
-st.success(f"Final dataset: **{len(df_final):,} proteins** × **{len(df_final.columns)} columns**")
+st.success(f"Final dataset ready: **{len(df_final):,} proteins**")
 
 colA, colB = st.columns(2)
 with colA:
@@ -148,21 +168,21 @@ with colB:
     st.subheader("Condition B")
     st.code(" | ".join(c2))
 
-st.write("**Species:**", dict(df_final["Species"].value_counts()))
+st.write("**Species distribution:**", dict(df_final["Species"].value_counts()))
 
-# Preview with highlighted intensity
 preview = df_final.head(12)
 def highlight_intensity(val):
     return ['background-color: #d4edda; color: #155724; font-weight: bold' 
             if col in all_intensity else '' for col in preview.columns]
+
 st.dataframe(preview.style.apply(highlight_intensity, axis=0), use_container_width=True)
 
-# === SAVE ===
+# === SAVE TO SESSION ===
 st.session_state.prot_df = df_final
 st.session_state.prot_c1 = c1
 st.session_state.prot_c2 = c2
 
-st.success("Protein data ready → Go to Analysis!")
+st.success("Protein data processed and ready!")
 
 if st.button("Go to Protein Analysis", type="primary", use_container_width=True):
     st.switch_page("pages/3_Protein_Analysis.py")
