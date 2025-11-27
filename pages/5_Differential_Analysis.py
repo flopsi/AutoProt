@@ -192,6 +192,9 @@ fig.update_traces(textposition='inside', textfont_size=12)
 fig.update_layout(height=600, barmode='stack', template="simple_white")
 st.plotly_chart(fig, use_container_width=True)
 
+# Final data — indexed by Protein Group ID
+df_final = df_final.set_index("PG")  # ← Protein Group ID as index
+intensity_final = df_final[all_reps]   # ← intensities indexed by PG
 # === 5-ROW SNAPSHOT BELOW THE PLOT ===
 st.subheader("Final Processed Data (5-row snapshot)")
 st.write("**Index:** Protein Group ID | **Transformation:** log₂ | **Filtering:** Applied")
