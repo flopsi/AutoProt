@@ -21,7 +21,9 @@ c2 = st.session_state.pep_c2 if "pep_c2" in st.session_state else st.session_sta
 all_reps = c1 + c2
 
 st.title("Differential Analysis & Data Summary (Schessner et al., 2022 Figure 5)")
-
+st.subheader("Final Processed Data (5-row snapshot)")
+st.write("**Transformation:** log₂ | **Filtering:** Applied | **For differential analysis**")
+st.dataframe(df_final[all_reps].head(5).round(3))
 # === 1. HEATMAP WITH HIERARCHICAL CLUSTERING ===
 st.subheader("1. Sample Correlation Heatmap (Hierarchical Clustering)")
 
