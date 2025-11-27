@@ -5,16 +5,32 @@ import numpy as np
 import plotly.graph_objects as go
 from scipy import stats
 
-# Load data
-if "prot_final_df" not in st.session_state:
-    st.error("No protein data found! Please go to Protein Import first.")
+# pages/3_Protein_Analysis.py
+import streamlit as st
+
+# === GUARD: MUST HAVE PROTEIN DATA ===
+if "prot_df" not in st.session_state or st.session_state.prot_df is None:
+    st.error("No protein data found! Please go to **Protein Import** first.")
+    if st.button("Go to Protein Import"):
+        st.switch_page("pages/1_Protein_Import.py")
     st.stop()
 
-df = st.session_state.prot_final_df
-c1 = st.session_state.prot_final_c1
-c2 = st.session_state.prot_final_c2
-all_reps = c1 + c2
+# Optional: also check replicates
+if "prot_c1" not in st.session_state or "prot_c2" not in st.session_state:
+    st.error("Replicate information missing. Please re-run Protein Import.")
+    st.stop()
 
+# NOW SAFE TO USE
+df = st.session_state.prot_df
+c1 = st.session_state.prot_c1
+c2 = st.session_state.prot_c2
+
+st.success(f"Loaded {len(df):,} proteins | Condition A: {len(c1)} reps | Condition B: {len(c2)} reps")
+
+st.error("No protein data found! Redirecting to Protein Import...")
+import time
+time.sleep(3)
+st.switch_page("pages/1_Protein_Import.py")
 st.title("Protein-Level QC & Replicate Difference Testing")
 
 # === Schessner et al., 2022 ===")
