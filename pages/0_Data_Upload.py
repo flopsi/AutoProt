@@ -37,4 +37,4 @@ proteomes = st_tags(label="#Type the proteomes in your sample:",
                     key="proteomes")
                     
 st.write("### Results:")
-st.write(type(proteomes))
+st.write(proteomes)
