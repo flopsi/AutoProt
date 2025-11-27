@@ -17,7 +17,7 @@ all_reps = c1 + c2
 st.title("Protein-Level QC & Advanced Filtering")
 
 # === 1. VIEW MODE ===
-st.subheader("1. Select View Mode")
+st.subheader("2. Intensity Density Plots (log₁₀)")
 view_species = st.selectbox(
     "Show density plots for:",
     ["All proteins", "HUMAN", "ECOLI", "YEAST"],
@@ -33,8 +33,8 @@ else:
         st.stop()
     df_plot = df[df["Species"] == view_species].copy()
 
-# === 2. 6 LOG10 DENSITY PLOTS + TABLE BELOW EACH ===
-st.subheader("2. Intensity Density Plots (log₁₀)")
+
+
 
 raw_plot = df_plot[all_reps].replace(0, np.nan)
 log10_plot = np.log10(raw_plot)
