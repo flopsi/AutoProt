@@ -16,36 +16,39 @@ all_reps = c1 + c2
 
 st.title("Protein-Level QC & Species-Specific Visualization")
 
-# === PRE-CALCULATE LOG10 DATA ===
+# === PRE-CALCULATE LOG10 DATA FOR SPEED ===
 if "log10_cache" not in st.session_state:
     raw = df[all_reps].replace(0, np.nan)
     log10_all = np.log10(raw)
-    
-    cache = {"All proteins": log10_all}
-    if "Species" in df.columns:
-        for sp in ["HUMAN", "ECOLI", "YEAST"]:
-            subset = df[df["Species"] == sp][all_reps].replace(0, np.nan)
-            cache[sp] = np.log10(subset) if len(subset) > 0 else pd.DataFrame()
-    
-    st.session_state.log10_cache = cache
-    st.session_state.species_options = ["All proteins", "HUMAN", "ECOLI", "YEAST"]
 
-# Default
-if "selected_species" not in st.session_state:
-    st.session_state.selected_species = "All proteins"
+    cache = {
+        "All proteins": log10_all,
+        "HUMAN": np.log10(df[df["Species"] == "HUMAN"][all_reps].replace(0, np.nan)) if "Species" in df.columns and "HUMAN" in df["Species"].values else pd.DataFrame(),
+        "ECOLI": np.log10(df[df["Species"] == "ECOLI"][all_reps].replace(0, np.nan)) if "Species" in df.columns and "ECOLI" in df["Species"].values else pd.DataFrame(),
+        "YEAST": np.log10(df[df["Species"] == "YEAST"][all_reps].replace(0, np.nan)) if "Species" in df.columns and "YEAST" in df["Species"].values else pd.DataFrame(),
+    }
+
+    st.session_state.log10_cache = cache
+
+# === RADIO BUTTONS OUTSIDE PLOT AREA (CLEAN) ===
+st.subheader("Select Species to Display")
+selected_species = st.radio(
+    "Choose which data to show in all plots:",
+    ["All proteins", "HUMAN", "ECOLI", "YEAST"],
+    index=0,
+    key="species_radio"
+)
 
 # === 6 LOG10 DENSITY PLOTS ===
 st.subheader("Intensity Density Plots (log₁₀)")
 
-row1, row2 = st.columns(3), st.columns(3)
-cols = [row1[0], row1[1], row1[2], row2[0], row2[1], row2[2]]
+current_data = st.session_state.log10_cache[selected_species]
 
+row1, row2 = st.columns(3), st.columns(3)
 for i, rep in enumerate(all_reps):
-    col = cols[i]
+    col = row1[i] if i < 3 else row2[i-3]
     with col:
-        current_data = st.session_state.log10_cache[st.session_state.selected_species]
         vals = current_data[rep].dropna()
-        
         mean = vals.mean()
         std = vals.std()
         lower = mean - 2*std
@@ -71,9 +74,9 @@ for i, rep in enumerate(all_reps):
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # === TABLE UNDER EACH PLOT ===
+        # === CLEAN TABLE UNDER EACH PLOT ===
         table_data = []
-        for sp in st.session_state.species_options:
+        for sp in ["All proteins", "HUMAN", "ECOLI", "YEAST"]:
             sp_data = st.session_state.log10_cache[sp]
             sp_vals = sp_data[rep].dropna()
             if len(sp_vals) == 0:
@@ -82,31 +85,13 @@ for i, rep in enumerate(all_reps):
                 mean_str = f"{sp_vals.mean():.3f}"
                 variance_str = f"{sp_vals.var():.3f}"
                 std_str = f"{sp_vals.std():.3f}"
-            
             table_data.append({
-                "": sp if i == 0 else "",  # Only top-left gets radio
                 "Species": sp,
                 "Mean": mean_str,
                 "Variance": variance_str,
                 "Std Dev": std_str
             })
-
-        df_table = pd.DataFrame(table_data)
-
-        # Only top-left plot has radio buttons in column 0
-        if i == 0:
-            selected = st.radio(
-                "Select species to display",
-                options=st.session_state.species_options,
-                index=st.session_state.species_options.index(st.session_state.selected_species),
-                format_func=lambda x: x,
-                key="species_radio"
-            )
-            if selected != st.session_state.selected_species:
-                st.session_state.selected_species = selected
-                st.experimental_rerun()
-        else:
-            st.table(df_table[["Species", "Mean", "Variance", "Std Dev"]].set_index("Species"))
+        st.table(pd.DataFrame(table_data).set_index("Species"))
 
 # === FILTERING & ACCEPT (unchanged) ===
 # ... [your filtering code here] ...
