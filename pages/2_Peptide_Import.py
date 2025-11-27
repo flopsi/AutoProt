@@ -28,7 +28,7 @@ st.markdown('<div class="header"><h1>DIA Proteomics Pipeline</h1><p>Peptide Impo
 col1, col2 = st.columns(2)
 with col1:
     if "peptide_bytes" not in st.session_state:
-        uploaded_pep = st.file_uploader("Upload Wide-Format Peptide File",", type=["csv", "tsv", "txt"])
+        uploaded_pep = st.file_uploader("Upload Wide-Format Peptide File","", type=["csv", "tsv", "txt"])
         if uploaded_pep:
             st.session_state.peptide_bytes = uploaded_pep.getvalue()
             st.session_state.peptide_name = uploaded_pep.name
