@@ -63,9 +63,10 @@ fig = go.Figure()
 
 # Condition A: left-facing violins
 for rep in c1:
+    y_vals = intensity_final[rep].dropna()
     fig.add_trace(go.Violin(
-        x=[rep] * len(intensity_final[rep].notna().sum()),
-        y=intensity_final[rep].dropna(),
+        x=[rep] * len(y_vals),
+        y=y_vals,
         name=rep,
         side='negative',
         line_color='#E71316',
@@ -78,9 +79,10 @@ for rep in c1:
 
 # Condition B: right-facing violins
 for rep in c2:
+    y_vals = intensity_final[rep].dropna()
     fig.add_trace(go.Violin(
-        x=[rep] * len(intensity_final[rep].notna().sum()),
-        y=intensity_final[rep].dropna(),
+        x=[rep] * len(y_vals),
+        y=y_vals,
         name=rep,
         side='positive',
         line_color='#1f77b4',
@@ -111,17 +113,16 @@ cv_data = []
 for reps, name in [(c1, "Condition A"), (c2, "Condition B")]:
     if len(reps) >= 2:
         cv_per_protein = intensity_final[reps].std(axis=1) / intensity_final[reps].mean(axis=1) * 100
-        cv_data.extend([{"Replicate": rep, "CV (%)": cv, "Condition": name} 
-                       for rep in reps for cv in cv_per_protein.dropna()])
+        cv_per_protein = cv_per_protein.dropna()
+        cv_data.extend([{"Condition": name, "CV (%)": cv} for cv in cv_per_protein])
 
 cv_df = pd.DataFrame(cv_data)
 
 fig = go.Figure()
-
 for condition, color in [("Condition A", "#E71316"), ("Condition B", "#1f77b4")]:
-    subset = cv_df[cv_df["Condition"] == condition]
+    data = cv_df[cv_df["Condition"] == condition]["CV (%)"]
     fig.add_trace(go.Violin(
-        y=subset["CV (%)"],
+        y=data,
         name=condition,
         line_color=color,
         meanline_visible=True,
