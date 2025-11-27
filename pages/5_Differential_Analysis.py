@@ -101,8 +101,12 @@ st.plotly_chart(fig, use_container_width=True)
 # === 3. CVs — CALCULATED ON RAW INTENSITIES (Schessner et al., 2022) ===
 st.subheader("Technical Reproducibility (CV within Conditions)")
 
-# Get raw intensities for filtered proteins only
-raw_filtered = st.session_state.raw_intensities.loc[df_final.index]  # ← raw values, filtered
+# Load raw intensities of filtered proteins
+if "raw_intensities_filtered" not in st.session_state:
+    st.error("Raw intensities not found! Please complete Protein Analysis first.")
+    st.stop()
+
+raw_filtered = st.session_state.raw_intensities_filtered  # ← raw values, filtered
 
 cv_data = []
 mean_cvs = {}
