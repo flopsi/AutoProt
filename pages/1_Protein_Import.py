@@ -159,7 +159,7 @@ def highlight_intensity(val):
             for col_name in preview.columns]
 
 styled = preview.style.apply(highlight_intensity, axis=0)
-st.dataframe(styled, use_container_width=True)
+st.dataframe(preview, use_container_width=True)
 
 # === SAVE TO SESSION ===
 st.session_state.prot_df = df
