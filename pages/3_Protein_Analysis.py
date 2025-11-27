@@ -23,7 +23,7 @@ c1 = st.session_state.prot_c1
 c2 = st.session_state.prot_c2
 all_reps = c1 + c2
 
-st.success(f"Loaded **{len(df):,}** proteins | Condition A: **{len(c1)}** reps | Condition B: **{len(c2)}** reps")
+
 
 # === 1. LOW INTENSITY FILTER FOR PLOTS ONLY (NOW 100% WORKING) ===
 st.subheader("Plot Filter (Visual QC Only)")
@@ -42,10 +42,11 @@ if remove_low_plot:
         log_vals = np.log10(df_plot[rep].replace(0, np.nan))
         mask &= (log_vals >= 0.5)
     df_plot = df_plot.loc[mask]
-    st.info(f"Low-intensity filter applied → {len(df_plot):,} proteins remain for plots")
+    st.success(f"Loaded **{len(df_plot):,}** proteins | Condition A: **{len(c1)}** reps | Condition B: **{len(c2)}** reps")
 else:
     st.info(f"No plot filter → showing all {len(df_plot):,} proteins")
 
+st.success(f"Loaded **{len(df):,}** proteins | Condition A: **{len(c1)}** reps | Condition B: **{len(c2)}** reps")
 # === 2. RECALCULATE LOG10 CACHE BASED ON CURRENT df_plot ===
 # This is the key: cache must reflect the current df_plot!
 if "log10_plot_cache" not in st.session_state or st.session_state.get("last_plot_df_hash") != hash(df_plot.to_string()):
@@ -65,8 +66,6 @@ if "log10_plot_cache" not in st.session_state or st.session_state.get("last_plot
     st.session_state.log10_plot_cache = cache
     st.session_state.last_plot_df_hash = hash(df_plot.to_string())  # prevent re-caching
 
-# === 3. SPECIES SELECTION FOR PLOTS ===
-st.subheader("Select Species for Plots")
 selected_species = st.radio(
     "Show in plots:",
     options=["All proteins"] + (["HUMAN", "ECOLI", "YEAST"] if "Species" in df.columns else []),
