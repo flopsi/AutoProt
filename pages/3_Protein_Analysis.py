@@ -16,9 +16,9 @@ c1 = st.session_state.prot_c1.copy()
 c2 = st.session_state.prot_c2.copy()
 all_reps = c1 + c2
 
-st.title("Protein-Level QC & Transformation (Schessner et al., 2022)")
+st.title("Protein-Level QC & Transformation")
 
-# === 1. NORMALITY TESTING ON RAW DATA (Figure 4) ===
+# === 1. NORMALITY TESTING ON RAW DATA (Schessner et al., 2022) ===
 st.subheader("1. Normality Testing on Raw Data (Shapiro-Wilk)")
 
 transform_options = {
@@ -74,7 +74,7 @@ for rep in all_reps:
 
 st.table(pd.DataFrame(results))
 st.success(f"**Recommended transformation: {best_transform}** (highest W)")
-st.info("**Shapiro-Wilk W statistic** — Schessner et al., 2022, Figure 4")
+st.info("Shapiro-Wilk W statistic — Schessner et al., 2022, Figure 4")
 
 # === 2. USER SELECTS: RAW OR TRANSFORMED + SPECIES ===
 st.subheader("2. Data View")
@@ -86,9 +86,12 @@ with col1:
         index=1
     )
 with col2:
+    available_species = ["All proteins"]
+    if "Species" in df.columns:
+        available_species += df["Species"].dropna().unique().tolist()
     species_choice = st.radio(
         "Show species:",
-        ["All proteins", "HUMAN", "ECOLI", "YEAST"],
+        available_species,
         index=0
     )
 
@@ -101,8 +104,8 @@ if proceed_choice.startswith("Transformed"):
 if species_choice != "All proteins":
     current_data = current_data[current_data["Species"] == species_choice]
 
-# === 3. 6 DENSITY PLOTS + BOXPLOTS (Figure 4) ===
-st.subheader("Intensity Density Plots & Boxplots (Schessner et al., 2022 Figure 4)")
+# === 3. 6 DENSITY PLOTS + BOXPLOTS (Schessner et al., 2022 Figure 4) ===
+st.subheader("Intensity Density Plots & Boxplots")
 
 row1, row2 = st.columns(3), st.columns(3)
 for i, rep in enumerate(all_reps):
@@ -139,7 +142,7 @@ for i, rep in enumerate(all_reps):
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # Boxplot (exactly like Figure 4)
+        # Boxplot
         fig_box = go.Figure()
         fig_box.add_trace(go.Box(
             y=vals,
@@ -152,103 +155,40 @@ for i, rep in enumerate(all_reps):
         fig_box.update_layout(height=200, margin=dict(t=10), showlegend=False)
         st.plotly_chart(fig_box, use_container_width=True)
 
-# === 5. FINAL FILTER STRATEGY ===
-st.subheader("Final Filter Strategy (for Downstream Analysis)")
+# === 4. FINAL FILTERING & PROCEED ===
+st.subheader("Final Filter Strategy")
 filter_strategy = st.radio(
     "Choose filtering strategy:",
     ["Raw data", "Low intensity filtered", "±2σ filtered", "Combined"],
-    index=0,
-    key="final_filter_strategy"
+    index=0
 )
 
 # Apply final filtering
 df_final = df.copy()
 log10_full = np.log10(df_final[all_reps].replace(0, np.nan))
 
-try:
-    if filter_strategy in ["Low intensity filtered", "Combined"]:
-        mask = pd.Series(True, index=df_final.index)
-        for rep in all_reps:
-            mask &= (log10_full[rep] >= 0.5)
-        df_final = df_final[mask]
-        log10_full = log10_full.loc[mask]
+if filter_strategy in ["Low intensity filtered", "Combined"]:
+    mask = pd.Series(True, index=df_final.index)
+    for rep in all_reps:
+        mask &= (log10_full[rep] >= 0.5)
+    df_final = df_final[mask]
 
-    if filter_strategy in ["±2σ filtered", "Combined"]:
-        mask = pd.Series(True, index=df_final.index)
-        for rep in all_reps:
-            vals = log10_full[rep].dropna()
-            if len(vals) == 0: continue
-            mean = vals.mean()
-            std = vals.std()
-            mask &= (log10_full[rep] >= mean - 2*std) & (log10_full[rep] <= mean + 2*std)
-        df_final = df_final[mask]
-except:
-    st.warning("Filtering failed — using raw data")
+if filter_strategy in ["±2σ filtered", "Combined"]:
+    mask = pd.Series(True, index=df_final.index)
+    log10_final = np.log10(df_final[all_reps].replace(0, np.nan))
+    for rep in all_reps:
+        vals = log10_final[rep].dropna()
+        if len(vals) == 0: continue
+        mean = vals.mean()
+        std = vals.std()
+        mask &= (log10_final[rep] >= mean - 2*std) & (log10_final[rep] <= mean + 2*std)
+    df_final = df_final[mask]
 
-# === 6. DYNAMIC PROTEIN COUNT TABLE ===
-st.subheader("Protein Counts After Final Filter")
-count_data = []
-for sp in available_species:
-    if sp == "All proteins":
-        unfiltered = len(df)
-        filtered = len(df_final)
-    else:
-        unfiltered = len(df[df["Species"] == sp]) if "Species" in df.columns else 0
-        filtered = len(df_final[df_final["Species"] == sp]) if "Species" in df_final.columns else 0
-    count_data.append({"Species": sp, "Unfiltered": unfiltered, "After Filter": filtered})
-
-st.table(pd.DataFrame(count_data).set_index("Species"))
-
-# === 7. REPLICATE DIFFERENCE TESTING ===
-st.subheader("Replicate Difference Testing (Kolmogorov–Smirnov)")
-
-test_mode = st.radio(
-    "Test using:",
-    ["All proteins", "Constant proteome only"],
-    index=1,
-    key="ks_mode"
-)
-
-if test_mode == "Constant proteome only":
-    if "Species" not in df_final.columns:
-        st.error("Species column missing")
-        st.stop()
-    constant_species = st.selectbox("Reference proteome", ["HUMAN", "ECOLI", "YEAST"], key="const_sp")
-    ref_df = df_final[df_final["Species"] == constant_species]
-    ref_label = constant_species
-else:
-    ref_df = df_final
-    ref_label = "All proteins"
-
-ks_results = []
-for rep in all_reps:
-    ref_vals = np.log10(ref_df[rep].replace(0, np.nan).dropna())
-    rep_vals = np.log10(df_final[rep].replace(0, np.nan).dropna())
-    if len(ref_vals) < 10 or len(rep_vals) < 10:
-        ks_results.append({"Replicate": rep, "vs": ref_label, "p-value": "—", "Different?": "—"})
-        continue
-    _, p = stats.ks_2samp(ref_vals, rep_vals)
-    different = "Yes" if p < 0.05 else "No"
-    ks_results.append({"Replicate": rep, "vs": ref_label, "p-value": f"{p:.2e}", "Different?": different})
-
-ks_df = pd.DataFrame(ks_results)
-st.table(ks_df.style.apply(lambda x: ["background: #ffcccc" if v == "Yes" else "background: #ccffcc" for v in x], subset=["Different?"]))
-
-if any(r["Different?"] == "Yes" for r in ks_results if r["Different?"] != "—"):
-    st.error("**Significant differences** — check technical bias")
-else:
-    st.success("**Excellent reproducibility**")
-
-st.info("**Kolmogorov–Smirnov test** — Schessner et al., 2022, Figure 4B")
-
-# === 4. PROCEED BUTTON AT BOTTOM ===
+# === 5. PROCEED BUTTON ===
 st.markdown("### Confirm & Proceed")
 if st.button("Accept & Proceed to Differential Analysis", type="primary"):
-    # Apply final filtering first
-    # [Your df_final calculation here]
-    
-    # Then apply transformation if chosen
-    if proceed_choice == f"Transformed data ({best_transform})" and best_transform != "Raw":
+    # Apply transformation if chosen
+    if proceed_choice.startswith("Transformed"):
         func = transform_options[best_transform]
         transformed = df_final[all_reps].apply(func)
     else:
@@ -258,5 +198,5 @@ if st.button("Accept & Proceed to Differential Analysis", type="primary"):
     st.session_state.df_filtered = df_final
     st.session_state.transform_applied = best_transform if "Transformed" in proceed_choice else "Raw"
     st.session_state.qc_accepted = True
-    st.success("**Ready for differential analysis!**")
+    st.success("Ready for differential analysis!")
     st.balloons()
