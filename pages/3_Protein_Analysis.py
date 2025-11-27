@@ -197,7 +197,33 @@ else:
     pca = PCA(n_components=2)
     pc = pca.fit_transform(X_scaled)
 
-    # Create single PCA plot with 6 labeled points
+# === 5. PCA ON FINAL PROCESSED DATA (Schessner et al., 2022 Figure 4) ===
+st.subheader("PCA on Final Processed Data (Mean Intensity per Replicate)")
+
+# Compute mean intensity per replicate
+mean_intensities = []
+rep_labels = []
+rep_colors = []
+
+for rep in all_reps:
+    vals = df_processed[rep].replace(0, np.nan).dropna()
+    if len(vals) == 0:
+        continue
+    mean_intensities.append(vals.mean())
+    rep_labels.append(rep)
+    rep_colors.append("#E71316" if rep in c1 else "#1f77b4")
+
+if len(mean_intensities) < 2:
+    st.write("Not enough replicates for PCA")
+else:
+    # Create dummy features to allow PCA with 2 components (trick for 1D data)
+    X = np.array(mean_intensities).reshape(-1, 1)
+    X_extended = np.hstack([X, np.zeros_like(X)])  # Add dummy column
+
+    # PCA with 2 components
+    pca = PCA(n_components=2)
+    pc = pca.fit_transform(StandardScaler().fit_transform(X_extended))
+
     fig = go.Figure()
 
     for i, label in enumerate(rep_labels):
@@ -209,49 +235,22 @@ else:
             marker=dict(color=rep_colors[i], size=16, line=dict(width=2, color='black')),
             text=label,
             textposition="top center",
-            textfont=dict(size=14)
+            textfont=dict(size=14, color="black")
         ))
 
     fig.update_layout(
-        title=f"PCA of Replicate Mean Intensities<br>"
+        title="PCA of Replicate Mean Intensities<br>"
               f"PC1: {pca.explained_variance_ratio_[0]:.1%} | PC2: {pca.explained_variance_ratio_[1]:.1%}",
         xaxis_title=f"PC1 ({pca.explained_variance_ratio_[0]:.1%} variance)",
         yaxis_title=f"PC2 ({pca.explained_variance_ratio_[1]:.1%} variance)",
         height=600,
         showlegend=False,
-        template="simple_white"
+        template="simple_white",
+        xaxis=dict(showgrid=True, gridcolor='lightgray'),
+        yaxis=dict(showgrid=True, gridcolor='lightgray')
     )
 
     st.plotly_chart(fig, use_container_width=True)
-
-with col2:
-    st.markdown("**Human Proteins Only**")
-    df_human = df_processed[df_processed["Species"] == "HUMAN"] if "HUMAN" in df_processed["Species"].values else pd.DataFrame()
-    if df_human.empty or len(df_human) < 10:
-        st.write("Not enough human proteins")
-    else:
-        X_h, labels_h, colors_h = get_pca_data(df_human)
-        if len(X_h) < 2:
-            st.write("Not enough data")
-        else:
-            pca_h = PCA(n_components=2)
-            pc_h = pca_h.fit_transform(StandardScaler().fit_transform(X_h))
-            fig_h = go.Figure()
-            for i, label in enumerate(labels_h):
-                fig_h.add_trace(go.Scatter(
-                    x=[pc_h[i, 0]], y=[pc_h[i, 1]],
-                    mode='markers+text',
-                    name=label,
-                    marker=dict(color=colors_h[i], size=16),
-                    text=label,
-                    textposition="top center"
-                ))
-            fig_h.update_layout(
-                title=f"PCA (Human: {pca_h.explained_variance_ratio_[0]:.1%} + {pca_h.explained_variance_ratio_[1]:.1%})",
-                xaxis_title="PC1", yaxis_title="PC2",
-                height=500, showlegend=False
-            )
-            st.plotly_chart(fig_h, use_container_width=True, key="pca_human")
 
 # === 6. ACCEPT ===
 if st.button("Accept & Proceed to Differential Analysis", type="primary"):
