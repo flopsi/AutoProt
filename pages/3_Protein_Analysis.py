@@ -47,19 +47,30 @@ if remove_low_plot:
         mask &= (np.log10(df[rep].replace(0, np.nan)) >= 0.5)
     df_plot = df[mask]
 
-# === 2. PRE-CALCULATE LOG10 FOR PLOTS ===
-if "log10_plot_cache" not in st.session_state or st.session_state.get("last_plot_filter") != remove_low_plot:
-    raw = df_plot.replace(0, np.nan)
-    log10_all = np.log10(raw)
-
-    cache = {"All proteins": log10_all}
-    if "Species" in df_plot.columns[all_reps]:
-        for sp in ["HUMAN", "ECOLI", "YEAST"]:
-            subset = df_plot[df_plot["Species"] == sp][all_reps].replace(0, np.nan)
-            cache[sp] = np.log10(subset) if len(subset) > 0 else pd.DataFrame()
+# === 2. PRE-CALCULATE LOG10 FOR PLOTS (FIXED!) ===
+if "log10_plot_cache" not in st.session_state:
+    # Only use the actual intensity columns (A1, A2, B1, etc.)
+    intensity_cols = c1 + c2
+    
+    # Make a copy and replace 0 → NaN only in intensity columns
+    df_log = df[intensity_cols].replace(0, np.nan)
+    
+    # Take log10 ONLY on numeric intensity data
+    log10_values = np.log10(df_log)
+    
+    # Create cache
+    cache = {"All proteins": log10_values}
+    
+    if "Species" in df.columns:
+        for species in df["Species"].unique():
+            if species != "Other":
+                mask = df["Species"] == species
+                cache[species] = np.log10(df[mask][intensity_cols].replace(0, np.nan))
     
     st.session_state.log10_plot_cache = cache
-    st.session_state.last_plot_filter = remove_low_plot
+
+# Now safe to use
+log10_all = st.session_state.log10_plot_cache["All proteins"]
 
 # === 3. SPECIES SELECTION FOR PLOTS ===
 #st.subheader("Select Species for Plots")
