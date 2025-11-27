@@ -20,8 +20,8 @@ all_reps = c1 + c2
 
 st.title("Protein-Level QC & Transformation")
 
-# === 1. NORMALITY TESTING ON RAW DATA — SHAPIRO-WILK W STATISTIC (Schessner et al., 2022) ===
-st.subheader("1. Normality Testing on Raw Data (Shapiro-Wilk)")
+# === 1. NORMALITY TESTING ON RAW DATA (Schessner et al., 2022) ===
+st.subheader("1. Normality Testing on Raw Data")
 
 transform_options = {
     "Raw": lambda x: x,
@@ -43,7 +43,6 @@ for rep in all_reps:
         
     row = {"Replicate": rep}
     
-    # Raw W statistic
     w_raw, p_raw = stats.shapiro(raw_vals)
     row["Raw W"] = f"{w_raw:.4f}"
     row["Raw p"] = f"{p_raw:.2e}"
@@ -59,14 +58,12 @@ for rep in all_reps:
                 
             w, p = stats.shapiro(t_vals)
             row[f"{name} W"] = f"{w:.4f}"
-            row[f"{name} p"] = f"{p:.2e}"
             
             if w > rep_w:
                 rep_w = w
                 rep_best = name
         except:
             row[f"{name} W"] = "—"
-            row[f"{name} p"] = "—"
     
     row["Best Transform"] = rep_best
     row["Best W"] = f"{rep_w:.4f}"
@@ -78,68 +75,68 @@ for rep in all_reps:
     results.append(row)
 
 st.table(pd.DataFrame(results))
+st.success(f"**Recommended transformation: {best_transform}** (highest W)")
+st.info("**Shapiro-Wilk W statistic** — Schessner et al., 2022, Figure 4")
 
-st.success(f"**Recommended transformation: {best_transform}** (highest Shapiro-Wilk W)")
-st.info("**Shapiro-Wilk W statistic** — closer to 1 = more normal (Schessner et al., 2022, Figure 4)")
-
-# === 2. USER DECIDES: RAW OR TRANSFORMED ===
+# === 2. USER SELECTS: RAW OR TRANSFORMED (DYNAMIC PLOTS) ===
 st.subheader("2. Proceed With")
 proceed_choice = st.radio(
-    "Proceed to downstream analysis with:",
+    "Proceed with:",
     ["Raw data", f"Transformed data ({best_transform})"],
-    index=1
-)
-# === 1. LOW INTENSITY FILTER FOR PLOTS ONLY ===
-st.subheader("Plot Filter (Visual QC Only)")
-remove_low_plot = st.checkbox(
-    "Remove proteins with log₁₀ intensity < 0.5 in ALL replicates (plots only)",
-    value=False,
-    key="remove_low_plot"
+    index=1,
+    key="proceed_choice"
 )
 
-# Apply to plot data
-df_plot = df.copy()
-if remove_low_plot:
-    try:
-        mask = pd.Series(True, index=df.index)
-        for rep in all_reps:
-            if rep in df.columns:
-                mask &= (np.log10(df[rep].replace(0, np.nan)) >= 0.5)
-        df_plot = df.loc[mask]
-    except:
-        st.warning("Low-intensity filter failed — using full data for plots")
+# Apply transformation if selected
+current_plot_data = df.copy()
+if proceed_choice.startswith("Transformed"):
+    func = transform_options[best_transform]
+    current_plot_data[all_reps] = current_plot_data[all_reps].apply(func)
 
-# === 2. PRE-CALCULATE LOG10 FOR PLOTS (ROBUST CACHING) ===
-plot_hash = hashlib.md5(pd.util.hash_pandas_object(df_plot[all_reps]).values).hexdigest()
-if ("log10_plot_cache" not in st.session_state or 
-    "last_plot_hash" not in st.session_state or 
-    st.session_state.last_plot_hash != plot_hash):
-    
-    raw = df_plot[all_reps].replace(0, np.nan)
-    log10_all = np.log10(raw)
+# === 3. DYNAMIC 6 LOG10 DENSITY PLOTS + BOXPLOTS ===
+st.subheader("Intensity Density Plots & Boxplots")
 
-    cache = {"All proteins": log10_all}
-    if "Species" in df_plot.columns:
-        for sp in df_plot["Species"].dropna().unique():
-            if pd.notna(sp):
-                subset = df_plot[df_plot["Species"] == sp][all_reps].replace(0, np.nan)
-                if len(subset) > 0:
-                    cache[str(sp)] = np.log10(subset)
-    
-    st.session_state.log10_plot_cache = cache
-    st.session_state.last_plot_hash = plot_hash
+row1, row2 = st.columns(3), st.columns(3)
+for i, rep in enumerate(all_reps):
+    col = row1[i] if i < 3 else row2[i-3]
+    with col:
+        vals = current_plot_data[rep].replace(0, np.nan).dropna()
+        if len(vals) == 0:
+            st.write("No data")
+            continue
+            
+        mean = float(vals.mean())
+        std = float(vals.std())
+        lower = mean - 2*std
+        upper = mean + 2*std
 
-# === 3. SPECIES SELECTION FOR PLOTS ===
-st.subheader("Select Species for Plots")
-available_species = ["All proteins"] + [k for k in st.session_state.log10_plot_cache.keys() if k != "All proteins"]
-selected_species = st.radio(
-    "Show in plots:",
-    options=available_species,
-    index=0,
-    key="plot_species_radio"
-)
+        # Density plot
+        fig = go.Figure()
+        fig.add_trace(go.Histogram(
+            x=vals,
+            nbinsx=80,
+            histnorm="density",
+            name=rep,
+            marker_color="#E71316" if rep in c1 else "#1f77b4",
+            opacity=0.75
+        ))
+        fig.add_vrect(x0=lower, x1=upper, fillcolor="white", opacity=0.35, line_width=2)
+        fig.add_vline(x=mean, line_dash="dash", line_color="black")
+        fig.update_layout(
+            height=300,
+            title=f"<b>{rep}</b>",
+            xaxis_title="Intensity",
+            yaxis_title="Density",
+            showlegend=False
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
-current_data = st.session_state.log10_plot_cache.get(selected_species, st.session_state.log10_plot_cache["All proteins"])
+        # Boxplot (like Schessner et al., 2022 Figure 4)
+        fig_box = go.Figure()
+        fig_box.add_trace(go.Box(y=vals, name=rep, boxpoints='outliers', jitter=0.3, pointpos=-1.8))
+        fig_box.update_layout(height=200, margin=dict(t=10))
+        st.plotly_chart(fig_box, use_container_width=True)
+
 
 # === 4. 6 LOG10 DENSITY PLOTS + TABLE UNDER EACH ===
 st.subheader("Intensity Density Plots (log₁₀)")
