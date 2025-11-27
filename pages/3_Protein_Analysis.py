@@ -21,7 +21,7 @@ all_reps = c1 + c2
 st.title("Protein-Level QC & Transformation")
 
 # === 1. NORMALITY TESTING ON RAW DATA (Schessner et al., 2022) ===
-st.subheader("1. Normality Testing on Raw Data")
+st.subheader("1. Normality Testing on Raw Data (Shapiro-Wilk)")
 
 transform_options = {
     "Raw": lambda x: x,
@@ -76,31 +76,41 @@ for rep in all_reps:
 
 st.table(pd.DataFrame(results))
 st.success(f"**Recommended transformation: {best_transform}** (highest W)")
-st.info("**Shapiro-Wilk W statistic** — Schessner et al., 2022, Figure 4")
 
-# === 2. USER SELECTS: RAW OR TRANSFORMED (DYNAMIC PLOTS) ===
-st.subheader("2. Proceed With")
-proceed_choice = st.radio(
-    "Proceed with:",
-    ["Raw data", f"Transformed data ({best_transform})"],
-    index=1,
-    key="proceed_choice"
-)
+# === 2. USER SELECTS: RAW OR TRANSFORMED + SPECIES ===
+st.subheader("2. Data View")
 
-# Apply transformation if selected
-current_plot_data = df.copy()
+col1, col2 = st.columns(2)
+with col1:
+    proceed_choice = st.radio(
+        "Proceed with:",
+        ["Raw data", f"Transformed data ({best_transform})"],
+        index=1
+    )
+with col2:
+    species_choice = st.radio(
+        "Show species:",
+        ["All proteins", "HUMAN", "ECOLI", "YEAST"],
+        index=0
+    )
+
+# Apply transformation and species filter
+current_data = df.copy()
 if proceed_choice.startswith("Transformed"):
     func = transform_options[best_transform]
-    current_plot_data[all_reps] = current_plot_data[all_reps].apply(func)
+    current_data[all_reps] = current_data[all_reps].apply(func)
 
-# === 3. DYNAMIC 6 LOG10 DENSITY PLOTS + BOXPLOTS ===
+if species_choice != "All proteins":
+    current_data = current_data[current_data["Species"] == species_choice]
+
+# === 3. 6 LOG10 DENSITY PLOTS + BOXPLOTS (Schessner et al., 2022 Figure 4) ===
 st.subheader("Intensity Density Plots & Boxplots")
 
 row1, row2 = st.columns(3), st.columns(3)
 for i, rep in enumerate(all_reps):
     col = row1[i] if i < 3 else row2[i-3]
     with col:
-        vals = current_plot_data[rep].replace(0, np.nan).dropna()
+        vals = current_data[rep].replace(0, np.nan).dropna()
         if len(vals) == 0:
             st.write("No data")
             continue
@@ -131,76 +141,18 @@ for i, rep in enumerate(all_reps):
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # Boxplot (like Schessner et al., 2022 Figure 4)
+        # Boxplot (exactly like Schessner et al., 2022 Figure 4)
         fig_box = go.Figure()
-        fig_box.add_trace(go.Box(y=vals, name=rep, boxpoints='outliers', jitter=0.3, pointpos=-1.8))
-        fig_box.update_layout(height=200, margin=dict(t=10))
-        st.plotly_chart(fig_box, use_container_width=True)
-
-
-# === 4. 6 LOG10 DENSITY PLOTS + TABLE UNDER EACH ===
-st.subheader("Intensity Density Plots (log₁₀)")
-
-row1, row2 = st.columns(3), st.columns(3)
-for i, rep in enumerate(all_reps):
-    col = row1[i] if i < 3 else row2[i-3]
-    with col:
-        if rep not in current_data.columns:
-            st.write("No data")
-            continue
-            
-        vals = current_data[rep].dropna()
-        if len(vals) == 0:
-            st.write("No data")
-            continue
-            
-        mean = float(vals.mean())
-        std = float(vals.std())
-        lower = mean - 2*std
-        upper = mean + 2*std
-
-        fig = go.Figure()
-        fig.add_trace(go.Histogram(
-            x=vals,
-            nbinsx=80,
-            histnorm="density",
+        fig_box.add_trace(go.Box(
+            y=vals,
             name=rep,
-            marker_color="#E71316" if rep in c1 else "#1f77b4",
-            opacity=0.75
+            boxpoints='outliers',
+            jitter=0.3,
+            pointpos=-1.8,
+            marker_color="#E71316" if rep in c1 else "#1f77b4"
         ))
-        fig.add_vrect(x0=lower, x1=upper, fillcolor="white", opacity=0.35, line_width=2)
-        fig.add_vline(x=mean, line_dash="dash", line_color="black")
-        
-        fig.update_layout(
-            height=380,
-            title=f"<b>{rep}</b>",
-            xaxis_title="log₁₀(Intensity)",
-            yaxis_title="Density",
-            showlegend=False
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Table under each plot
-        table_data = []
-        for sp in available_species:
-            sp_data = st.session_state.log10_plot_cache.get(sp, pd.DataFrame())
-            if rep in sp_data.columns:
-                sp_vals = sp_data[rep].dropna()
-                if len(sp_vals) == 0:
-                    mean_str = variance_str = std_str = "—"
-                else:
-                    mean_str = f"{sp_vals.mean():.3f}"
-                    variance_str = f"{sp_vals.var():.3f}"
-                    std_str = f"{sp_vals.std():.3f}"
-            else:
-                mean_str = variance_str = std_str = "—"
-            table_data.append({
-                "Species": sp,
-                "Mean": mean_str,
-                "Variance": variance_str,
-                "Std Dev": std_str
-            })
-        st.table(pd.DataFrame(table_data).set_index("Species"))
+        fig_box.update_layout(height=200, margin=dict(t=10), showlegend=False)
+        st.plotly_chart(fig_box, use_container_width=True)
 
 # === 5. FINAL FILTER STRATEGY ===
 st.subheader("Final Filter Strategy (for Downstream Analysis)")
