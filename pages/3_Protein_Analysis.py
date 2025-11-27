@@ -39,7 +39,7 @@ remove_low_intensity = st.checkbox(
 df_low_filtered = df.copy()
 if remove_low_intensity:
     mask = pd.Series(True, index=df.index)
-    )
+    
     for rep in all_reps:
         mask &= (np.log10(df[rep].replace(0, np.nan)) >= 0.5)
     df_low_filtered = df[mask]
