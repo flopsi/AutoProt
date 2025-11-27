@@ -220,7 +220,7 @@ st.subheader("Data Preview")
 st.dataframe(df_final.head(12), use_container_width=True)
 
 if st.button("Go to Peptide Analysis", type="primary", use_container_width=True):
-    st.switch_page("pages/3_Peptide_Analysis.py")
+    st.switch_page("pages/4_Peptide_Analysis.py")
 
 if st.button("Restart Everything"):
     clear_all_session()
