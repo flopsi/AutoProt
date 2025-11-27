@@ -185,3 +185,51 @@ if st.button("Accept Final Filtering", type="primary"):
     st.session_state.df_filtered = df_final
     st.session_state.qc_accepted = True
     st.success("**Final filtering accepted** — ready for transformation")
+
+# === DYNAMIC PROTEIN COUNT TABLE BASED ON FILTER STRATEGY ===
+st.subheader("Protein Counts After Final Filter")
+
+# Recalculate final filtered dataset
+df_final = df.copy()
+log10_full = np.log10(df[all_reps].replace(0, np.nan))
+
+if filter_strategy in ["Low intensity filtered", "±2σ filtered (on raw data)", "Combined"]:
+    # Low intensity filter
+    mask = pd.Series(True, index=df.index)
+    for rep in all_reps:
+        mask &= (log10_full[rep] >= 0.5)
+    df_final = df[mask]
+    log10_full = log10_full.loc[mask]
+
+if filter_strategy == "±2σ filtered (on raw data)":
+    mask = pd.Series(True, index=df_final.index)
+    for rep in all_reps:
+        vals = log10_full[rep].dropna()
+        if len(vals) == 0: continue
+        mean = vals.mean()
+        std = vals.std()
+        mask &= (log10_full[rep] >= mean - 2*std) & (log10_full[rep] <= mean + 2*std)
+    df_final = df_final[mask]
+
+elif filter_strategy == "Combined":
+    mask = pd.Series(True, index=df_final.index)
+    for rep in all_reps:
+        vals = log10_full[rep].dropna()
+        if len(vals) == 0: continue
+        mean = vals.mean()
+        std = vals.std()
+        mask &= (log10_full[rep] >= mean - 2*std) & (log10_full[rep] <= mean + 2*std)
+    df_final = df_final[mask]
+
+# Build count table
+count_data = []
+for sp in ["All proteins", "HUMAN", "ECOLI", "YEAST"]:
+    base = len(df[df["Species"] == sp]) if sp != "All proteins" and "Species" in df.columns else len(df)
+    filtered = len(df_final[df_final["Species"] == sp]) if sp != "All proteins" and "Species" in df_final.columns else len(df_final)
+    count_data.append({
+        "Species": sp,
+        "Unfiltered": base,
+        "After Filter": filtered
+    })
+
+st.table(pd.DataFrame(count_data).set_index("Species"))
