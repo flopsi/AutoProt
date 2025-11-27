@@ -280,36 +280,44 @@ else:
             st.success("**No significant difference** — excellent reproducibility")
 
     st.info("**PERMANOVA** tests if variance between biological groups is greater than within-group technical variance (Schessner et al., 2022)")
-# === FINAL DATA: ALWAYS log2 — THE GOLD STANDARD ===
-st.success("**Final transformation applied: log₂**")
-st.info("log₂ is the universal standard in proteomics — used by Perseus, DEP, MSstats, limma, and Schessner et al., 2022")
 
-# Apply filtering using best transformation (for accuracy)
+# === FINAL FILTERING & LOG2 TRANSFORMATION (Schessner et al., 2022) ===
+st.subheader("Final Filtering & log₂ Transformation")
+
+# Use best transformation for filtering
+best_transform_func = transform_options[best_transform]
 df_for_filtering = df.copy()
 df_for_filtering[all_reps] = df_for_filtering[all_reps].apply(best_transform_func)
 
-# Apply your filtering (low intensity, ±2σ, etc.)
-mask = ...  # your filtering logic
+# Apply filtering
+mask = pd.Series(True, index=df_for_filtering.index)
+
+if filtering in ["Low intensity", "Combined"]:
+    log10_vals = np.log10(df_for_filtering[all_reps].replace(0, np.nan))
+    mask &= (log10_vals >= 0.5).all(axis=1)
+
+if filtering in ["±2σ filtered", "Combined"]:
+    log10_current = np.log10(df_for_filtering[all_reps].replace(0, np.nan))
+    for rep in all_reps:
+        vals = log10_current[rep].dropna()
+        if len(vals) == 0: continue
+        mean, std = vals.mean(), vals.std()
+        mask &= (log10_current[rep] >= mean - 2*std) & (log10_current[rep] <= mean + 2*std)
+
 filtered_index = df_for_filtering[mask].index
 
-# Keep only filtered proteins
+# Final data: log2 of original raw values (GOLD STANDARD)
 df_final = df.loc[filtered_index].copy()
-
-# === APPLY log2 TO ORIGINAL RAW VALUES — THIS IS THE TRUTH ===
 df_final[all_reps] = np.log2(df_final[all_reps].replace(0, np.nan))
-
-# Optional: impute missing
 df_final[all_reps] = df_final[all_reps].fillna(df_final[all_reps].min() - 1)
 
-# Save
+# Save to session
 st.session_state.intensity_final = df_final[all_reps]
 st.session_state.df_final = df_final
 
-# === 6. ACCEPT ===
-if st.button("Accept & Proceed to Differential Analysis", type="primary"):
-    st.session_state.intensity_transformed = df_processed[all_reps]
-    st.session_state.df_filtered = df_processed
-    st.session_state.transform_applied = best_transform
-    st.session_state.qc_accepted = True
-    st.success("Ready for differential analysis!")
-    st.balloons()
+st.success(f"Final dataset: {len(df_final):,} proteins (log₂ transformed)")
+st.info("**Best filtering** using optimal transformation → **log₂** for biology (Schessner et al., 2022 + community standard)")
+
+# === 5-ROW SNAPSHOT (for differential analysis) ===
+st.subheader("Final Data Snapshot (5 rows)")
+st.dataframe(df_final[all_reps].head(5).round(3), use_container_width=True)
