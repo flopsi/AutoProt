@@ -30,11 +30,17 @@ remove_low_plot = st.checkbox(
 )
 
 df_plot = df.copy()
+
 if remove_low_plot:
-    mask = pd.Series([True] * len(df_plot))
+    # Create mask with SAME INDEX as df_plot
+    mask = pd.Series(True, index=df_plot.index)
     for rep in all_reps:
-        mask &= (np.log10(df_plot[rep].replace(0, np.nan)) >= 0.5)
-    df_plot = df_plot[mask]
+        # Safe log10 on this replicate only
+        log_vals = np.log10(df_plot[rep].replace(0, np.nan))
+        mask = mask & (log_vals >= 0.5)
+    df_plot = df_plot.loc[mask]
+else:
+    df_plot = df.copy()
 
 # === 2. PRE-CALCULATE LOG10 FOR PLOTS (SAFE!) ===
 if "log10_plot_cache" not in st.session_state:
@@ -117,7 +123,7 @@ for i, rep in enumerate(all_reps):
                 table_data.append({"Species": sp, "Mean": mean_s, "Var": var_s, "Std": std_s})
         st.table(pd.DataFrame(table_data).set_index("Species"))
 
-# === 5. FINAL FILTER STRATEGY ===
+# === FINAL FILTER STRATEGY (100% FIXED) ===
 st.subheader("Final Filter Strategy")
 filter_strategy = st.radio(
     "Choose filtering strategy for downstream analysis:",
@@ -126,21 +132,29 @@ filter_strategy = st.radio(
 )
 
 df_final = df.copy()
-log10_full = np.log10(df[all_reps].replace(0, np.nan))
+log10_full = np.log10(df_final[all_reps].replace(0, np.nan))
+
+# Start with full mask
+mask = pd.Series(True, index=df_final.index)
 
 if filter_strategy in ["Low intensity filtered", "Combined"]:
-    mask = (log10_full >= 0.5).all(axis=1)
-    df_final = df_final[mask]
-    log10_full = log10_full.loc[mask]
+    # Must have ≥0.5 in ALL replicates
+    low_intensity_mask = (log10_full >= 0.5).all(axis=1)
+    mask &= low_intensity_mask
 
 if filter_strategy in ["±2σ filtered", "Combined"]:
-    mask = pd.Series([True] * len(df_final))
+    # ±2σ per replicate
+    sigma_mask = pd.Series(True, index=df_final.index)
     for rep in all_reps:
         vals = log10_full[rep].dropna()
-        if len(vals) > 0:
-            m, s = vals.mean(), vals.std()
-            mask &= (log10_full[rep] >= m - 2*s) & (log10_full[rep] <= m + 2*s)
-    df_final = df_final[mask]
+        if len(vals) == 0:
+            continue
+        m, s = vals.mean(), vals.std()
+        rep_mask = (log10_full[rep] >= m - 2*s) & (log10_full[rep] <= m + 2*s)
+        sigma_mask &= rep_mask
+    mask &= sigma_mask
+
+df_final = df_final.loc[mask]
 
 # === 6. REPLICATE DIFFERENCE TESTING (KS TEST) ===
 st.subheader("Replicate Difference Testing (Kolmogorov–Smirnov)")
