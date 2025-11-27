@@ -160,7 +160,6 @@ for sp in ["All proteins", "HUMAN", "ECOLI", "YEAST"]:
         if sp == "All proteins":
             filtered = len(df_low_filtered)
         else:
-            :
             filtered = len(df_low_filtered[df_low_filtered["Species"] == sp]) if "Species" in df_low_filtered.columns else 0
     else:
         # ±2σ or combined
