@@ -280,6 +280,30 @@ else:
             st.success("**No significant difference** — excellent reproducibility")
 
     st.info("**PERMANOVA** tests if variance between biological groups is greater than within-group technical variance (Schessner et al., 2022)")
+# === FINAL DATA: ALWAYS log2 — THE GOLD STANDARD ===
+st.success("**Final transformation applied: log₂**")
+st.info("log₂ is the universal standard in proteomics — used by Perseus, DEP, MSstats, limma, and Schessner et al., 2022")
+
+# Apply filtering using best transformation (for accuracy)
+df_for_filtering = df.copy()
+df_for_filtering[all_reps] = df_for_filtering[all_reps].apply(best_transform_func)
+
+# Apply your filtering (low intensity, ±2σ, etc.)
+mask = ...  # your filtering logic
+filtered_index = df_for_filtering[mask].index
+
+# Keep only filtered proteins
+df_final = df.loc[filtered_index].copy()
+
+# === APPLY log2 TO ORIGINAL RAW VALUES — THIS IS THE TRUTH ===
+df_final[all_reps] = np.log2(df_final[all_reps].replace(0, np.nan))
+
+# Optional: impute missing
+df_final[all_reps] = df_final[all_reps].fillna(df_final[all_reps].min() - 1)
+
+# Save
+st.session_state.intensity_final = df_final[all_reps]
+st.session_state.df_final = df_final
 
 # === 6. ACCEPT ===
 if st.button("Accept & Proceed to Differential Analysis", type="primary"):
