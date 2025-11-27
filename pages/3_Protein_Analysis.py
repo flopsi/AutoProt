@@ -18,8 +18,39 @@ all_reps = c1 + c2
 
 st.title("Protein-Level QC & Transformation")
 
-# === 1. NORMALITY TESTING ON RAW DATA (Schessner et al., 2022) ===
-st.subheader("1. Normality Testing on Raw Data (Shapiro-Wilk)")
+# === 1. FINAL FILTERING (Schessner et al., 2022) ===
+st.subheader("1. Final Filtering Strategy")
+
+filter_strategy = st.radio(
+    "Apply filtering before visualization:",
+    ["Raw data", "Low intensity filtered", "±2σ filtered", "Combined"],
+    index=0,
+    key="final_filter_strategy"
+)
+
+# Apply filtering
+df_filtered = df.copy()
+log10_full = np.log10(df_filtered[all_reps].replace(0, np.nan))
+
+if filter_strategy in ["Low intensity filtered", "Combined"]:
+    mask = pd.Series(True, index=df_filtered.index)
+    for rep in all_reps:
+        mask &= (log10_full[rep] >= 0.5)
+    df_filtered = df_filtered[mask]
+
+if filter_strategy in ["±2σ filtered", "Combined"]:
+    mask = pd.Series(True, index=df_filtered.index)
+    log10_filtered = np.log10(df_filtered[all_reps].replace(0, np.nan))
+    for rep in all_reps:
+        vals = log10_filtered[rep].dropna()
+        if len(vals) == 0: continue
+        mean = vals.mean()
+        std = vals.std()
+        mask &= (log10_filtered[rep] >= mean - 2*std) & (log10_filtered[rep] <= mean + 2*std)
+    df_filtered = df_filtered[mask]
+
+# === 2. NORMALITY TESTING ON RAW DATA ===
+st.subheader("2. Normality Testing on Raw Data (Shapiro-Wilk)")
 
 transform_options = {
     "Raw": lambda x: x,
@@ -74,10 +105,9 @@ for rep in all_reps:
 
 st.table(pd.DataFrame(results))
 st.success(f"**Recommended transformation: {best_transform}** (highest W)")
-st.info("Shapiro-Wilk W statistic — Schessner et al., 2022, Figure 4")
 
-# === 2. USER SELECTS: RAW OR TRANSFORMED + SPECIES ===
-st.subheader("2. Data View")
+# === 3. USER SELECTS: RAW OR TRANSFORMED + SPECIES ===
+st.subheader("3. Data View")
 col1, col2 = st.columns(2)
 with col1:
     proceed_choice = st.radio(
@@ -87,8 +117,8 @@ with col1:
     )
 with col2:
     available_species = ["All proteins"]
-    if "Species" in df.columns:
-        available_species += df["Species"].dropna().unique().tolist()
+    if "Species" in df_filtered.columns:
+        available_species += df_filtered["Species"].dropna().unique().tolist()
     species_choice = st.radio(
         "Show species:",
         available_species,
@@ -96,7 +126,7 @@ with col2:
     )
 
 # Apply transformation and species filter
-current_data = df.copy()
+current_data = df_filtered.copy()
 if proceed_choice.startswith("Transformed"):
     func = transform_options[best_transform]
     current_data[all_reps] = current_data[all_reps].apply(func)
@@ -104,8 +134,8 @@ if proceed_choice.startswith("Transformed"):
 if species_choice != "All proteins":
     current_data = current_data[current_data["Species"] == species_choice]
 
-# === 3. 6 DENSITY PLOTS + BOXPLOTS (Schessner et al., 2022 Figure 4) ===
-st.subheader("Intensity Density Plots & Boxplots")
+# === 4. 6 DENSITY PLOTS (Schessner et al., 2022 Figure 4) ===
+st.subheader("Intensity Density Plots (log₁₀)")
 
 row1, row2 = st.columns(3), st.columns(3)
 for i, rep in enumerate(all_reps):
@@ -121,7 +151,6 @@ for i, rep in enumerate(all_reps):
         lower = mean - 2*std
         upper = mean + 2*std
 
-        # Density plot
         fig = go.Figure()
         fig.add_trace(go.Histogram(
             x=vals,
@@ -133,101 +162,48 @@ for i, rep in enumerate(all_reps):
         ))
         fig.add_vrect(x0=lower, x1=upper, fillcolor="white", opacity=0.35, line_width=2)
         fig.add_vline(x=mean, line_dash="dash", line_color="black")
+        
         fig.update_layout(
-            height=300,
+            height=380,
             title=f"<b>{rep}</b>",
-            xaxis_title="Intensity",
+            xaxis_title="log₁₀(Intensity)",
             yaxis_title="Density",
             showlegend=False
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # Boxplot
-        fig_box = go.Figure()
-        fig_box.add_trace(go.Box(
-            y=vals,
-            name=rep,
-            boxpoints='outliers',
-            jitter=0.3,
-            pointpos=-1.8,
-            marker_color="#E71316" if rep in c1 else "#1f77b4"
-        ))
-        fig_box.update_layout(height=200, margin=dict(t=10), showlegend=False)
-        st.plotly_chart(fig_box, use_container_width=True)
-
-# === FINAL FILTERING & PROTEIN COUNT TABLE (Schessner et al., 2022 Table 1) ===
-st.subheader("Final Filtering & Protein Counts")
-
-filter_strategy = st.radio(
-    "Choose filtering strategy:",
-    ["Raw data", "Low intensity filtered", "±2σ filtered", "Combined"],
-    index=0,
-    key="final_filter_strategy"
-)
-
-# Apply final filtering
-df_final = df.copy()
-log10_full = np.log10(df_final[all_reps].replace(0, np.nan))
-
-if filter_strategy in ["Low intensity filtered", "Combined"]:
-    mask = pd.Series(True, index=df_final.index)
-    for rep in all_reps:
-        mask &= (log10_full[rep] >= 0.5)
-    df_final = df_final[mask]
-
-if filter_strategy in ["±2σ filtered", "Combined"]:
-    mask = pd.Series(True, index=df_final.index)
-    log10_final = np.log10(df_final[all_reps].replace(0, np.nan))
-    for rep in all_reps:
-        vals = log10_final[rep].dropna()
-        if len(vals) == 0: continue
-        mean = vals.mean()
-        std = vals.std()
-        mask &= (log10_final[rep] >= mean - 2*std) & (log10_final[rep] <= mean + 2*std)
-    df_final = df_final[mask]
-
-# === PROTEIN COUNT TABLE — EXACTLY LIKE SCHESSNER ET AL., 2022 TABLE 1 ===
+# === 5. PROTEIN COUNT TABLE ===
 st.subheader("Protein Counts After Final Filtering")
-
 count_data = []
-
-# All proteins
 count_data.append({
     "Species": "All proteins",
     "Before Filter": len(df),
-    "After Filter": len(df_final)
+    "After Filter": len(df_filtered)
 })
-
-# Per species
 if "Species" in df.columns:
-    species_list = ["HUMAN", "ECOLI", "YEAST"]
-    for sp in species_list:
+    for sp in ["HUMAN", "ECOLI", "YEAST"]:
         if sp in df["Species"].values:
             before = len(df[df["Species"] == sp])
-            after = len(df_final[df_final["Species"] == sp])
+            after = len(df_filtered[df_filtered["Species"] == sp])
             count_data.append({
                 "Species": sp,
                 "Before Filter": before,
                 "After Filter": after
             })
 
-count_df = pd.DataFrame(count_data)
-st.table(count_df.style.format({"Before Filter": "{:,}", "After Filter": "{:,}"}))
+st.table(pd.DataFrame(count_data).set_index("Species").style.format("{:,}"))
 
-st.info("**Table 1 from Schessner et al., 2022** — shows impact of filtering on total and species-specific protein numbers")
-# === 5. PROCEED BUTTON ===
-st.markdown("### Confirm & Proceed")
+# === 6. ACCEPT ===
 if st.button("Accept & Proceed to Differential Analysis", type="primary"):
-    # Apply transformation if chosen
     if proceed_choice.startswith("Transformed"):
         func = transform_options[best_transform]
-        transformed = df_final[all_reps].apply(func)
+        transformed = df_filtered[all_reps].apply(func)
     else:
-        transformed = df_final[all_reps]
+        transformed = df_filtered[all_reps]
     
     st.session_state.intensity_transformed = transformed
-    st.session_state.df_filtered = df_final
+    st.session_state.df_filtered = df_filtered
     st.session_state.transform_applied = best_transform if "Transformed" in proceed_choice else "Raw"
     st.session_state.qc_accepted = True
-    st.success("Ready for differential analysis!")
+    st.success("**Ready for differential analysis!**")
     st.balloons()
