@@ -5,18 +5,12 @@ import numpy as np
 import plotly.graph_objects as go
 from scipy import stats
 
-# === SAFETY CHECK — ROBUST & USER-FRIENDLY ===
-required_keys = ["prot_final_df", "prot_final_c1", "prot_final_c2"]
-missing = [k for k in required_keys if k not in st.session_state]
-
-if missing or st.session_state.prot_final_df is None or len(st.session_state.prot_final_df) == 0:
-    st.error("No protein data found! Please complete **Protein Import** first.")
-    if st.button("Go to Protein Import"):
-        st.switch_page("pages/1_Protein_Import.py")
+# Load data
+if "prot_final_df" not in st.session_state:
+    st.error("No protein data found! Please go to Protein Import first.")
     st.stop()
 
-# === LOAD DATA SAFELY ===
-df = st.session_state.prot_final_df.copy()
+df = st.session_state.prot_final_df
 c1 = st.session_state.prot_final_c1
 c2 = st.session_state.prot_final_c2
 all_reps = c1 + c2
@@ -38,7 +32,7 @@ if remove_low_plot:
         mask &= (np.log10(df[rep].replace(0, np.nan)) >= 0.5)
     df_plot = df[mask]
 
-# === 2. PRE-CALCULATE LOG10 FOR PLOTS (CACHED) ===
+# === 2. PRE-CALCULATE LOG10 FOR PLOTS ===
 if "log10_plot_cache" not in st.session_state or st.session_state.get("last_plot_filter") != remove_low_plot:
     raw = df_plot[all_reps].replace(0, np.nan)
     log10_all = np.log10(raw)
@@ -207,7 +201,7 @@ for i, rep1 in enumerate(c2):
         different = "Yes" if p < 0.05 else "No"
         ks_results.append({"Condition": "B", "Rep1": rep1, "Rep2": rep2, "vs": ref_label, "p-value": f"{p:.2e}", "Different?": different})
 
-ks Ostatni = pd.DataFrame(ks_results)
+ks_df = pd.DataFrame(ks_results)
 st.table(ks_df.style.apply(lambda x: ["background: #ffcccc" if v == "Yes" else "background: #ccffcc" for v in x], subset=["Different?"]))
 if any(r["Different?"] == "Yes" for r in ks_results if r["Different?"] != "—"):
     st.error("**Significant differences within condition** — check technical reproducibility")
