@@ -1,10 +1,7 @@
-  2 import streamlit as st                                                   
-
-     3 import pandas as pd                                                      
-
-     4 import io                                                                
-
-     5 import numpy as np  
+import streamlit as st                                                   
+import pandas as pd                                                      
+import io                                                                
+import numpy as np  
 
 # === LOAD DATA ===
 @st.cache_data(show_spinner="Loading data...")
