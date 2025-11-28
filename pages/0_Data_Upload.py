@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from streamlit_tags import st_tags, st_tags_sidebar
-
+import re
 
 st.set_page_config(page_title="Import", layout="wide")
 st.title("Proteomics Data Import — Professional Mode (Schessner et al., 2022)")
@@ -40,6 +40,14 @@ proteomes = st_tags(label="#Type the proteomes in your sample:",
                     suggestions = ["TEST"],
                     maxtags=5,
                     key="proteomes")
+
+
+if proteomes:
+    pattern = "|".join(map(re.escape, proteomes))
+    mask = df["Protein.Names"].astype(str).str.contains(proteomes, case=False, na=False)
+    df_filtered = df[mask]
+else:
+    df_filtered = df
                     
 st.write("### Results:")
 st.write(proteomes)
