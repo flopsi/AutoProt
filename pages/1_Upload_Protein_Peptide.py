@@ -1,28 +1,28 @@
+
 import streamlit as st
 import pandas as pd
+from io import StringIO
 
-# Example DataFrame
-# pages/1_Upload_Protein.py
-import io
-import pandas as pd
-import streamlit as st
+uploaded_file = st.file_uploader("Choose a file")
+if uploaded_file is not None:
+    # To read file as bytes:
+    bytes_data = uploaded_file.getvalue()
+    st.write(bytes_data)
 
+    # To convert to a string based IO:
+    stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
+    st.write(stringio)
 
-@st.cache_data(show_spinner="Loading file...")
-def read_table(b: bytes) -> pd.DataFrame:
-    txt = b.decode("utf-8", errors="replace")
-    if txt.startswith("\ufeff"):
-        txt = txt[1:]
-    return pd.read_csv(io.StringIO(txt), sep=None, engine="python")
+    # To read file as string:
+    string_data = stringio.read()
+    st.write(string_data)
 
-uploaded = st.file_uploader(
-    f"Upload {level.lower()} table (CSV/TSV/TXT)",
-    type=["csv", "tsv", "txt"],
-    key=f"{level.lower()}_uploader")
-
-
-df = read_table(uploaded)
+    # Can be used wherever a "file-like" object is accepted:
+    dataframe = pd.read_csv(uploaded_file)
+    st.write(dataframe)
 # List of widgets to display for each header
+
+
 widgets = ["radio", "tags", "text"]
 
 col1, col2 = st.columns(2)
