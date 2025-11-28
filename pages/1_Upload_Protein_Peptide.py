@@ -1,6 +1,6 @@
+# pages/1_Upload_Protein_Peptide.py
 import io
 import pandas as pd
-import numpy as np
 import streamlit as st
 
 
@@ -12,16 +12,41 @@ def read_table(b: bytes) -> pd.DataFrame:
     return pd.read_csv(io.StringIO(txt), sep=None, engine="python")
 
 
-def protein_mapping_ui():
-    if "protein_bytes" not in st.session_state:
-        st.stop()
+def infer_species_from_name(df: pd.DataFrame, name_col: str | None, key_suffix: str) -> pd.Series:
+    species_keywords = {
+        "HUMAN": ["HUMAN", "HOMO", "HSA"],
+        "MOUSE": ["MOUSE", "MUS", "MMU"],
+        "RAT": ["RAT", "RATTUS", "RNO"],
+        "ECOLI": ["ECOLI", "ESCHERICHIA"],
+        "YEAST": ["YEAST", "SACCHA", "CEREVISIAE"],
+        "BOVIN": ["BOVIN", "BOVINE", "BOS"],
+    }
+    if name_col is None or name_col not in df.columns:
+        return pd.Series(["Unknown"] * len(df), index=df.index)
 
-    df_raw = read_table(st.session_state["protein_bytes"])
+    selected = st.multiselect(
+        "Species tags to use (name-based)",
+        options=list(species_keywords.keys()),
+        default=["HUMAN", "ECOLI", "YEAST"],
+        key=f"species_tags_{key_suffix}",
+    )
+    lookup = {kw: sp for sp in selected for kw in species_keywords[sp]}
 
-    st.subheader("1. Column mapping")
-    st.write(f"Table: {df_raw.shape[0]:,} rows × {df_raw.shape[1]:,} columns")
+    def detect(v):
+        if pd.isna(v):
+            return "Other"
+        s = str(v).upper()
+        for kw, sp in lookup.items():
+            if kw in s:
+                return sp
+        return "Other"
 
-    # Build 2-column mapping table
+    return df[name_col].apply(detect)
+
+
+def protein_mapping(df_raw: pd.DataFrame):
+    st.subheader("Protein mapping")
+
     roles = [
         "Ignore",
         "Protein Group ID",
@@ -29,7 +54,7 @@ def protein_mapping_ui():
         "Species from this column",
         "Quantitative",
     ]
-    # Heuristic defaults
+
     numeric = set(df_raw.select_dtypes(include="number").columns.tolist())
     data = []
     for col in df_raw.columns:
@@ -59,39 +84,34 @@ def protein_mapping_ui():
         key="protein_mapping_editor",
     )
 
-    # Validate roles
     prot_id_cols = edited.loc[edited["role"] == "Protein Group ID", "column_name"]
     if prot_id_cols.empty:
         st.error("Please assign exactly one 'Protein Group ID' column.")
-        st.stop()
+        return
     if len(prot_id_cols) > 1:
         st.error("Multiple columns marked as 'Protein Group ID'. Choose only one.")
-        st.stop()
+        return
     protein_id_col = prot_id_cols.iloc[0]
 
     quant_cols = edited.loc[edited["role"] == "Quantitative", "column_name"].tolist()
     if not quant_cols:
         st.error("Please mark at least one column as 'Quantitative'.")
-        st.stop()
+        return
 
     species_cols = edited.loc[edited["role"] == "Species from this column", "column_name"]
     name_cols = edited.loc[edited["role"] == "Protein Name / Description", "column_name"]
 
-    # Build transformed frame
     df = df_raw.copy().set_index(protein_id_col)
 
-    # Species assignment
     if not species_cols.empty:
         species = df[species_cols.iloc[0]].astype(str)
     else:
-        # fallback to predefined tags in name column(s)
         name_col_for_species = name_cols.iloc[0] if not name_cols.empty else None
-        species = infer_species_from_name(df, name_col_for_species)
+        species = infer_species_from_name(df, name_col_for_species, key_suffix="protein")
 
-    # Quant matrix (keep original names for now; could also rename)
     quant_df = df[quant_cols]
 
-    st.subheader("2. Preview transformed protein table")
+    st.markdown("**Preview transformed protein table**")
     st.write(f"Proteins: {df.shape[0]:,}, Quant columns: {len(quant_cols)}")
     st.write("Species counts:")
     st.write(species.value_counts())
@@ -99,44 +119,140 @@ def protein_mapping_ui():
     preview = df.assign(Species=species)[quant_cols + ["Species"]].head(10)
     st.dataframe(preview, use_container_width=True)
 
-    # Store bundle for downstream use
     st.session_state["protein_upload"] = {
         "df_raw": df_raw,
-        "df": df,                     # indexed by Protein Group ID
+        "df": df,
         "quant_cols": quant_cols,
         "species": species,
         "protein_id_col": protein_id_col,
         "mapping_table": edited,
+        "level": "protein",
     }
 
 
-def infer_species_from_name(df: pd.DataFrame, name_col: str | None) -> pd.Series:
-    species_keywords = {
-        "HUMAN": ["HUMAN", "HOMO", "HSA"],
-        "MOUSE": ["MOUSE", "MUS", "MMU"],
-        "RAT": ["RAT", "RATTUS", "RNO"],
-        "ECOLI": ["ECOLI", "ESCHERICHIA"],
-        "YEAST": ["YEAST", "SACCHA", "CEREVISIAE"],
-        "BOVIN": ["BOVIN", "BOVINE", "BOS"],
-    }
-    if name_col is None or name_col not in df.columns:
-        return pd.Series(["Unknown"] * len(df), index=df.index)
+def peptide_mapping(df_raw: pd.DataFrame):
+    st.subheader("Peptide mapping")
 
-    selected = st.multiselect(
-        "Species tags to use (name-based)",
-        options=list(species_keywords.keys()),
-        default=["HUMAN", "ECOLI", "YEAST"],
-        key=f"species_tags_{name_col}",
+    roles = [
+        "Ignore",
+        "Peptide Sequence",
+        "Protein Group ID",
+        "Protein / Peptide Name",
+        "Species from this column",
+        "Quantitative",
+    ]
+
+    numeric = set(df_raw.select_dtypes(include="number").columns.tolist())
+    data = []
+    for col in df_raw.columns:
+        role = "Quantitative" if col in numeric else "Ignore"
+        cl = col.lower()
+        if "sequence" in cl:
+            role = "Peptide Sequence"
+        elif "pg." in cl or "protein group" in cl or "protein ids" in cl:
+            role = "Protein Group ID"
+        data.append({"column_name": col, "role": role})
+    mapping_df = pd.DataFrame(data)
+
+    edited = st.data_editor(
+        mapping_df,
+        num_rows="fixed",
+        use_container_width=True,
+        column_config={
+            "column_name": st.column_config.TextColumn("Column name", disabled=True),
+            "role": st.column_config.SelectboxColumn("Role", options=roles),
+        },
+        hide_index=True,
+        key="peptide_mapping_editor",
     )
-    lookup = {kw: sp for sp in selected for kw in species_keywords[sp]}
 
-    def detect(v):
-        if pd.isna(v):
-            return "Other"
-        s = str(v).upper()
-        for kw, sp in lookup.items():
-            if kw in s:
-                return sp
-        return "Other"
+    pep_seq_cols = edited.loc[edited["role"] == "Peptide Sequence", "column_name"]
+    if pep_seq_cols.empty:
+        st.error("Please assign at least one 'Peptide Sequence' column.")
+        return
+    peptide_seq_col = pep_seq_cols.iloc[0]
 
-    return df[name_col].apply(detect)
+    quant_cols = edited.loc[edited["role"] == "Quantitative", "column_name"].tolist()
+    if not quant_cols:
+        st.error("Please mark at least one column as 'Quantitative'.")
+        return
+
+    species_cols = edited.loc[edited["role"] == "Species from this column", "column_name"]
+    name_cols = edited.loc[edited["role"].isin(["Protein / Peptide Name"]), "column_name"]
+    protein_id_cols = edited.loc[edited["role"] == "Protein Group ID", "column_name"]
+
+    df = df_raw.copy()
+    # index: peptide sequence, or generated pepN_<proteinID>
+    if peptide_seq_col in df.columns:
+        df = df.set_index(peptide_seq_col)
+    else:
+        base = protein_id_cols.iloc[0] if not protein_id_cols.empty else None
+        if base and base in df.columns:
+            df = df.copy()
+            df.index = [f"pep{i+1}_{pg}" for i, pg in enumerate(df[base].astype(str))]
+        else:
+            df = df.copy()
+            df.index = [f"pep{i+1}" for i in range(len(df))]
+
+    if not species_cols.empty:
+        species = df[species_cols.iloc[0]].astype(str)
+    else:
+        name_col_for_species = name_cols.iloc[0] if not name_cols.empty else None
+        species = infer_species_from_name(df, name_col_for_species, key_suffix="peptide")
+
+    quant_df = df[quant_cols]
+
+    st.markdown("**Preview transformed peptide table**")
+    st.write(f"Peptides: {df.shape[0]:,}, Quant columns: {len(quant_cols)}")
+    st.write("Species counts:")
+    st.write(species.value_counts())
+
+    preview = df.assign(Species=species)[quant_cols + ["Species"]].head(10)
+    st.dataframe(preview, use_container_width=True)
+
+    st.session_state["peptide_upload"] = {
+        "df_raw": df_raw,
+        "df": df,
+        "quant_cols": quant_cols,
+        "species": species,
+        "peptide_index_source": peptide_seq_col,
+        "mapping_table": edited,
+        "level": "peptide",
+    }
+
+
+def main():
+    st.title("Upload Protein & Peptide")
+
+    st.markdown(
+        "1. Upload a table.\n"
+        "2. Use the 2‑column mapping table to assign roles.\n"
+        "3. Check the preview of the transformed DataFrame."
+    )
+
+    level = st.radio(
+        "Data level",
+        options=["Protein", "Peptide"],
+        horizontal=True,
+    )
+
+    uploaded = st.file_uploader(
+        f"Upload {level.lower()} table (CSV/TSV/TXT)",
+        type=["csv", "tsv", "txt"],
+        key=f"{level.lower()}_uploader",
+    )
+    if not uploaded:
+        st.info("Upload a file to start mapping.")
+        return
+
+    df_raw = read_table(uploaded.getvalue())
+    st.write(f"Detected {df_raw.shape[0]:,} rows × {df_raw.shape[1]:,} columns")
+
+    if level == "Protein":
+        protein_mapping(df_raw)
+    else:
+        peptide_mapping(df_raw)
+
+
+if __name__ == "__main__":
+    main()
