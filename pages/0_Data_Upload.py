@@ -1,59 +1,51 @@
-# pages/1_Import.py
 import streamlit as st
 import pandas as pd
-import numpy as np
-from streamlit_tags import st_tags, st_tags_sidebar
-import re
-
-st.set_page_config(page_title="Import", layout="wide")
-st.title("Proteomics Data Import — Professional Mode (Schessner et al., 2022)")
-
-st.markdown("""
-**Two import modes — your choice:**
-- **Metadata-driven** — for complex, multi-condition experiments
-- **Direct column selection** — fast, simple, no metadata needed
-**Exactly as used at Max Planck Institute**
-""")
-
-# === UPLOAD ===
-uploaded_prot = st.file_uploader("Upload Intensity Table (wide format)", type=["csv", "tsv", "txt"])
-if not uploaded_prot:
-    st.info("Please upload either protein or peptide file to continue.")
-    st.stop()
-
-if not uploaded_prot:
-    st.info("Please upload your intensity table.")
-    st.stop()
-
-import re
 
 @st.cache_data
-def load(file):
-    df = pd.read_csv(file, sep=None, engine="python", header=0, index_col=0)
-    return df
+def load_csv(file):
+    return pd.read_csv(file, sep=None, engine="python", header=0, index_col=0)  # adjust as needed
 
-df_prot = load(uploaded_prot)
-st.success(f"Loaded: {len(df_prot):,} features × {len(df_prot.columns):,} columns")
-st.dataframe(df_prot.head(5))
 
-proteomes = st_tags(
-    label="#Type the proteomes in your sample:",
-    text="Press enter to add more",
-    value=["HUMAN", "YEAST", "ECOLI", "RAT"],
-    suggestions=["TEST"],
-    maxtags=5,
-    key="proteomes",
+uploaded = st.file_uploader("Upload CSV", type=["csv"])
+if uploaded is None:
+    st.stop()
+
+df_raw = load_csv(uploaded)
+st.dataframe(df_raw.head())
+
+
+meta_cols = st.multiselect(
+    "Select metadata columns",
+    options=df_raw.columns.tolist(),
 )
 
-if proteomes:
-    pattern = "|".join(map(re.escape, proteomes))
-    mask = df_prot["PG.ProteinNames"].astype(str).str.contains(
-        pattern, case=False, na=False
-    )
-    df_filtered = df_prot[mask]
-else:
-    df_filtered = df_prot
+cond1_col = st.selectbox("Select column for condition 1", df_raw.columns)
+cond2_col = st.selectbox("Select column for condition 2", df_raw.columns)
 
-st.dataframe(df_filtered)
+cond1_value = st.selectbox("Value for condition 1", df_raw[cond1_col].unique())
+cond2_value = st.selectbox("Value for condition 2", df_raw[cond2_col].unique())
 
+
+@st.cache_data
+def get_metadata_df(df, meta_cols):
+    return df[meta_cols].copy()
+
+@st.cache_data
+def get_condition_df(df, cond_col, cond_value):
+    return df[df[cond_col] == cond_value].copy()
+
+
+if meta_cols:
+    df_meta = get_metadata_df(df_raw, tuple(meta_cols))  # lists must be hashable -> tuple
+    st.write("Metadata DF")
+    st.dataframe(df_meta)
+
+df_cond1 = get_condition_df(df_raw, cond1_col, cond1_value)
+df_cond2 = get_condition_df(df_raw, cond2_col, cond2_value)
+
+st.write("Condition 1 DF")
+st.dataframe(df_cond1)
+
+st.write("Condition 2 DF")
+st.dataframe(df_cond2)
 
