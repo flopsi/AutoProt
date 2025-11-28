@@ -47,10 +47,13 @@ proteomes = st_tags(
 
 if proteomes:
     pattern = "|".join(map(re.escape, proteomes))
-    mask = df_prot["PG.ProteinNames"].astype(str).str.contains(pattern, case=False, na=False)
+    mask = df_prot["PG.ProteinNames"].astype(str).str.contains(
+        pattern, case=False, na=False
+    )
     df_filtered = df_prot[mask]
 else:
     df_filtered = df_prot
 
 st.dataframe(df_filtered)
+
 
