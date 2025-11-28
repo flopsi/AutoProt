@@ -15,7 +15,13 @@ def read_table(b: bytes) -> pd.DataFrame:
         txt = txt[1:]
     return pd.read_csv(io.StringIO(txt), sep=None, engine="python")
 
-df = read_table()
+uploaded = st.file_uploader(
+    f"Upload {level.lower()} table (CSV/TSV/TXT)",
+    type=["csv", "tsv", "txt"],
+    key=f"{level.lower()}_uploader")
+
+
+df = read_table(uploaded)
 # List of widgets to display for each header
 widgets = ["radio", "tags", "text"]
 
