@@ -3,7 +3,7 @@ import pandas as pd
 import streamlit as st
 
 
-st.set_page_config(page_title="Protein Header Mapping", layout="wide")
+st.set_page_config(page_title="Single Table Header Mapping", layout="wide")
 
 
 @st.cache_data(show_spinner="Loading file...")
@@ -15,7 +15,7 @@ def read_table(b: bytes) -> pd.DataFrame:
 
 
 def main():
-    st.title("Protein Header Mapping (2‑column dynamic table)")
+    st.title("Single-Table Protein Header Mapping")
 
     uploaded = st.file_uploader(
         "Upload wide-format protein table (CSV/TSV/TXT)",
@@ -31,26 +31,34 @@ def main():
     numeric_cols = df_raw.select_dtypes(include="number").columns.tolist()
     non_numeric_cols = df_raw.columns.difference(numeric_cols).tolist()
 
-    # ---------- 1) Dynamic 2‑column mapping table ----------
-    st.subheader("1. Assign roles (widgets in column 2)")
-
-    role_options = ["Drop", "Protein Group", "Species Information", "Quantitative"]
-
-    # Build initial guess
+    # ---------- build initial single mapping table ----------
     rows = []
     for col in df_raw.columns:
-        cl = col.lower()
-        if col in numeric_cols:
-            default_role = "Quantitative"
-        elif "pg.proteingroups" in cl or "protein group" in cl or "protein ids" in cl:
-            default_role = "Protein Group"
-        elif "name" in cl:
-            default_role = "Species Information"
+        is_numeric = col in numeric_cols
+        dtype = "numeric" if is_numeric else "string"
+
+        if not is_numeric:
+            # metadata rows: default widget is Drop, unless we detect PG/Name
+            cl = col.lower()
+            if "pg.proteingroups" in cl or "protein group" in cl or "protein ids" in cl:
+                widget = "Protein Group"   # radio choice
+            elif "name" in cl:
+                widget = "Species"         # radio choice
+            else:
+                widget = "Drop"
         else:
-            default_role = "Drop"
-        rows.append({"Header": col, "Role": default_role})
+            # quant rows: free-text rename field, start as empty
+            widget = ""
+
+        rows.append({"Header": col, "Widget": widget, "DataType": dtype})
 
     mapping_df = pd.DataFrame(rows)
+
+    st.subheader("1. Configure mapping in a single table")
+    st.markdown(
+        "- For **string rows**: set `Widget` to `Protein Group`, `Species`, or `Drop`.\n"
+        "- For **numeric rows**: type a short name in `Widget` (e.g. A1) for downstream use."
+    )
 
     edited = st.data_editor(
         mapping_df,
@@ -58,74 +66,55 @@ def main():
         use_container_width=True,
         column_config={
             "Header": st.column_config.TextColumn("Header Information", disabled=True),
-            "Role": st.column_config.SelectboxColumn(
-                "Widget / Role",
-                options=role_options,
-                help="Choose how this column is used.",
+            "Widget": st.column_config.TextColumn(
+                "Widget / Role or New Name",
+                help=(
+                    "string rows: one of Protein Group, Species, Drop; "
+                    "numeric rows: free text, e.g. A1, B1."
+                ),
             ),
+            "DataType": st.column_config.TextColumn("Data Type", disabled=True),
         },
         hide_index=True,
-        key="header_mapping_editor",
+        key="single_mapping_editor",
     )
 
-    # ---------- 2) Validate unique Protein Group & Species ----------
-    protein_group_cols = edited.loc[edited["Role"] == "Protein Group", "Header"].tolist()
-    species_cols = edited.loc[edited["Role"] == "Species Information", "Header"].tolist()
-    quant_cols = edited.loc[edited["Role"] == "Quantitative", "Header"].tolist()
+    # ---------- interpret edited table ----------
+    # meta rows: where DataType == "string"
+    meta_rows = edited[edited["DataType"] == "string"]
+    quant_rows = edited[edited["DataType"] == "numeric"]
 
-    if len(protein_group_cols) != 1:
-        st.error("Select **exactly one** column as 'Protein Group'.")
+    # roles: Protein Group / Species / Drop
+    protein_group_rows = meta_rows[meta_rows["Widget"].str.upper() == "PROTEIN GROUP"]
+    species_rows = meta_rows[meta_rows["Widget"].str.upper() == "SPECIES"]
+
+    if len(protein_group_rows) != 1:
+        st.error("In the table, set **exactly one** string row's Widget to 'Protein Group'.")
         return
-    if len(species_cols) != 1:
-        st.error("Select **exactly one** column as 'Species Information'.")
-        return
-    if not quant_cols:
-        st.error("Mark at least one column as 'Quantitative'.")
+    if len(species_rows) != 1:
+        st.error("In the table, set **exactly one** string row's Widget to 'Species'.")
         return
 
-    protein_group_col = protein_group_cols[0]
-    species_source_col = species_cols[0]
+    protein_group_col = protein_group_rows.iloc[0]["Header"]
+    species_source_col = species_rows.iloc[0]["Header"]
 
-    # ---------- 3) Rename quantitative columns (second dynamic table) ----------
-    st.subheader("2. Rename quantitative columns")
+    # species tags from the species row's Widget cell
+    # (e.g. user can type 'HUMAN;ECOLI;YEAST' there)
+    species_tag_cell = species_rows.iloc[0]["Widget"]
+    # default tags if empty
+    if isinstance(species_tag_cell, str) and species_tag_cell.strip():
+        tag_list = [t.strip().upper() for t in species_tag_cell.split(";")]
+    else:
+        tag_list = ["HUMAN", "ECOLI", "YEAST"]
 
-    ren_rows = [{"Original": c, "New name": c} for c in quant_cols]
-    ren_df = pd.DataFrame(ren_rows)
+    st.subheader("2. Interpreted species tags")
+    st.write(f"Using tags from Species row: {tag_list}")
 
-    ren_edited = st.data_editor(
-        ren_df,
-        num_rows="fixed",
-        use_container_width=True,
-        column_config={
-            "Original": st.column_config.TextColumn("Original name", disabled=True),
-            "New name": st.column_config.TextColumn(
-                "New name for downstream", help="Change e.g. long.raw.PG.Quantity → A1"
-            ),
-        },
-        hide_index=True,
-        key="quant_rename_editor",
-    )
-
-    rename_map = {
-        row["Original"]: (row["New name"] or row["Original"])
-        for _, row in ren_edited.iterrows()
-    }
-    quant_cols_renamed = [rename_map[c] for c in quant_cols]
-
-    # ---------- 4) Species mapping via tags on selected species column ----------
-    st.subheader("3. Species mapping via tags")
-
-    tags = st.multiselect(
-        "Species tags to search for (e.g. HUMAN, ECOLI)",
-        options=["HUMAN", "MOUSE", "RAT", "ECOLI", "YEAST", "BOVIN"],
-        default=["HUMAN", "ECOLI", "YEAST"],
-    )
-
-    def detect_species(v):
-        if pd.isna(v):
+    def detect_species(val):
+        if pd.isna(val):
             return "Other"
-        s = str(v).upper()
-        for t in tags:
+        s = str(val).upper()
+        for t in tag_list:
             if t in s:
                 return t
         return "Other"
@@ -134,28 +123,44 @@ def main():
     st.write("Species counts:")
     st.write(species_series.value_counts())
 
-    # ---------- 5) Apply renaming + build final preview ----------
+    # quantitative columns: all numeric headers, renamed from Widget if non-empty
+    rename_map = {}
+    for _, row in quant_rows.iterrows():
+        old = row["Header"]
+        new = row["Widget"].strip() if isinstance(row["Widget"], str) else ""
+        if not new:
+            new = old
+        rename_map[old] = new
+
     df = df_raw.rename(columns=rename_map)
+    quant_cols_renamed = [rename_map[c] for c in numeric_cols]
+
+    # ---------- final transformed DataFrame ----------
+    st.subheader("3. Preview transformed DataFrame")
+
     df_indexed = df.set_index(protein_group_col)
     species_aligned = species_series.reindex(df_indexed.index)
 
-    st.subheader("4. Preview transformed DataFrame")
     preview = df_indexed[quant_cols_renamed].copy()
     preview["Species"] = species_aligned
+    st.write(
+        f"Proteins: {df_indexed.shape[0]:,}, "
+        f"Quant columns: {len(quant_cols_renamed)}, "
+        f"Unique species: {species_aligned.nunique()}"
+    )
     st.dataframe(preview.head(10), use_container_width=True)
 
-    # ---------- 6) Store for downstream use ----------
     st.session_state["protein_upload"] = {
         "df_raw": df_raw,
         "df": df_indexed,
-        "mapping_table": edited,
-        "quant_rename_table": ren_edited,
+        "mapping_table": edited,            # single table as you requested
         "protein_group_col": protein_group_col,
         "species_source_col": species_source_col,
+        "species_tags": tag_list,
         "quant_cols": quant_cols_renamed,
         "species": species_aligned,
     }
-    st.success("Protein data mapped and stored for downstream analysis.")
+    st.success("Protein data mapped and stored for downstream use.")
 
 
 if __name__ == "__main__":
