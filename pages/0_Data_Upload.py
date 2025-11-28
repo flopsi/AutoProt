@@ -4,7 +4,7 @@ import pandas as pd
 
 @st.cache_data
 def load_csv(file):
-    return pd.read_csv(file, sep= , engine="python")  # no fixed index/headers
+    return pd.read_csv(file, sep=None , engine="python")  # no fixed index/headers
 
 uploaded = st.file_uploader("Upload CSV", type=["csv"])
 if uploaded is None:
