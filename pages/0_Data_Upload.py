@@ -25,29 +25,32 @@ if not uploaded_prot:
     st.info("Please upload your intensity table.")
     st.stop()
 
-@st.cache_data  # 👈 Add the caching decorator
+import re
+
+@st.cache_data
 def load(file):
-    df = pd.read_csv(file, sep=None, engine="python", header=0,index_col=0)
+    df = pd.read_csv(file, sep=None, engine="python", header=0, index_col=0)
     return df
 
-df_prot=load(uploaded_prot)
+df_prot = load(uploaded_prot)
 st.success(f"Loaded: {len(df_prot):,} features × {len(df_prot.columns):,} columns")
 st.dataframe(df_prot.head(5))
 
-proteomes = st_tags(label="#Type the proteomes in your sample:",
-                    text = "Press enter to add more",
-                    value = ["HUMAN","YEAST","ECOLI","RAT"],
-                    suggestions = ["TEST"],
-                    maxtags=5,
-                    key="proteomes")
-
+proteomes = st_tags(
+    label="#Type the proteomes in your sample:",
+    text="Press enter to add more",
+    value=["HUMAN", "YEAST", "ECOLI", "RAT"],
+    suggestions=["TEST"],
+    maxtags=5,
+    key="proteomes",
+)
 
 if proteomes:
     pattern = "|".join(map(re.escape, proteomes))
-    mask = df_prot["PG.ProteinNames"].astype(str).str.contains(proteomes, case=False, na=False)
-    df_filtered = df[mask]
+    mask = df_prot["PG.ProteinNames"].astype(str).str.contains(pattern, case=False, na=False)
+    df_filtered = df_prot[mask]
 else:
     df_filtered = df_prot
-                    
-st.write("### Results:")
-st.write(proteomes)
+
+st.dataframe(df_filtered)
+
