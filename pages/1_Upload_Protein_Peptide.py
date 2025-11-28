@@ -2,8 +2,20 @@ import streamlit as st
 import pandas as pd
 
 # Example DataFrame
-df = pd.DataFrame(columns=["A", "B", "C"])
+# pages/1_Upload_Protein.py
+import io
+import pandas as pd
+import streamlit as st
 
+
+@st.cache_data(show_spinner="Loading file...")
+def read_table(b: bytes) -> pd.DataFrame:
+    txt = b.decode("utf-8", errors="replace")
+    if txt.startswith("\ufeff"):
+        txt = txt[1:]
+    return pd.read_csv(io.StringIO(txt), sep=None, engine="python")
+
+df = read_table()
 # List of widgets to display for each header
 widgets = ["radio", "tags", "text"]
 
