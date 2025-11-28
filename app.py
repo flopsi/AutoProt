@@ -5,9 +5,6 @@ from io import StringIO
 uploaded_file = st.file_uploader("Choose a file")
 
 
-    # Can be used wherever a "file-like" object is accepted:
-df = pd.read_csv(uploaded_file)
-    #st.write(dataframe)
 
 
 def dataframe_with_selections(df):
