@@ -17,20 +17,9 @@ if uploaded_file is not None:
     #st.write(string_data)
 
     # Can be used wherever a "file-like" object is accepted:
-    #df = pd.read_csv(uploaded_file)
+    df = pd.read_csv(uploaded_file)
     #st.write(dataframe)
-import streamlit as st
-import numpy as np
-import pandas as pd
 
-df = pd.DataFrame(
-    {
-        "Animal": ["Lion", "Elephant", "Giraffe", "Monkey", "Zebra"],
-        "Habitat": ["Savanna", "Forest", "Savanna", "Forest", "Savanna"],
-        "Lifespan (years)": [15, 60, 25, 20, 25],
-        "Average weight (kg)": [190, 5000, 800, 10, 350],
-    }
-)
 
 def dataframe_with_selections(df):
     df_with_selections = df.copy()
