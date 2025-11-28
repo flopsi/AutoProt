@@ -44,10 +44,10 @@ proteomes = st_tags(label="#Type the proteomes in your sample:",
 
 if proteomes:
     pattern = "|".join(map(re.escape, proteomes))
-    mask = df["Protein.Names"].astype(str).str.contains(proteomes, case=False, na=False)
+    mask = df_prot["Protein.Names"].astype(str).str.contains(proteomes, case=False, na=False)
     df_filtered = df[mask]
 else:
-    df_filtered = df
+    df_filtered = df_prot
                     
 st.write("### Results:")
 st.write(proteomes)
