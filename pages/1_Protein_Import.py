@@ -22,20 +22,30 @@ st.set_page_config(page_title="Protein Import", layout="wide")
 # === STYLING ===
 st.markdown("""
 <style>
-    .header {background:linear-gradient(90deg,#E71316,#A6192E); padding:20px 40px; color:white; margin:-80px -80px 40px;}
+    .header {
+        background: linear-gradient(90deg,#E71316,#A6192E);
+        padding: 20px 40px;
+        color: white;
+        margin: -80px -80px 40px;
+    }
     .header h1,.header p {margin:0;}
     .stButton>button {background:#E71316 !important; color:white !important;}
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="header"><h1>DIA Proteomics Pipeline</h1><p>Protein Import + Metadata</p></div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="header"><h1>DIA Proteomics Pipeline</h1><p>Protein Import + Metadata</p></div>',
+    unsafe_allow_html=True,
+)
 
 # === FILE UPLOAD ===
 col1, col2 = st.columns(2)
 
 with col1:
     if "protein_bytes" not in st.session_state:
-        uploaded_prot = st.file_uploader("Upload Wide-Format Protein File", type=["csv", "tsv", "txt"])
+        uploaded_prot = st.file_uploader(
+            "Upload Wide-Format Protein File", type=["csv", "tsv", "txt"]
+        )
         if uploaded_prot:
             st.session_state.protein_bytes = uploaded_prot.getvalue()
             st.session_state.protein_name = uploaded_prot.name
@@ -45,7 +55,9 @@ with col1:
 
 with col2:
     if "metadata_bytes" not in st.session_state:
-        uploaded_meta = st.file_uploader("Upload Metadata File (metadata.tsv)", type=["tsv", "csv", "txt"])
+        uploaded_meta = st.file_uploader(
+            "Upload Metadata File (metadata.tsv)", type=["tsv", "csv", "txt"]
+        )
         if uploaded_meta:
             st.session_state.metadata_bytes = uploaded_meta.getvalue()
             st.session_state.metadata_name = uploaded_meta.name
@@ -73,29 +85,43 @@ df_raw = load_dataframe(st.session_state.protein_bytes)
 df_meta = load_dataframe(st.session_state.metadata_bytes)
 
 # === METADATA MATCHING (substring in column name) ===
+required_meta_cols = {"Run Label", "Condition", "Replicate"}
+missing_meta = required_meta_cols.difference(df_meta.columns)
+if missing_meta:
+    st.error(
+        "Metadata file missing required columns: "
+        + ", ".join(sorted(missing_meta))
+    )
+    st.stop()
+
 rename_dict = {}
 used_columns = set()
+conditions_seen = set()
 
 for _, row in df_meta.iterrows():
     run_label = str(row["Run Label"]).strip()
     condition = str(row["Condition"]).strip()
     replicate = str(row["Replicate"]).strip()
+    if not run_label:
+        continue
+
     new_name = f"{condition}{replicate}"
+    conditions_seen.add(condition)
 
     matches = [c for c in df_raw.columns if run_label in str(c)]
-    
+
     if len(matches) == 0:
         st.warning(f"Run Label not found in headers: `{run_label}`")
         continue
     if len(matches) > 1:
         st.error(f"Multiple columns contain `{run_label}`: {matches}")
         st.stop()
-    
+
     col = matches[0]
     if col in used_columns:
         st.error(f"Column `{col}` matched more than once!")
         st.stop()
-    
+
     rename_dict[col] = new_name
     used_columns.add(col)
 
@@ -106,32 +132,64 @@ if not rename_dict:
 # Apply renaming
 df = df_raw.rename(columns=rename_dict).copy()
 
-# Extract replicate columns
-c1 = sorted([name for name in rename_dict.values() if name.startswith("A")])
-c2 = sorted([name for name in rename_dict.values() if name.startswith("B")])
+# Derive condition groups from actual prefixes
+conditions_seen = sorted(conditions_seen)
+condition_to_cols = {
+    cond: sorted([c for c in rename_dict.values() if c.startswith(cond)])
+    for cond in conditions_seen
+}
+
+# Keep A/B for backwards compatibility if present; otherwise use first two conditions
+if "A" in condition_to_cols and "B" in condition_to_cols:
+    c1 = condition_to_cols["A"]
+    c2 = condition_to_cols["B"]
+else:
+    c1 = condition_to_cols.get(conditions_seen[0], []) if conditions_seen else []
+    c2 = (
+        condition_to_cols.get(conditions_seen[1], [])
+        if len(conditions_seen) > 1
+        else []
+    )
+
 all_intensity_cols = c1 + c2
 
+if not all_intensity_cols:
+    st.error("No intensity columns were recognized from metadata mapping.")
+    st.stop()
+
 # Convert to float and replace missing/imputed with 1.0
-for col in all_intensity_cols:
-    df[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
+df[all_intensity_cols] = df[all_intensity_cols].apply(
+    lambda s: pd.to_numeric(s, errors="coerce")
+)
 df[all_intensity_cols] = df[all_intensity_cols].replace([0, np.nan], 1.0)
 
 # === EXTRACT FIRST PROTEIN ACCESSION & NAME ===
-pg_cols = [c for c in df.columns if "Protein" in c and ("Group" in c or "Groups" in c) or c.startswith("PG.")]
-if not pg_cols:
-    st.error("Could not find ProteinGroups column (PG.ProteinGroups)")
+prot_group_candidates = [
+    c
+    for c in df.columns
+    if c.startswith("PG.") or ("Protein" in c and "Group" in c)
+]
+if not prot_group_candidates:
+    st.error("Could not find a ProteinGroups-like column (e.g. PG.ProteinGroups).")
     st.stop()
-df["PG"] = df[pg_cols[0]].astype(str).str.split(";").str[0]
+df["PG"] = df[prot_group_candidates[0]].astype(str).str.split(";").str[0]
 
-name_cols = [c for c in df.columns if "ProteinNames" in c or "Gene" in c]
-df["Name"] = df[name_cols[0]].astype(str).str.split(";").str[0] if name_cols else "Unknown"
+name_candidates = [
+    c
+    for c in df.columns
+    if "ProteinNames" in c or "Gene" in c or c.startswith("PG.ProteinNames")
+]
+if name_candidates:
+    df["Name"] = df[name_candidates[0]].astype(str).str.split(";").str[0]
+else:
+    df["Name"] = "Unknown"
 
 # === SPECIES DETECTION FROM PROTEIN NAME ===
 st.subheader("Species Assignment")
 species_keywords = {
     "HUMAN": ["HUMAN", "HOMO", "HSA"],
     "MOUSE": ["MOUSE", "MUS", "MMU"],
-    "RAT":   ["RAT", "RATTUS", "RNO"],
+    "RAT": ["RAT", "RATTUS", "RNO"],
     "ECOLI": ["ECOLI", "ESCHERICHIA"],
     "YEAST": ["YEAST", "SACCHA", "CEREVISIAE"],
     "BOVIN": ["BOVIN", "BOVINE", "BOS"],
@@ -140,13 +198,14 @@ species_keywords = {
 selected = st.multiselect(
     "Which species are present?",
     options=list(species_keywords.keys()),
-    default=["HUMAN", "ECOLI","YEAST"]
+    default=["HUMAN", "ECOLI", "YEAST"],
 )
 
 species_lookup = {}
 for sp in selected:
     for kw in species_keywords[sp]:
         species_lookup[kw] = sp
+
 
 def get_species(name):
     if pd.isna(name):
@@ -156,6 +215,7 @@ def get_species(name):
         if kw in name_up:
             return sp
     return "Other"
+
 
 df["Species"] = df["Name"].apply(get_species)
 
@@ -170,15 +230,17 @@ final_columns = ["PG", "Name", "Species"] + all_intensity_cols
 df_final = df[final_columns].copy()
 
 # === DISPLAY RESULTS ===
-st.success(f"Final dataset: **{len(df_final):,} proteins** × **{len(df_final.columns)} columns**")
+st.success(
+    f"Final dataset: **{len(df_final):,} proteins** × **{len(df_final.columns)} columns**"
+)
 
 colA, colB = st.columns(2)
 with colA:
-    st.subheader("Condition A")
-    st.code(" | ".join(c1), language=None)
+    st.subheader("Condition group 1")
+    st.code(" | ".join(c1) if c1 else "None", language=None)
 with colB:
-    st.subheader("Condition B")
-    st.code(" | ".join(c2), language=None)
+    st.subheader("Condition group 2")
+    st.code(" | ".join(c2) if c2 else "None", language=None)
 
 st.write("**Proteins per species:**")
 for species, count in df_final["Species"].value_counts().items():
@@ -186,8 +248,6 @@ for species, count in df_final["Species"].value_counts().items():
 
 st.subheader("Data Preview")
 st.dataframe(df_final.head(12), use_container_width=True)
-
-
 
 # === SAVE TO SESSION STATE (GUARANTEED TO BE USED IN ANALYSIS) ===
 st.session_state.prot_df = df_final
@@ -199,8 +259,9 @@ st.success("Protein data successfully processed and ready!")
 if st.button("Go to Protein Analysis", type="primary", use_container_width=True):
     st.switch_page("pages/3_Protein_Analysis.py")
 
-# Add this at the end of any page
-st.markdown("""
+# Floating restart banner
+st.markdown(
+    """
 <style>
     .restart-fixed {
         position: fixed;
@@ -220,13 +281,13 @@ st.markdown("""
 <div class="restart-fixed">
     🔄 Restart Entire Analysis
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
-
-#Full Restart Button
+# Full Restart Button
 if st.button("RESTART", key="restart_fixed", help="Clear all data and start over"):
     st.cache_data.clear()
     st.cache_resource.clear()
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
+    clear_all_session()
     st.rerun()
