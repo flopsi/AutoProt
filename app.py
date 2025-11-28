@@ -17,7 +17,7 @@ if uploaded_file is not None:
     #st.write(string_data)
 
     # Can be used wherever a "file-like" object is accepted:
-    df = pd.read_csv(uploaded_file)
+df = pd.read_csv(uploaded_file)
     #st.write(dataframe)
 
 
