@@ -1,34 +1,36 @@
 import streamlit as st
 import pandas as pd
-from io import StringIO
+import io
 
-uploaded_files = st.file_uploader(
-    "Upload data", accept_multiple_files=True, type="csv"
+st.set_page_config(page_title="Cached file upload", layout="centered")
+
+st.title("Upload & cache data")
+
+@st.cache_data
+def load_data(file_bytes: bytes, filename: str) -> pd.DataFrame:
+    """Parse uploaded file and cache the result."""
+    # Decide parser based on extension
+    if filename.lower().endswith(".csv"):
+        return pd.read_csv(io.BytesIO(file_bytes))
+    elif filename.lower().endswith((".xls", ".xlsx")):
+        return pd.read_excel(io.BytesIO(file_bytes))
+    else:
+        raise ValueError("Unsupported file type")
+
+uploaded_file = st.file_uploader(
+    "Upload CSV or Excel",
+    type=["csv", "xls", "xlsx"]
 )
 
-for uploaded_file in uploaded_files:
-    df = pd.read_csv(uploaded_file)
-    return df
-
-
-
-def dataframe_with_selections(df):
-    df_with_selections = df.copy()
-    df_with_selections.insert(0, "Select", False)
-
-    # Get dataframe row-selections from user with st.data_editor
-    edited_df = st.data_editor(
-        df_with_selections,
-        hide_index=True,
-        column_config={"Select": st.column_config.CheckboxColumn(required=True)},
-        disabled=df.columns,
-    )
-
-    # Filter the dataframe using the temporary column, then drop the column
-    selected_rows = edited_df[edited_df.Select]
-    return selected_rows.drop('Select', axis=1)
-
-
-selection = dataframe_with_selections(df)
-st.write("Your selection:")
-st.write(selection)
+if uploaded_file is not None:
+    # Read bytes once; bytes + filename form the cache key
+    file_bytes = uploaded_file.getvalue()
+    try:
+        df = load_data(file_bytes, uploaded_file.name)
+        st.success(f"Loaded {uploaded_file.name}")
+        st.write(df.head())
+        st.caption("Data is cached; re-running the app won't re-parse the file until you upload a different one.")
+    except Exception as e:
+        st.error(f"Error reading file: {e}")
+else:
+    st.info("Please upload a file to begin.")
