@@ -15,128 +15,147 @@ def read_table(b: bytes) -> pd.DataFrame:
 
 
 def main():
-    st.title("Protein Header Mapping")
+    st.title("Protein Header Mapping (2‑column dynamic table)")
 
     uploaded = st.file_uploader(
         "Upload wide-format protein table (CSV/TSV/TXT)",
         type=["csv", "tsv", "txt"],
     )
     if not uploaded:
-        st.info("Upload a file to see the header mapping table.")
+        st.info("Upload a file to start.")
         return
 
     df_raw = read_table(uploaded.getvalue())
     st.write(f"Table: {df_raw.shape[0]:,} rows × {df_raw.shape[1]:,} columns")
 
-    # Detect numeric vs string
     numeric_cols = df_raw.select_dtypes(include="number").columns.tolist()
     non_numeric_cols = df_raw.columns.difference(numeric_cols).tolist()
 
-    # Build a 2-column mapping dataframe: Header Information + Widget description
+    # ---------- 1) Dynamic 2‑column mapping table ----------
+    st.subheader("1. Assign roles (widgets in column 2)")
+
+    role_options = ["Drop", "Protein Group", "Species Information", "Quantitative"]
+
+    # Build initial guess
     rows = []
     for col in df_raw.columns:
-        if col in non_numeric_cols:
-            # PG.ProteinGroups / PG.ProteinNames get a special radio widget
-            if col.lower().startswith("pg.proteingroups") or "proteingroup" in col.lower():
-                widget_desc = "Radio: Protein Group / Species / Drop"
-                dtype = "string"
-            elif col.lower().startswith("pg.proteinnames") or "proteinname" in col.lower():
-                widget_desc = "Radio: Protein Group / Species / Drop"
-                dtype = "string"
-            else:
-                widget_desc = "Radio: Protein Group / Species / Drop"
-                dtype = "string"
+        cl = col.lower()
+        if col in numeric_cols:
+            default_role = "Quantitative"
+        elif "pg.proteingroups" in cl or "protein group" in cl or "protein ids" in cl:
+            default_role = "Protein Group"
+        elif "name" in cl:
+            default_role = "Species Information"
         else:
-            widget_desc = "Text input to change name for downstream"
-            dtype = "numeric"
+            default_role = "Drop"
+        rows.append({"Header": col, "Role": default_role})
 
-        rows.append(
-            {
-                "Header Information": col,
-                "Widget": widget_desc,
-                "Data Type": dtype,
-            }
-        )
+    mapping_df = pd.DataFrame(rows)
 
-    mapping_table = pd.DataFrame(rows)
+    edited = st.data_editor(
+        mapping_df,
+        num_rows="fixed",
+        use_container_width=True,
+        column_config={
+            "Header": st.column_config.TextColumn("Header Information", disabled=True),
+            "Role": st.column_config.SelectboxColumn(
+                "Widget / Role",
+                options=role_options,
+                help="Choose how this column is used.",
+            ),
+        },
+        hide_index=True,
+        key="header_mapping_editor",
+    )
 
-    st.subheader("Header mapping layout")
-    st.dataframe(mapping_table, use_container_width=True)
+    # ---------- 2) Validate unique Protein Group & Species ----------
+    protein_group_cols = edited.loc[edited["Role"] == "Protein Group", "Header"].tolist()
+    species_cols = edited.loc[edited["Role"] == "Species Information", "Header"].tolist()
+    quant_cols = edited.loc[edited["Role"] == "Quantitative", "Header"].tolist()
 
-    # ---- Actual interactive widgets, following the table spec ----
-    st.subheader("Interactive configuration")
+    if len(protein_group_cols) != 1:
+        st.error("Select **exactly one** column as 'Protein Group'.")
+        return
+    if len(species_cols) != 1:
+        st.error("Select **exactly one** column as 'Species Information'.")
+        return
+    if not quant_cols:
+        st.error("Mark at least one column as 'Quantitative'.")
+        return
 
-    # 1) Radio for PG.* and other string meta columns
-    meta_roles = {}
-    st.markdown("**Meta columns (Protein Group / Species / Drop)**")
-    for col in non_numeric_cols:
-        role = st.radio(
-            f"{col}",
-            options=["Protein Group", "Species Information", "Drop"],
-            index=0 if "pg.proteingroups" in col.lower() else 1 if "pg.proteinnames" in col.lower() else 2,
-        )
-        meta_roles[col] = role
+    protein_group_col = protein_group_cols[0]
+    species_source_col = species_cols[0]
 
-    # 2) Text inputs for numeric columns
-    st.markdown("**Quantitative columns (rename for downstream)**")
-    quant_rename = {}
-    for col in numeric_cols:
-        new_name = st.text_input(
-            f"New name for `{col}`",
-            value=col,
-        )
-        quant_rename[col] = new_name or col
+    # ---------- 3) Rename quantitative columns (second dynamic table) ----------
+    st.subheader("2. Rename quantitative columns")
 
-    # Apply mapping
-    df = df_raw.rename(columns=quant_rename)
+    ren_rows = [{"Original": c, "New name": c} for c in quant_cols]
+    ren_df = pd.DataFrame(ren_rows)
 
-    # Determine index for proteins (Protein Group)
-    protein_group_cols = [c for c, r in meta_roles.items() if r == "Protein Group"]
-    protein_group_col = protein_group_cols[0] if protein_group_cols else None
-    if protein_group_col:
-        df = df.set_index(protein_group_col)
+    ren_edited = st.data_editor(
+        ren_df,
+        num_rows="fixed",
+        use_container_width=True,
+        column_config={
+            "Original": st.column_config.TextColumn("Original name", disabled=True),
+            "New name": st.column_config.TextColumn(
+                "New name for downstream", help="Change e.g. long.raw.PG.Quantity → A1"
+            ),
+        },
+        hide_index=True,
+        key="quant_rename_editor",
+    )
 
-    # Species assignment from any column marked as Species Information
-    species_cols = [c for c, r in meta_roles.items() if r == "Species Information"]
-    if species_cols:
-        source_col = species_cols[0]
-        # simple tag-based detection (e.g. HUMAN in A0A0B4J2E5_HUMAN)
-        tags = st.multiselect(
-            "Species tags to search for (e.g. HUMAN, ECOLI)",
-            options=["HUMAN", "MOUSE", "RAT", "ECOLI", "YEAST", "BOVIN"],
-            default=["HUMAN", "ECOLI", "YEAST"],
-        )
-        def detect(v):
-            if pd.isna(v):
-                return "Other"
-            s = str(v).upper()
-            for t in tags:
-                if t in s:
-                    return t
+    rename_map = {
+        row["Original"]: (row["New name"] or row["Original"])
+        for _, row in ren_edited.iterrows()
+    }
+    quant_cols_renamed = [rename_map[c] for c in quant_cols]
+
+    # ---------- 4) Species mapping via tags on selected species column ----------
+    st.subheader("3. Species mapping via tags")
+
+    tags = st.multiselect(
+        "Species tags to search for (e.g. HUMAN, ECOLI)",
+        options=["HUMAN", "MOUSE", "RAT", "ECOLI", "YEAST", "BOVIN"],
+        default=["HUMAN", "ECOLI", "YEAST"],
+    )
+
+    def detect_species(v):
+        if pd.isna(v):
             return "Other"
-        species = df_raw[source_col].apply(detect)
-        species = species.reindex(df.index)
-    else:
-        species = pd.Series(["Unknown"] * len(df), index=df.index)
+        s = str(v).upper()
+        for t in tags:
+            if t in s:
+                return t
+        return "Other"
 
-    # Quantitative columns are all renamed numeric columns
-    quant_cols_renamed = [quant_rename[c] for c in numeric_cols]
+    species_series = df_raw[species_source_col].apply(detect_species)
+    st.write("Species counts:")
+    st.write(species_series.value_counts())
 
-    st.subheader("Preview transformed DataFrame")
-    preview = df[quant_cols_renamed].copy()
-    preview["Species"] = species
+    # ---------- 5) Apply renaming + build final preview ----------
+    df = df_raw.rename(columns=rename_map)
+    df_indexed = df.set_index(protein_group_col)
+    species_aligned = species_series.reindex(df_indexed.index)
+
+    st.subheader("4. Preview transformed DataFrame")
+    preview = df_indexed[quant_cols_renamed].copy()
+    preview["Species"] = species_aligned
     st.dataframe(preview.head(10), use_container_width=True)
 
-    # Store in session_state for downstream pages
+    # ---------- 6) Store for downstream use ----------
     st.session_state["protein_upload"] = {
         "df_raw": df_raw,
-        "df": df,
+        "df": df_indexed,
+        "mapping_table": edited,
+        "quant_rename_table": ren_edited,
+        "protein_group_col": protein_group_col,
+        "species_source_col": species_source_col,
         "quant_cols": quant_cols_renamed,
-        "meta_roles": meta_roles,
-        "quant_rename": quant_rename,
-        "species": species,
+        "species": species_aligned,
     }
-    st.success("Protein data mapped and stored for downstream use.")
+    st.success("Protein data mapped and stored for downstream analysis.")
 
 
 if __name__ == "__main__":
