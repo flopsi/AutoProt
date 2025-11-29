@@ -351,18 +351,33 @@ def config_fragment():
         .astype("float64")
     )
 
-    # Extract species from protein ID column
-    if pg_col and pg_col in working_df.columns:
-        working_df["_extracted_species"] = working_df[pg_col].apply(extract_species_from_protein_id)
-        species_col_to_use = "_extracted_species"
-    else:
-        species_col_to_use = None
+    rename_map = {k: v for k, v in st.session_state.column_renames.items() if k in raw_df.columns}
+    working_df = raw_df.rename(columns=rename_map)
 
-    # Filter by extracted species
+    numeric_cols_renamed = [st.session_state.column_renames.get(c, c) for c in numeric_cols_orig]
+    working_df[numeric_cols_renamed] = (
+        working_df[numeric_cols_renamed]
+        .apply(pd.to_numeric, errors="coerce")
+        .astype("float64")
+    )
+
+    # Clean metadata columns: remove text after semicolon
+    for meta_col in meta_cols:
+        if meta_col in working_df.columns:
+            working_df[meta_col] = working_df[meta_col].astype(str).str.split(';').str[0].str.strip()
+
+    # Use user-selected species column if available
+    species_col_to_use = species_col if species_col else None
+
+    # Filter by species
     processed_df = working_df.copy()
     if species_col_to_use and species_tags:
-        processed_df = filter_by_species(processed_df, species_col_to_use, species_tags)
-        st.info(f"Filtered to {len(processed_df):,} rows matching: {', '.join(species_tags)}")
+        # Extract species tag from the column value (e.g., "sp|P12345|PROT_HUMAN" -> "HUMAN")
+        if species_col_to_use in processed_df.columns:
+            processed_df["_extracted_species"] = processed_df[species_col_to_use].apply(extract_species_from_protein_id)
+            processed_df = filter_by_species(processed_df, "_extracted_species", species_tags)
+            st.info(f"Filtered to {len(processed_df):,} rows matching: {', '.join(species_tags)}")
+
 
     st.markdown("### Data preview")
     st.dataframe(processed_df.head(10), width="stretch", height=300)
