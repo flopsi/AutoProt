@@ -351,7 +351,7 @@ with tab_protein:
         st.markdown("---")
 
         st.markdown("### Sample distributions")
-        fig_violin = create_condition_violin_plot(df_json, numeric_cols)
+        fig_violin = create_superplot_violin(df_json, numeric_cols)
         st.plotly_chart(fig_violin, use_container_width=True)
 
         st.markdown("---")
