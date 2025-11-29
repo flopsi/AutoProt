@@ -27,10 +27,10 @@ render_header()
 # -----------------------
 @dataclass
 class MSData:
-    original: pd.DataFrame        # after filtering + renaming
-    filled: pd.DataFrame          # numeric 0/NaN/1 -> 1
-    log2_filled: pd.DataFrame     # log2(filled)
-    numeric_cols: List[str]       # renamed intensity columns (A1,A2,...)
+    original: pd.DataFrame
+    filled: pd.DataFrame
+    log2_filled: pd.DataFrame
+    numeric_cols: List[str]
 
 
 # Thermo Fisher chart palette (style guide)
@@ -165,7 +165,7 @@ def create_missing_distribution_chart(mask_json: str, label: str) -> go.Figure:
         data=go.Bar(
             x=[str(i) for i in range(max_missing + 1)],
             y=counts,
-            marker_color="#262262",  # NAVY
+            marker_color="#262262",
             hovertemplate="Missing values in row: %{x}<br>Percent: %{y:.1f}%<extra></extra>",
         )
     )
@@ -372,17 +372,17 @@ def render_eda(model: MSData | None, index_col: str | None, label: str):
     col1, col2 = st.columns([2, 1])
     with col1:
         fig_heat = create_intensity_heatmap(df_json, index_col, numeric_cols)
-        st.plotly_chart(fig_heat, use_container_width=True)
+        st.plotly_chart(fig_heat, width='stretch', key=f"heatmap_{label}")
     with col2:
         fig_bar = create_missing_distribution_chart(mask_json, label)
-        st.plotly_chart(fig_bar, use_container_width=True)
+        st.plotly_chart(fig_bar, width='stretch', key=f"missing_{label}")
 
     st.markdown("---")
 
     # Violin: all conditions & replicates
     st.markdown("### Sample distributions (all conditions)")
     fig_violin = create_all_conditions_replicate_violin(df_json, numeric_cols)
-    st.plotly_chart(fig_violin, use_container_width=True)
+    st.plotly_chart(fig_violin, width='stretch', key=f"violin_{label}")
 
     st.markdown("---")
 
@@ -393,7 +393,7 @@ def render_eda(model: MSData | None, index_col: str | None, label: str):
     col1, col2 = st.columns([2, 1])
     with col1:
         fig_pca = create_pca_plot(df_json, numeric_cols)
-        st.plotly_chart(fig_pca, use_container_width=True)
+        st.plotly_chart(fig_pca, width='stretch', key=f"pca_{label}")
     with col2:
         st.markdown("#### PERMANOVA results")
         permanova = compute_permanova(df_json, numeric_cols)
@@ -431,7 +431,7 @@ def render_eda(model: MSData | None, index_col: str | None, label: str):
             "Shapiro p": "{:.2e}",
         }
     )
-    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    st.dataframe(styled_df, width='stretch', hide_index=True)
     st.success(
         f"Recommended transformation for downstream parametric tests: **{best_transform}** "
         f"(highest Shapiro W = {stats_df.loc[best_idx, 'Shapiro W']:.4f})"
