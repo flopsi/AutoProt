@@ -80,6 +80,14 @@ def create_intensity_heatmap(df_json: str, index_col: str | None, numeric_cols: 
         labels = [f"Row {i}" for i in range(len(df))]
 
     sorted_cols = sort_columns_by_condition(numeric_cols)
+    
+    # Limit heatmap to top 100 proteins by variance (avoid huge label list)
+    if len(df) > 100:
+        variance = df[sorted_cols].var(axis=1)
+        top_idx = variance.nlargest(100).index
+        df = df.loc[top_idx]
+        labels = [labels[i] for i in range(len(labels)) if i < len(top_idx)][:100]
+    
     z = df[sorted_cols].values
 
     fig = go.Figure(
@@ -94,7 +102,7 @@ def create_intensity_heatmap(df_json: str, index_col: str | None, numeric_cols: 
         )
     )
     fig.update_layout(
-        title="Intensity distribution (log2 filled)",
+        title="Intensity distribution (log2 filled, top 100 by variance)",
         xaxis_title="Samples",
         yaxis_title="",
         height=500,
