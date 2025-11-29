@@ -190,44 +190,55 @@ def create_missing_distribution_chart(mask_json: str, label: str) -> go.Figure:
     return fig
 
 
-def create_replicate_violin_two_conditions(model: MSData, cond1: str, cond2: str) -> go.Figure:
+import plotly.express as px
+import pandas as pd
+
+def create_all_conditions_replicate_violin(model: MSData) -> go.Figure:
+    """
+    One violin per replicate (A1, A2, A3, B1, ...), all conditions shown.
+    Color = condition (first letter).
+    """
     df_log2 = model.log2_filled
     cols = model.numeric_cols
 
-    # columns for each condition
-    cols1 = [c for c in cols if c.startswith(cond1)]
-    cols2 = [c for c in cols if c.startswith(cond2)]
-    if not cols1 or not cols2:
-        raise ValueError("Selected conditions do not have matching replicate columns.")
+    # long format
+    long_df = df_log2[cols].melt(var_name="Sample", value_name="log2_value")
 
-    # long format for cond1
-    long1 = df_log2[cols1].melt(var_name="Sample", value_name="log2_value")
-    long1["Condition"] = cond1
-    long1["Replicate"] = long1["Sample"].str.extract(r"^.*?(\d+)$")
+    # Condition = first letter, Replicate = digits after it
+    long_df["Condition"] = long_df["Sample"].str.extract(r"^([A-Z])")
+    long_df["Replicate"] = long_df["Sample"].str.extract(r"^.*?(\d+)$")
 
-    # long format for cond2
-    long2 = df_log2[cols2].melt(var_name="Sample", value_name="log2_value")
-    long2["Condition"] = cond2
-    long2["Replicate"] = long2["Sample"].str.extract(r"^.*?(\d+)$")
+    # x-axis order: grouped by condition, then replicate number
+    cond_order = long_df["Condition"].dropna().unique()
+    x_order = []
+    for cond in cond_order:
+        reps = (
+            long_df.loc[long_df["Condition"] == cond, "Replicate"]
+            .dropna()
+            .unique()
+        )
+        reps = sorted(reps, key=lambda r: int(r))
+        x_order.extend([f"{cond}{r}" for r in reps])
 
-    df_long = pd.concat([long1, long2], ignore_index=True)
+    long_df["CondRep"] = long_df["Condition"] + long_df["Replicate"]
 
     fig = px.violin(
-        df_long,
-        x="Replicate",          # one violin per replicate: 1,2,3
+        long_df,
+        x="CondRep",
         y="log2_value",
-        color="Condition",      # trace1 = cond1, trace2 = cond2
+        color="Condition",
         box=True,
         points="all",
+        category_orders={"CondRep": x_order},
     )
 
-    fig.update_traces(width=0.6, scalemode="count", jitter=0.2)
+    fig.update_traces(width=0.7, scalemode="count", jitter=0.2)
     fig.update_layout(
-        title=f"Replicate-wise comparison: {cond1} vs {cond2} (log2 filled)",
-        xaxis_title="Replicate",
+        title="Replicate distributions for all conditions (log2 filled)",
+        xaxis_title="Condition & replicate",
         yaxis_title="log2(intensity)",
-        violinmode="group",     # side-by-side per replicate
-        violingroupgap=0.1,
+        violinmode="group",
+        violingroupgap=0.15,
         violingap=0.05,
         plot_bgcolor="white",
         paper_bgcolor="rgba(0,0,0,0)",
@@ -235,6 +246,7 @@ def create_replicate_violin_two_conditions(model: MSData, cond1: str, cond2: str
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
     return fig
+
 
 
 @st.cache_data
@@ -374,25 +386,10 @@ def render_eda(model: MSData | None, index_col: str | None, label: str):
         st.plotly_chart(fig_bar, use_container_width=True)
 
     st.markdown("---")
-
-    # Violin
-    st.markdown("### Condition comparison per replicate")
-
-    conditions = sorted({c[0] for c in model.numeric_cols if c and c[0].isalpha()})
-    if len(conditions) >= 2:
-        c1, c2 = st.columns(2)
-        with c1:
-            cond1 = st.selectbox("Condition 1", conditions, key=f"{label}_cond1")
-        with c2:
-            cond2 = st.selectbox("Condition 2", conditions, index=1, key=f"{label}_cond2")
     
-        if cond1 != cond2:
-            fig_rep = create_replicate_violin_two_conditions(model, cond1, cond2)
-            st.plotly_chart(fig_rep, use_container_width=True)
-        else:
-            st.info("Select two different conditions to compare.")
-    else:
-        st.info("Not enough conditions to compare (need at least 2).")
+    st.markdown("### Sample distributions (all conditions)")
+    fig_violin = create_all_conditions_replicate_violin(model)
+    st.plotly_chart(fig_violin, use_container_width=True)
 
 
     # PCA + PERMANOVA
