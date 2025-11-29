@@ -134,34 +134,6 @@ def create_intensity_heatmap(df_json: str, index_col: str, numeric_cols: list[st
     )
     return fig
 
-fig = px.violin(
-    df_long,
-    x="Cond_Rep",
-    y="log2_value",
-    color="Condition",
-    box=True,
-    points=False,
-    category_orders={"Cond_Rep": x_order},
-    color_discrete_sequence=px.colors.qualitative.Set2,
-)
-
-# Make violins wider and easier to see
-fig.update_traces(
-    width=0.7,          # 0–1, relative; increase for fatter violins
-    scalemode="count",  # area ~ number of points
-    jitter=0.2,
-)
-
-fig.update_layout(
-    title="Sample intensity distributions by condition & replicate (log2)",
-    violingap=0.05,      # gap between violins within a group
-    violingroupgap=0.25, # gap between condition groups
-    violinmode="group",
-    xaxis_title="Condition & replicate",
-    yaxis_title="log2(intensity)",
-    plot_bgcolor="white",
-    paper_bgcolor="rgba(0,0,0,0)",
-)
 @st.cache_data
 def create_missing_distribution_chart(df_json: str, numeric_cols: list[str], label: str) -> go.Figure:
     df = pd.read_json(df_json)
