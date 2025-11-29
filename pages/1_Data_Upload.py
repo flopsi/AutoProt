@@ -117,21 +117,24 @@ if uploaded_file:
         st.session_state.all_numeric_candidates = numeric_all
         st.session_state.column_renames = auto_rename_columns(quant_default)
 
-    raw_df = st.session_state.raw_df
-    numeric_all = st.session_state.all_numeric_candidates
-    quant_default = st.session_state.original_numeric_cols
-
-    st.success(f"Loaded {len(raw_df):,} rows, {len(raw_df.columns)} columns")
-
-    st.markdown("### Select quantitative columns")
-    st.caption("Numeric columns ending in .raw (Thermo) or .d (Bruker) are pre-selected as quant columns.")
-
-    selected_numeric = st.multiselect(
-        "Quantitative intensity columns",
-        options=numeric_all,
-        default=quant_default,
-        key="quant_cols_select",
-    )
+        raw_df = st.session_state.raw_df
+        numeric_all = st.session_state.all_numeric_candidates
+        quant_default = st.session_state.original_numeric_cols
+        
+        # Ensure defaults are valid options
+        quant_default = [c for c in quant_default if c in numeric_all]
+        if not quant_default:
+            quant_default = numeric_all  # fallback: select all numeric
+        
+        st.markdown("### Select quantitative columns")
+        st.caption("Numeric columns ending in .raw (Thermo) or .d (Bruker) are pre-selected as quant columns.")
+        
+        selected_numeric = st.multiselect(
+            "Quantitative intensity columns",
+            options=numeric_all,
+            default=quant_default,
+            key="quant_cols_select",
+        )
 
     if not selected_numeric:
         st.error("Select at least one quantitative column to continue.")
