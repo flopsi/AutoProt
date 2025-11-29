@@ -218,7 +218,11 @@ def create_filtered_pca_plot(
         return None
 
     numeric_cols_filtered = [c for c in numeric_cols if c in df.columns]
-    data = df[numeric_cols_filtered].T.values
+    
+    # PCA on SAMPLES (transpose: proteins as rows, samples as columns)
+    # After transpose: samples × proteins (each row is a sample)
+    data = df[numeric_cols_filtered].T.values  # samples × features
+    
     valid_cols = np.std(data, axis=0) > 0
     data_clean = data[:, valid_cols]
 
@@ -230,9 +234,12 @@ def create_filtered_pca_plot(
     pca = PCA(n_components=min(3, data_scaled.shape[0]))
     pca_result = pca.fit_transform(data_scaled)
 
+    # Sort columns by condition for labels
     sorted_cols = sort_columns_by_condition(numeric_cols_filtered)
     conditions, color_map = extract_conditions(sorted_cols)
 
+    # CORRECT: pca_result has shape (n_samples, n_components)
+    # Plot samples, NOT proteins
     fig = go.Figure()
     for cond in sorted(set(conditions)):
         idx = [i for i, c in enumerate(conditions) if c == cond]
@@ -242,7 +249,7 @@ def create_filtered_pca_plot(
                 y=pca_result[idx, 1],
                 mode="markers+text",
                 marker=dict(size=12, color=color_map[cond]),
-                text=[sorted_cols[i] for i in idx],
+                text=[sorted_cols[i] for i in idx],  # Sample names: A1, A2, A3
                 textposition="top center",
                 name=f"Condition {cond}",
                 hovertemplate="Sample: %{text}<br>PC1: %{x:.2f}<br>PC2: %{y:.2f}<extra></extra>",
@@ -264,6 +271,7 @@ def create_filtered_pca_plot(
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
     return fig
+
 
 
 def _permanova_core(data: np.ndarray, numeric_cols: list[str]) -> dict:
