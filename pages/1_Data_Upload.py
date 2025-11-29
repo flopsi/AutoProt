@@ -17,28 +17,26 @@ st.set_page_config(
 inject_custom_css()
 render_header()
 
-def is_quant_column(name: str) -> bool:
-    return name.endswith(".raw") or name.endswith(".d")
-    
+
 @dataclass
 class MSData:
-    original: pd.DataFrame       # after filtering + renaming
-    filled: pd.DataFrame         # numeric 0/NaN/1 -> 1
-    log2_filled: pd.DataFrame    # log2 of filled
-    numeric_cols: List[str]      # renamed intensity columns
+    original: pd.DataFrame        # after filtering + renaming
+    filled: pd.DataFrame          # numeric 0/NaN/1 -> 1
+    log2_filled: pd.DataFrame     # log2(filled)
+    numeric_cols: List[str]       # renamed intensity columns (A1,A2,...)
 
 
 def auto_rename_columns(columns: List[str]) -> dict:
     """Auto-rename numeric columns as A1,A2,A3,B1,B2,B3,... (groups of 3)."""
     rename_map = {}
-    condition_letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     for i, col in enumerate(columns):
-        condition_idx = i // 3
-        replicate_num = (i % 3) + 1
-        if condition_idx < len(condition_letters):
-            new_name = f"{condition_letters[condition_idx]}{replicate_num}"
+        cond_idx = i // 3
+        rep = (i % 3) + 1
+        if cond_idx < len(letters):
+            new_name = f"{letters[cond_idx]}{rep}"
         else:
-            new_name = f"C{condition_idx+1}_{replicate_num}"
+            new_name = f"C{cond_idx+1}_{rep}"
         rename_map[col] = new_name
     return rename_map
 
@@ -50,15 +48,19 @@ def filter_by_species(df: pd.DataFrame, col: str, species_tags: list[str]) -> pd
     return df[df[col].astype(str).str.contains(pattern, case=False, na=False)]
 
 
+def is_quant_column(name: str) -> bool:
+    """Heuristic: quant intensity columns usually end with .raw (Thermo) or .d (Bruker)."""
+    return name.endswith(".raw") or name.endswith(".d")
+
+
 def build_msdata(processed_df: pd.DataFrame, numeric_cols_renamed: List[str]) -> MSData:
     """Create original, filled, and log2_filled variants."""
     original = processed_df.copy()
 
     filled = processed_df.copy()
-    # Treat NaN, 0, 1 as missing and set to 1
     vals = filled[numeric_cols_renamed]
     vals = vals.fillna(1)
-    vals = vals.where(~vals.isin([0, 1]), 1)
+    vals = vals.where(~vals.isin([0, 1]), 1)  # 0/1 -> 1
     filled[numeric_cols_renamed] = vals
 
     log2_filled = filled.copy()
@@ -86,7 +88,7 @@ defaults = {
     "raw_df": None,
     "column_renames": {},
     "original_numeric_cols": [],
-    "all_numeric_candidates": [],      # ← add this
+    "all_numeric_candidates": [],
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -103,51 +105,53 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file:
+    # Read file only once per upload cycle
     if st.session_state.raw_df is None:
         raw_df = pd.read_csv(uploaded_file)
         st.session_state.raw_df = raw_df
 
-        # 1) detect numeric candidates
+        # 1) All numeric candidates
         numeric_all = [c for c in raw_df.columns if pd.api.types.is_numeric_dtype(raw_df[c])]
 
-        # 2) pre-select likely quant columns: numeric AND .raw/.d
+        # 2) Preselect likely quant columns based on .raw / .d suffix
         quant_default = [c for c in numeric_all if is_quant_column(c)]
         if not quant_default:
-            quant_default = numeric_all  # fallback
+            quant_default = numeric_all  # fallback if no suffix match
 
-        st.session_state.original_numeric_cols = quant_default
         st.session_state.all_numeric_candidates = numeric_all
+        st.session_state.original_numeric_cols = quant_default
         st.session_state.column_renames = auto_rename_columns(quant_default)
 
-        raw_df = st.session_state.raw_df
-        numeric_all = st.session_state.all_numeric_candidates
-        quant_default = st.session_state.original_numeric_cols
-        
-        # Ensure defaults are valid options
-        quant_default = [c for c in quant_default if c in numeric_all]
-        if not quant_default:
-            quant_default = numeric_all  # fallback: select all numeric
-        
-        st.markdown("### Select quantitative columns")
-        st.caption("Numeric columns ending in .raw (Thermo) or .d (Bruker) are pre-selected as quant columns.")
-        
-        selected_numeric = st.multiselect(
-            "Quantitative intensity columns",
-            options=numeric_all,
-            default=quant_default,
-            key="quant_cols_select",
-        )
+    raw_df = st.session_state.raw_df
+    numeric_all = st.session_state.all_numeric_candidates
+    quant_default = [c for c in st.session_state.original_numeric_cols if c in numeric_all]
+    if not quant_default:
+        quant_default = numeric_all
 
-        if not selected_numeric:
-            st.error("Select at least one quantitative column to continue.")
-            st.stop()
-    
-        st.session_state.original_numeric_cols = selected_numeric
-        st.session_state.column_renames = auto_rename_columns(selected_numeric)
-    
+    st.success(f"Loaded {len(raw_df):,} rows, {len(raw_df.columns)} columns")
+
+    # --------------------------
+    # Quant column selection
+    # --------------------------
+    st.markdown("### Select quantitative columns")
+    st.caption("Numeric columns ending in `.raw` (Thermo) or `.d` (Bruker) are preselected; deselect non-quant columns.")
+
+    selected_numeric = st.multiselect(
+        "Quantitative intensity columns",
+        options=numeric_all,
+        default=quant_default,
+        key="quant_cols_select",
+    )
+
+    if not selected_numeric:
+        st.error("Select at least one quantitative column to continue.")
+        st.stop()
+
+    st.session_state.original_numeric_cols = selected_numeric
+    st.session_state.column_renames = auto_rename_columns(selected_numeric)
+
     original_numeric_cols = st.session_state.original_numeric_cols
     non_numeric_cols = [c for c in raw_df.columns if c not in original_numeric_cols]
-
 
     @st.fragment
     def config_fragment():
@@ -202,7 +206,7 @@ if uploaded_file:
 
         # 2) Column renaming
         with st.expander("Edit column names (auto-named as A1,A2,A3,B1,B2,B3,...)", expanded=False):
-            st.caption("Columns are grouped in sets of 3 replicates per condition")
+            st.caption("Columns are grouped in sets of 3 replicates per condition.")
             edited_names = {}
             cols_per_row = 6
             for i in range(0, len(original_numeric_cols), cols_per_row):
@@ -269,10 +273,8 @@ if uploaded_file:
         col_btn1, col_btn2, _ = st.columns([1, 1, 3])
         with col_btn1:
             if st.button("Confirm & cache", type="primary"):
-                # Build MSData with original/filled/log2_filled
                 model = build_msdata(processed_df, numeric_cols_renamed)
 
-                # Missing mask relative to original numeric cols before filling
                 missing_mask = processed_df[numeric_cols_renamed].isna() | (
                     processed_df[numeric_cols_renamed] <= 1
                 )
@@ -285,6 +287,7 @@ if uploaded_file:
                 st.session_state.raw_df = None
                 st.session_state.column_renames = {}
                 st.session_state.original_numeric_cols = []
+                st.session_state.all_numeric_candidates = []
                 st.session_state.upload_key += 1
                 st.rerun()
 
@@ -293,6 +296,7 @@ if uploaded_file:
                 st.session_state.raw_df = None
                 st.session_state.column_renames = {}
                 st.session_state.original_numeric_cols = []
+                st.session_state.all_numeric_candidates = []
                 st.session_state.upload_key += 1
                 st.rerun()
 
