@@ -1,5 +1,5 @@
 import streamlit as st
-from components import inject_custom_css, render_navbar, render_footer, COLORS
+from components import inject_custom_css, render_header, render_navigation, render_footer, COLORS
 
 st.set_page_config(
     page_title="Proteomics Analysis | Thermo Fisher Scientific",
@@ -9,7 +9,7 @@ st.set_page_config(
 )
 
 inject_custom_css()
-render_navbar(active_page="home")
+render_header()
 
 st.markdown("### Welcome")
 st.write("This application provides tools for analyzing proteomics data from mass spectrometry experiments.")
@@ -54,5 +54,5 @@ with c2:
     else:
         st.info("No peptide data loaded")
 
-st.markdown("---")
+render_navigation(back_page=None, next_page="pages/1_Data_Upload.py")
 render_footer()
