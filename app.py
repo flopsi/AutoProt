@@ -327,13 +327,12 @@ if uploaded_file:
         st.warning(f"⚠ {data_type.capitalize()} data already cached. Confirming will overwrite.")
     
     st.markdown(f"### 💾 Cache as {data_type} data?")
-    st.caption(f"Missing values in numeric columns will be replaced with 1. Protein group column (`{protein_group_col}`) will be preserved for mapping.")
-    
+st.caption(f"Missing values (NaN, 0) in numeric columns will be replaced with 1. Protein group column (`{protein_group_col}`) will be preserved for mapping.")    
     col_btn1, col_btn2, _ = st.columns([1, 1, 3])
     with col_btn1:
         if st.button("✓ Confirm & cache", type="primary"):
             cache_df = processed_df.copy()
-            cache_df[numeric_final] = cache_df[numeric_final].fillna(1)
+            cache_df[numeric_final] = cache_df[numeric_final].fillna(1).replace(0, 1)
             
             st.session_state[existing_key] = cache_df
             st.session_state[index_key] = protein_group_col
