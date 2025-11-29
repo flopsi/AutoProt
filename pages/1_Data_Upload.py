@@ -290,7 +290,6 @@ def config_fragment():
                 st.rerun()
 
     config_fragment()
-
 else:
     st.info("Upload a CSV file to begin")
 
