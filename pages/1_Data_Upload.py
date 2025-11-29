@@ -126,12 +126,12 @@ if uploaded_file:
             key = quant_group_key(c, n=25)
             group_map.setdefault(key, []).append(c)
 
-        st.session_state.all_numeric_candidates = numeric_all
-        st.session_state.quant_groups = group_map
+st.session_state.all_numeric_candidates = numeric_all
+st.session_state.quant_groups = group_map
     
         # Default: all groups (all numeric columns)
-        st.session_state.original_numeric_cols = numeric_all
-        st.session_state.column_renames = auto_rename_columns(numeric_all)
+st.session_state.original_numeric_cols = numeric_all
+st.session_state.column_renames = auto_rename_columns(numeric_all)
 
 raw_df = st.session_state.raw_df
 numeric_all = st.session_state.all_numeric_candidates
