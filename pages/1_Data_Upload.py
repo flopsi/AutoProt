@@ -101,18 +101,18 @@ if uploaded_file:
         raw_df = pd.read_csv(uploaded_file)
         st.session_state.raw_df = raw_df
         # Detect all numeric columns (candidates)
-        numeric_all = [c for c in raw_df.columns if pd.api.types.is_numeric_dtype(raw_df[c])]
-        if not numeric_all:
-            st.error("No numeric columns detected. Please upload a matrix with numeric intensities.")
-            st.stop()
-    
-        st.session_state.original_numeric_cols = numeric_all
-        st.session_state.column_renames = auto_rename_columns(numeric_all)
 
-        raw_df = st.session_state.raw_df
-        numeric_all = st.session_state.original_numeric_cols
+numeric_all = [c for c in raw_df.columns if pd.api.types.is_numeric_dtype(raw_df[c])]
+if not numeric_all:
+    st.error("No numeric columns detected. Please upload a matrix with numeric intensities.")
+    st.stop()
     
-        st.success(f"Loaded {len(raw_df):,} rows, {len(raw_df.columns)} columns")
+    st.session_state.original_numeric_cols = numeric_all
+    st.session_state.column_renames = auto_rename_columns(numeric_all)
+    raw_df = st.session_state.raw_df
+    numeric_all = st.session_state.original_numeric_cols
+    
+    st.success(f"Loaded {len(raw_df):,} rows, {len(raw_df.columns)} columns")
 
     # --------------------------
     # Quant column selection with last-25-char labels
