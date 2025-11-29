@@ -204,13 +204,97 @@ def analyze_transformations(df_json: str, numeric_cols: list[str]) -> pd.DataFra
 
     results = [{"Transformation": name, **compute_normality_stats(vals)} for name, vals in transforms.items()]
     return pd.DataFrame(results)
+# -----------------------
+# Multi-species PCA helper
+# -----------------------
+@st.cache_data
+def detect_species_distribution(df_json: str, species_col: str | None) -> dict | None:
+    """Detect species composition if species_col exists."""
+    if not species_col:
+        return None
+    df = pd.read_json(df_json)
+    if species_col not in df.columns:
+        return None
+    
+    species_counts = df[species_col].value_counts()
+    if len(species_counts) < 2:
+        return None
+    
+    return {
+        "species": species_counts.index.tolist(),
+        "counts": species_counts.values.tolist(),
+        "most_frequent": species_counts.index[0],
+        "others": species_counts.index[1:].tolist(),
+    }
 
 
 @st.cache_data
-def compute_permanova(df_json: str, numeric_cols: list[str], n_perm: int = 999) -> dict:
+def create_filtered_pca_plot(df_json: str, numeric_cols: list[str], species_col: str | None, filter_species: list[str] | None) -> tuple[go.Figure, list[str]]:
+    """Create PCA for filtered species subset."""
     df = pd.read_json(df_json)
-    data = df[numeric_cols].T.values
-    sorted_cols = sort_columns_by_condition(numeric_cols)
+    
+    # Filter by species if specified
+    if filter_species and species_col and species_col in df.columns:
+        mask = df[species_col].isin(filter_species)
+        df = df[mask]
+    
+    if len(df) < 3:
+        return None, []
+    
+    numeric_cols_filtered = [c for c in numeric_cols if c in df.columns]
+    data = df[numeric_cols_filtered].T.values
+    valid_cols = np.std(data, axis=0) > 0
+    data_clean = data[:, valid_cols]
+    
+    if data_clean.shape[1] < 2:
+        return None, []
+    
+    scaler = StandardScaler()
+    data_scaled = scaler.fit_transform(data_clean)
+    pca = PCA(n_components=min(3, data_scaled.shape[0]))
+    pca_result = pca.fit_transform(data_scaled)
+
+    sorted_cols = sort_columns_by_condition(numeric_cols_filtered)
+    conditions, color_map = extract_conditions(sorted_cols)
+
+    fig = go.Figure()
+    for cond in sorted(set(conditions)):
+        idx = [i for i, c in enumerate(conditions) if c == cond]
+        fig.add_trace(
+            go.Scatter(
+                x=pca_result[idx, 0], y=pca_result[idx, 1], mode="markers+text",
+                marker=dict(size=12, color=color_map[cond]), text=[sorted_cols[i] for i in idx],
+                textposition="top center", name=f"Condition {cond}",
+                hovertemplate="Sample: %{text}<br>PC1: %{x:.2f}<br>PC2: %{y:.2f}<extra></extra>",
+            )
+        )
+
+    fig.update_layout(
+        title="PCA - Sample clustering",
+        xaxis_title=f"PC1 ({pca.explained_variance_ratio_[0]*100:.1f}% var)",
+        yaxis_title=f"PC2 ({pca.explained_variance_ratio_[1]*100:.1f}% var)" if len(pca.explained_variance_ratio_) > 1 else "PC2",
+        height=400, plot_bgcolor="#FFFFFF", paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Arial", color="#54585A"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    return fig, numeric_cols_filtered
+
+
+@st.cache_data
+def compute_permanova_filtered(df_json: str, numeric_cols: list[str], species_col: str | None, filter_species: list[str] | None, n_perm: int = 999) -> dict:
+    """PERMANOVA for filtered species subset."""
+    df = pd.read_json(df_json)
+    
+    if filter_species and species_col and species_col in df.columns:
+        mask = df[species_col].isin(filter_species)
+        df = df[mask]
+    
+    if len(df) < 3:
+        return {"F": np.nan, "p": np.nan, "R2": np.nan}
+    
+    numeric_cols_filtered = [c for c in numeric_cols if c in df.columns]
+    data = df[numeric_cols_filtered].T.values
+    sorted_cols = sort_columns_by_condition(numeric_cols_filtered)
     conditions = np.array([c[0] if c and c[0].isalpha() else "X" for c in sorted_cols])
 
     if len(np.unique(conditions)) < 2:
@@ -240,7 +324,6 @@ def compute_permanova(df_json: str, numeric_cols: list[str], n_perm: int = 999) 
     p_val = (np.sum(np.array(f_perms) >= F_obs) + 1) / (n_perm + 1)
 
     return {"F": F_obs, "p": p_val, "R2": R2}
-
 
 # -----------------------
 # Page logic
@@ -292,26 +375,84 @@ def render_eda(model: MSData | None, index_col: str | None, label: str):
 
     st.markdown("---")
 
-    # Row 3: PCA + PERMANOVA
-    st.markdown("### Variance analysis")
-    st.caption("PCA clustering and PERMANOVA test for biological variance (conditions = first letter of sample).")
-
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        fig_pca = create_pca_plot(df_json, numeric_cols)
-        st.plotly_chart(fig_pca, width='stretch', key=f"pca_{label}")
-    with col2:
-        st.markdown("#### PERMANOVA results")
-        permanova = compute_permanova(df_json, numeric_cols)
-        st.metric("Pseudo-F", f"{permanova['F']:.2f}" if not np.isnan(permanova['F']) else "N/A")
-        st.metric("R² (var explained)", f"{permanova['R2']*100:.1f}%" if not np.isnan(permanova['R2']) else "N/A")
-        st.metric("p-value", f"{permanova['p']:.4f}" if not np.isnan(permanova['p']) else "N/A")
-        if permanova['p'] < 0.05:
-            st.success("✓ Significant biological variance (p < 0.05)")
-        elif not np.isnan(permanova['p']):
-            st.warning("No significant biological variance detected")
-
     st.markdown("---")
+
+    # Row 3: Variance analysis with multi-species PCA
+    st.markdown("### Variance analysis")
+    
+    # Detect species composition
+    species_dist = detect_species_distribution(df_json, index_col)
+    
+    if species_dist and len(species_dist["species"]) >= 2:
+        # Multi-species layout
+        st.caption(f"Species detected: {', '.join(species_dist['species'])}. Showing PCA for: All | {species_dist['most_frequent']} only | {'+'.join(species_dist['others'])}")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        # PCA 1: All species
+        with col1:
+            fig_pca_all = create_filtered_pca_plot(df_json, numeric_cols, index_col, None)[0]
+            if fig_pca_all:
+                st.plotly_chart(fig_pca_all, width='stretch', key=f"pca_all_{label}")
+                permanova_all = compute_permanova_filtered(df_json, numeric_cols, index_col, None)
+                st.metric("F-stat (all)", f"{permanova_all['F']:.2f}" if not np.isnan(permanova_all['F']) else "N/A", key=f"f_all_{label}")
+                st.metric("p-value", f"{permanova_all['p']:.4f}" if not np.isnan(permanova_all['p']) else "N/A", key=f"p_all_{label}")
+        
+        # PCA 2: Most frequent species only
+        with col2:
+            fig_pca_most = create_filtered_pca_plot(df_json, numeric_cols, index_col, [species_dist['most_frequent']])[0]
+            if fig_pca_most:
+                st.plotly_chart(fig_pca_most, width='stretch', key=f"pca_most_{label}")
+                permanova_most = compute_permanova_filtered(df_json, numeric_cols, index_col, [species_dist['most_frequent']])
+                st.metric("F-stat", f"{permanova_most['F']:.2f}" if not np.isnan(permanova_most['F']) else "N/A", key=f"f_most_{label}")
+                st.metric("p-value", f"{permanova_most['p']:.4f}" if not np.isnan(permanova_most['p']) else "N/A", key=f"p_most_{label}")
+        
+        # PCA 3: Other species combined
+        with col3:
+            fig_pca_others = create_filtered_pca_plot(df_json, numeric_cols, index_col, species_dist['others'])[0]
+            if fig_pca_others:
+                st.plotly_chart(fig_pca_others, width='stretch', key=f"pca_others_{label}")
+                permanova_others = compute_permanova_filtered(df_json, numeric_cols, index_col, species_dist['others'])
+                st.metric("F-stat", f"{permanova_others['F']:.2f}" if not np.isnan(permanova_others['F']) else "N/A", key=f"f_others_{label}")
+                st.metric("p-value", f"{permanova_others['p']:.4f}" if not np.isnan(permanova_others['p']) else "N/A", key=f"p_others_{label}")
+        
+        # Preprocessing recommendation
+        st.markdown("---")
+        all_sig = [permanova_all['p'], permanova_most['p'], permanova_others['p']]
+        all_sig_clean = [p for p in all_sig if not np.isnan(p)]
+        
+        if all(p >= 0.05 for p in all_sig_clean):
+            st.error("🔴 **STRONG recommendation: Preprocessing REQUIRED**\n\nAll PCA/PERMANOVA tests are non-significant. "
+                    "This indicates technical noise dominates biological signal. Start with:\n"
+                    "1. Phase 1: Data quality filtering\n"
+                    "2. Phase 2: Batch-aware missing value imputation\n"
+                    "3. Re-analyze before proceeding to statistics.")
+        elif not np.isnan(permanova_others['p']) and permanova_others['p'] < 0.05 and permanova_all['p'] >= 0.05:
+            st.warning("🟡 **MEDIUM recommendation: Preprocessing SUGGESTED**\n\nSignal detected in non-dominant species but masked in combined analysis. "
+                      "Try:\n"
+                      "1. Phase 3: Batch effect correction (ComBat/SVA)\n"
+                      "2. Phase 4: Within-species normalization")
+        else:
+            st.info("🟢 **Signal detected. Optional: Phase 1 filtering to reduce noise.**")
+    
+    else:
+        # Single species - use original single PCA
+        st.caption("PCA clustering and PERMANOVA test for biological variance (conditions = first letter of sample).")
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            fig_pca = create_pca_plot(df_json, numeric_cols)
+            st.plotly_chart(fig_pca, width='stretch', key=f"pca_{label}")
+        with col2:
+            st.markdown("#### PERMANOVA results")
+            permanova = compute_permanova(df_json, numeric_cols)
+            st.metric("Pseudo-F", f"{permanova['F']:.2f}" if not np.isnan(permanova['F']) else "N/A")
+            st.metric("R² (var explained)", f"{permanova['R2']*100:.1f}%" if not np.isnan(permanova['R2']) else "N/A")
+            st.metric("p-value", f"{permanova['p']:.4f}" if not np.isnan(permanova['p']) else "N/A")
+            if permanova['p'] < 0.05:
+                st.success("✓ Significant biological variance (p < 0.05)")
+            elif not np.isnan(permanova['p']):
+                st.warning("No significant biological variance detected")
+
 
     # Row 4: Normality - use ALL transformation precomputes
     st.markdown("### Normality analysis")
