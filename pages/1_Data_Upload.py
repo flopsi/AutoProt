@@ -26,7 +26,6 @@ def auto_rename_columns(columns: list[str]) -> dict:
         if condition_idx < len(condition_letters):
             new_name = f"{condition_letters[condition_idx]}{replicate_num}"
         else:
-            # Fallback for >26 conditions
             new_name = f"C{condition_idx+1}_{replicate_num}"
 
         rename_map[col] = new_name
@@ -202,9 +201,12 @@ if uploaded_file:
                 missing_mask = cache_df[numeric_cols_renamed].isna() | (cache_df[numeric_cols_renamed] <= 1)
                 cache_df[numeric_cols_renamed] = cache_df[numeric_cols_renamed].fillna(1).replace(0, 1)
 
+                # Cache data
                 st.session_state[existing_key] = cache_df
                 st.session_state[index_key] = protein_group_col
                 st.session_state[mask_key] = missing_mask
+
+                # Clear upload state
                 st.session_state.raw_df = None
                 st.session_state.column_renames = {}
                 st.session_state.original_numeric_cols = []
