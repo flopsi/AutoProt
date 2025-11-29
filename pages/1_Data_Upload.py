@@ -25,7 +25,11 @@ class MSData:
     log2_filled: pd.DataFrame     # log2(filled)
     numeric_cols: List[str]       # renamed intensity columns (A1,A2,...)
 
-
+def quant_group_key(col: str, n: int = 25) -> str:
+    """Group key based on the last n characters of the original column name."""
+    col_str = str(col)
+    return col_str[-n:] if len(col_str) > n else col_str
+    
 def auto_rename_columns(columns: List[str]) -> dict:
     """Auto-rename numeric columns as A1,A2,A3,B1,B2,B3,... (groups of 3)."""
     rename_map = {}
@@ -112,40 +116,57 @@ if uploaded_file:
 
         # 1) All numeric candidates
         numeric_all = [c for c in raw_df.columns if pd.api.types.is_numeric_dtype(raw_df[c])]
+        if not numeric_all:
+            st.error("No numeric columns detected. Please upload a matrix with numeric intensities.")
+            st.stop()
 
-        # 2) Preselect likely quant columns based on .raw / .d suffix
-        quant_default = [c for c in numeric_all if is_quant_column(c)]
-        if not quant_default:
-            quant_default = numeric_all  # fallback if no suffix match
+        # 2) Build quant groups by last 25 chars
+        group_map: dict[str, list[str]] = {}
+        for c in numeric_all:
+            key = quant_group_key(c, n=25)
+            group_map.setdefault(key, []).append(c)
 
         st.session_state.all_numeric_candidates = numeric_all
-        st.session_state.original_numeric_cols = quant_default
-        st.session_state.column_renames = auto_rename_columns(quant_default)
+        st.session_state.quant_groups = group_map
+
+        # Default: all groups (all numeric columns)
+        st.session_state.original_numeric_cols = numeric_all
+        st.session_state.column_renames = auto_rename_columns(numeric_all)
 
     raw_df = st.session_state.raw_df
     numeric_all = st.session_state.all_numeric_candidates
-    quant_default = [c for c in st.session_state.original_numeric_cols if c in numeric_all]
-    if not quant_default:
-        quant_default = numeric_all
+    group_map = st.session_state.quant_groups
 
     st.success(f"Loaded {len(raw_df):,} rows, {len(raw_df.columns)} columns")
 
     # --------------------------
-    # Quant column selection
+    # Quant group selection
     # --------------------------
-    st.markdown("### Select quantitative columns")
-    st.caption("Numeric columns ending in `.raw` (Thermo) or `.d` (Bruker) are preselected; deselect non-quant columns.")
-
-    selected_numeric = st.multiselect(
-        "Quantitative intensity columns",
-        options=numeric_all,
-        default=quant_default,
-        key="quant_cols_select",
+    st.markdown("### Select quantitative column groups")
+    st.caption(
+        "Columns are grouped by the last 25 characters of their original name. "
+        "Select which groups (typically 3 replicates) are quantitative."
     )
 
-    if not selected_numeric:
-        st.error("Select at least one quantitative column to continue.")
+    all_groups = list(group_map.keys())
+    selected_groups = st.multiselect(
+        "Quant groups (last 25 chars)",
+        options=all_groups,
+        default=all_groups,          # default = keep everything
+        key="quant_group_select",
+    )
+
+    if not selected_groups:
+        st.error("Select at least one quant group to continue.")
         st.stop()
+
+    # Expand selected groups back to concrete columns
+    selected_numeric = []
+    for g in selected_groups:
+        selected_numeric.extend(group_map.get(g, []))
+
+    # De-duplicate while preserving original order
+    selected_numeric = [c for c in numeric_all if c in selected_numeric]
 
     st.session_state.original_numeric_cols = selected_numeric
     st.session_state.column_renames = auto_rename_columns(selected_numeric)
@@ -155,6 +176,9 @@ if uploaded_file:
 
     @st.fragment
     def config_fragment():
+        # (rest of your fragment body unchanged, using original_numeric_cols / non_numeric_cols)
+        ...
+
         # 1) Column configuration
         with st.expander("Column configuration", expanded=True):
             col1, col2, col3 = st.columns(3)
