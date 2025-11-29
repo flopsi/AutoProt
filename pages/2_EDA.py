@@ -23,9 +23,6 @@ inject_custom_css()
 render_header()
 
 
-# -----------------------
-# Data model
-# -----------------------
 @dataclass
 class TransformsCache:
     log2: pd.DataFrame
@@ -72,8 +69,8 @@ def sort_columns_by_condition(cols: list[str]) -> list[str]:
 
 
 @st.cache_data
-def create_intensity_heatmap(df_json: str, index_col: str | None, numeric_cols: list[str]) -> go.Figure:
-    df = pd.read_json(df_json)
+def create_intensity_heatmap(df_log2: pd.DataFrame, index_col: str | None, numeric_cols: list[str]) -> go.Figure:
+    df = df_log2.copy()
     if index_col and index_col in df.columns:
         labels = df[index_col].apply(parse_protein_group).tolist()
     else:
@@ -81,12 +78,12 @@ def create_intensity_heatmap(df_json: str, index_col: str | None, numeric_cols: 
 
     sorted_cols = sort_columns_by_condition(numeric_cols)
     
-    # Limit heatmap to top 100 proteins by variance (avoid huge label list)
+    # Limit to top 100 by variance
     if len(df) > 100:
         variance = df[sorted_cols].var(axis=1)
         top_idx = variance.nlargest(100).index
         df = df.loc[top_idx]
-        labels = [labels[i] for i in range(len(labels)) if i < len(top_idx)][:100]
+        labels = [labels[i] for i in range(len(top_idx))]
     
     z = df[sorted_cols].values
 
@@ -116,8 +113,7 @@ def create_intensity_heatmap(df_json: str, index_col: str | None, numeric_cols: 
 
 
 @st.cache_data
-def create_missing_distribution_chart(mask_json: str, label: str) -> go.Figure:
-    mask = pd.read_json(mask_json)
+def create_missing_distribution_chart(mask: pd.DataFrame, label: str) -> go.Figure:
     missing_per_row = mask.sum(axis=1)
     total_missing = mask.sum().sum()
     max_missing = mask.shape[1]
@@ -157,9 +153,8 @@ def create_missing_distribution_chart(mask_json: str, label: str) -> go.Figure:
 
 
 @st.cache_data
-def create_violin_plot(df_json: str, numeric_cols: list[str]) -> go.Figure:
-    df = pd.read_json(df_json)
-    long_df = df[numeric_cols].melt(var_name="Sample", value_name="log2_value")
+def create_violin_plot(df_log2: pd.DataFrame, numeric_cols: list[str]) -> go.Figure:
+    long_df = df_log2[numeric_cols].melt(var_name="Sample", value_name="log2_value")
     long_df["Condition"] = long_df["Sample"].str.extract(r"^([A-Z])")
     long_df["Replicate"] = long_df["Sample"].str.extract(r"(\d+)$")
     long_df["CondRep"] = long_df["Condition"] + long_df["Replicate"]
@@ -200,29 +195,13 @@ def create_violin_plot(df_json: str, numeric_cols: list[str]) -> go.Figure:
     return fig
 
 
-@st.cache_data
-def create_filtered_pca_plot(
-    df_json: str,
-    numeric_cols: list[str],
-    species_col: str | None,
-    filter_species: list[str] | None,
-    label_suffix: str = "",
-) -> go.Figure | None:
-    df = pd.read_json(df_json)
-
-    if filter_species and species_col and species_col in df.columns:
-        mask = df[species_col].isin(filter_species)
-        df = df[mask]
-
+def create_pca_plot(df_log2: pd.DataFrame, numeric_cols: list[str], title_suffix: str = "") -> go.Figure | None:
+    df = df_log2[numeric_cols]
+    
     if len(df) < 3:
         return None
-
-    numeric_cols_filtered = [c for c in numeric_cols if c in df.columns]
     
-    # PCA on SAMPLES (transpose: proteins as rows, samples as columns)
-    # After transpose: samples × proteins (each row is a sample)
-    data = df[numeric_cols_filtered].T.values  # samples × features
-    
+    data = df.T.values  # samples × features
     valid_cols = np.std(data, axis=0) > 0
     data_clean = data[:, valid_cols]
 
@@ -234,12 +213,9 @@ def create_filtered_pca_plot(
     pca = PCA(n_components=min(3, data_scaled.shape[0]))
     pca_result = pca.fit_transform(data_scaled)
 
-    # Sort columns by condition for labels
-    sorted_cols = sort_columns_by_condition(numeric_cols_filtered)
+    sorted_cols = sort_columns_by_condition(numeric_cols)
     conditions, color_map = extract_conditions(sorted_cols)
 
-    # CORRECT: pca_result has shape (n_samples, n_components)
-    # Plot samples, NOT proteins
     fig = go.Figure()
     for cond in sorted(set(conditions)):
         idx = [i for i, c in enumerate(conditions) if c == cond]
@@ -249,7 +225,7 @@ def create_filtered_pca_plot(
                 y=pca_result[idx, 1],
                 mode="markers+text",
                 marker=dict(size=12, color=color_map[cond]),
-                text=[sorted_cols[i] for i in idx],  # Sample names: A1, A2, A3
+                text=[sorted_cols[i] for i in idx],
                 textposition="top center",
                 name=f"Condition {cond}",
                 hovertemplate="Sample: %{text}<br>PC1: %{x:.2f}<br>PC2: %{y:.2f}<extra></extra>",
@@ -257,13 +233,9 @@ def create_filtered_pca_plot(
         )
 
     fig.update_layout(
-        title=f"PCA - Sample clustering{label_suffix}",
+        title=f"PCA{title_suffix}",
         xaxis_title=f"PC1 ({pca.explained_variance_ratio_[0]*100:.1f}% var)",
-        yaxis_title=(
-            f"PC2 ({pca.explained_variance_ratio_[1]*100:.1f}% var)"
-            if len(pca.explained_variance_ratio_) > 1
-            else "PC2"
-        ),
+        yaxis_title=f"PC2 ({pca.explained_variance_ratio_[1]*100:.1f}% var)" if len(pca.explained_variance_ratio_) > 1 else "PC2",
         height=400,
         plot_bgcolor="#FFFFFF",
         paper_bgcolor="rgba(0,0,0,0)",
@@ -273,8 +245,11 @@ def create_filtered_pca_plot(
     return fig
 
 
-
-def _permanova_core(data: np.ndarray, numeric_cols: list[str]) -> dict:
+def permanova_core(df_log2: pd.DataFrame, numeric_cols: list[str]) -> dict:
+    if len(df_log2) < 3:
+        return {"F": np.nan, "p": np.nan, "R2": np.nan}
+    
+    data = df_log2[numeric_cols].T.values
     sorted_cols = sort_columns_by_condition(numeric_cols)
     conditions = np.array([c[0] if c and c[0].isalpha() else "X" for c in sorted_cols])
 
@@ -307,57 +282,9 @@ def _permanova_core(data: np.ndarray, numeric_cols: list[str]) -> dict:
 
 
 @st.cache_data
-def compute_permanova(df_json: str, numeric_cols: list[str]) -> dict:
-    df = pd.read_json(df_json)
-    data = df[numeric_cols].T.values
-    return _permanova_core(data, numeric_cols)
-
-
-@st.cache_data
-def compute_permanova_filtered(
-    df_json: str,
-    numeric_cols: list[str],
-    species_col: str | None,
-    filter_species: list[str] | None,
-) -> dict:
-    df = pd.read_json(df_json)
-
-    if filter_species and species_col and species_col in df.columns:
-        mask = df[species_col].isin(filter_species)
-        df = df[mask]
-
-    if len(df) < 3:
-        return {"F": np.nan, "p": np.nan, "R2": np.nan}
-
-    numeric_cols_filtered = [c for c in numeric_cols if c in df.columns]
-    data = df[numeric_cols_filtered].T.values
-    return _permanova_core(data, numeric_cols_filtered)
-
-
-@st.cache_data
-def compute_normality_stats(values: np.ndarray) -> dict:
-    clean = values[np.isfinite(values)]
-    if len(clean) < 20:
-        return {"kurtosis": np.nan, "skewness": np.nan, "W": np.nan, "p": np.nan}
-    sample = np.random.choice(clean, min(5000, len(clean)), replace=False)
-    try:
-        W, p = stats.shapiro(sample)
-    except Exception:
-        W, p = np.nan, np.nan
-    return {
-        "kurtosis": stats.kurtosis(clean),
-        "skewness": stats.skew(clean),
-        "W": W,
-        "p": p,
-    }
-
-
-@st.cache_data
-def analyze_transformations(df_json: str, numeric_cols: list[str], transforms: TransformsCache) -> pd.DataFrame:
-    df = pd.read_json(df_json)
-
+def analyze_transformations(df_log2: pd.DataFrame, numeric_cols: list[str], transforms: TransformsCache) -> pd.DataFrame:
     transforms_dict = {
-        "Raw (log2 filled)": df[numeric_cols].values.flatten(),
+        "Raw (log2 filled)": df_log2[numeric_cols].values.flatten(),
         "Log10": transforms.log10[numeric_cols].values.flatten(),
         "Square root": transforms.sqrt[numeric_cols].values.flatten(),
         "Cube root": transforms.cbrt[numeric_cols].values.flatten(),
@@ -367,16 +294,20 @@ def analyze_transformations(df_json: str, numeric_cols: list[str], transforms: T
 
     results = []
     for name, vals in transforms_dict.items():
-        stats_dict = compute_normality_stats(vals)
-        results.append(
-            {
+        clean = vals[np.isfinite(vals)]
+        if len(clean) >= 20:
+            sample = np.random.choice(clean, min(5000, len(clean)), replace=False)
+            try:
+                W, p = stats.shapiro(sample)
+            except Exception:
+                W, p = np.nan, np.nan
+            results.append({
                 "Transformation": name,
-                "Kurtosis": stats_dict["kurtosis"],
-                "Skewness": stats_dict["skewness"],
-                "Shapiro W": stats_dict["W"],
-                "Shapiro p": stats_dict["p"],
-            }
-        )
+                "Kurtosis": stats.kurtosis(clean),
+                "Skewness": stats.skew(clean),
+                "Shapiro W": W,
+                "Shapiro p": p,
+            })
 
     return pd.DataFrame(results)
 
@@ -405,33 +336,31 @@ def render_eda(model: MSData | None, index_col: str | None, species_col: str | N
         return
 
     numeric_cols = model.numeric_cols
-    df_log2_data = pd.DataFrame(model.transforms.log2[numeric_cols])
-    df_json = df_log2_data.to_json()
+    df_log2 = model.transforms.log2[numeric_cols]
 
     mask = st.session_state.get(f"{label}_missing_mask")
     if mask is None:
-        mask = pd.DataFrame(False, index=df_log2_data.index, columns=numeric_cols)
-    mask_json = mask.to_json()
+        mask = pd.DataFrame(False, index=df_log2.index, columns=numeric_cols)
 
     st.caption(
-        f"**{len(df_log2_data):,} {label}s** × **{len(numeric_cols)} samples** | "
+        f"**{len(df_log2):,} {label}s** × **{len(numeric_cols)} samples** | "
         f"**{model.missing_count:,} missing cells** (NaN/0/1)"
     )
 
     # Row 1: Heatmap + missing
     col1, col2 = st.columns([2, 1])
     with col1:
-        fig_heat = create_intensity_heatmap(df_json, index_col, numeric_cols)
+        fig_heat = create_intensity_heatmap(df_log2, index_col, numeric_cols)
         st.plotly_chart(fig_heat, width="stretch", key=f"heatmap_{label}")
     with col2:
-        fig_bar = create_missing_distribution_chart(mask_json, label)
+        fig_bar = create_missing_distribution_chart(mask, label)
         st.plotly_chart(fig_bar, width="stretch", key=f"missing_{label}")
 
     st.markdown("---")
 
     # Row 2: Violin
     st.markdown("### Sample distributions (all conditions)")
-    fig_violin = create_violin_plot(df_json, numeric_cols)
+    fig_violin = create_violin_plot(df_log2, numeric_cols)
     st.plotly_chart(fig_violin, width="stretch", key=f"violin_{label}")
 
     st.markdown("---")
@@ -439,101 +368,74 @@ def render_eda(model: MSData | None, index_col: str | None, species_col: str | N
     # Row 3: Variance analysis with multi-species PCA
     st.markdown("### Variance analysis")
 
-    # Detect species from RAW data
     species_dist = None
     if species_col and species_col in model.raw.columns:
         species_counts = model.raw[species_col].value_counts()
         if len(species_counts) >= 2:
             species_dist = {
                 "species": species_counts.index.tolist(),
-                "counts": species_counts.values.tolist(),
                 "most_frequent": species_counts.index[0],
                 "others": species_counts.index[1:].tolist(),
             }
 
     if species_dist:
         st.caption(
-            "Species detected: "
-            f"{', '.join(species_dist['species'])}. "
-            "Showing PCA for: all | dominant species | others"
+            f"Species detected: {', '.join(species_dist['species'])}. "
+            "Showing PCA for: all | dominant | others"
         )
         col1, col2, col3 = st.columns(3)
 
+        # Plot 1: All
         with col1:
             st.subheader("All", divider=True)
-            fig_pca_all = create_filtered_pca_plot(
-                df_json, numeric_cols, species_col, None, " (all)"
-            )
-            permanova_all = compute_permanova_filtered(
-                df_json, numeric_cols, species_col, None
-            )
+            df_all = df_log2
+            fig_pca_all = create_pca_plot(df_all, numeric_cols, " (all species)")
             if fig_pca_all:
                 st.plotly_chart(fig_pca_all, width="stretch", key=f"pca_all_{label}")
-            st.metric(
-                "F-stat", f"{permanova_all['F']:.2f}" if not np.isnan(permanova_all["F"]) else "N/A"
-            )
-            st.metric(
-                "p-value",
-                f"{permanova_all['p']:.4f}" if not np.isnan(permanova_all["p"]) else "N/A",
-            )
+            perm_all = permanova_core(df_all, numeric_cols)
+            st.metric("F-stat", f"{perm_all['F']:.2f}" if not np.isnan(perm_all["F"]) else "N/A")
+            st.metric("p-value", f"{perm_all['p']:.4f}" if not np.isnan(perm_all["p"]) else "N/A")
 
+        # Plot 2: Dominant only
         with col2:
             dom = species_dist["most_frequent"]
             st.subheader(dom, divider=True)
-            fig_pca_dom = create_filtered_pca_plot(
-                df_json, numeric_cols, species_col, [dom], f" ({dom})"
-            )
-            permanova_dom = compute_permanova_filtered(
-                df_json, numeric_cols, species_col, [dom]
-            )
+            mask_dom = model.raw[species_col] == dom
+            df_dom = df_log2[mask_dom]
+            fig_pca_dom = create_pca_plot(df_dom, numeric_cols, f" ({dom} only)")
             if fig_pca_dom:
                 st.plotly_chart(fig_pca_dom, width="stretch", key=f"pca_dom_{label}")
-            st.metric(
-                "F-stat", f"{permanova_dom['F']:.2f}" if not np.isnan(permanova_dom["F"]) else "N/A"
-            )
-            st.metric(
-                "p-value",
-                f"{permanova_dom['p']:.4f}" if not np.isnan(permanova_dom["p"]) else "N/A",
-            )
+            perm_dom = permanova_core(df_dom, numeric_cols)
+            st.metric("F-stat", f"{perm_dom['F']:.2f}" if not np.isnan(perm_dom["F"]) else "N/A")
+            st.metric("p-value", f"{perm_dom['p']:.4f}" if not np.isnan(perm_dom["p"]) else "N/A")
 
+        # Plot 3: Others only
         with col3:
-            others = species_dist["others"]
-            other_label = "+".join(others)
+            other_label = "+".join(species_dist["others"])
             st.subheader(other_label, divider=True)
-            fig_pca_oth = create_filtered_pca_plot(
-                df_json, numeric_cols, species_col, others, f" ({other_label})"
-            )
-            permanova_oth = compute_permanova_filtered(
-                df_json, numeric_cols, species_col, others
-            )
+            mask_oth = model.raw[species_col].isin(species_dist["others"])
+            df_oth = df_log2[mask_oth]
+            fig_pca_oth = create_pca_plot(df_oth, numeric_cols, f" ({other_label})")
             if fig_pca_oth:
                 st.plotly_chart(fig_pca_oth, width="stretch", key=f"pca_oth_{label}")
-            st.metric(
-                "F-stat", f"{permanova_oth['F']:.2f}" if not np.isnan(permanova_oth["F"]) else "N/A"
-            )
-            st.metric(
-                "p-value",
-                f"{permanova_oth['p']:.4f}" if not np.isnan(permanova_oth["p"]) else "N/A",
-            )
+            perm_oth = permanova_core(df_oth, numeric_cols)
+            st.metric("F-stat", f"{perm_oth['F']:.2f}" if not np.isnan(perm_oth["F"]) else "N/A")
+            st.metric("p-value", f"{perm_oth['p']:.4f}" if not np.isnan(perm_oth["p"]) else "N/A")
 
         st.markdown("---")
 
-        p_all = permanova_all["p"]
-        p_dom = permanova_dom["p"]
-        p_oth = permanova_oth["p"]
-        ps = [p for p in [p_all, p_dom, p_oth] if not np.isnan(p)]
+        ps = [perm_all["p"], perm_dom["p"], perm_oth["p"]]
+        ps_clean = [p for p in ps if not np.isnan(p)]
 
-        if ps and all(p >= 0.05 for p in ps):
+        if ps_clean and all(p >= 0.05 for p in ps_clean):
             st.error(
-                "🔴 **STRONG recommendation: Preprocessing REQUIRED**\n\n"
-                "All PCA/PERMANOVA tests are non-significant. Start with:\n"
-                "1. Phase 1: Data quality filtering\n"
-                "2. Phase 2: Batch-aware missing value imputation"
+                "🔴 **STRONG: Preprocessing REQUIRED**\n\n"
+                "All tests non-significant. Start with Phase 1-2."
             )
-        elif not np.isnan(p_oth) and p_oth < 0.05 and (np.isnan(p_all) or p_all >= 0.05):
+        elif not np.isnan(perm_oth["p"]) and perm_oth["p"] < 0.05 and (np.isnan(perm_all["p"]) or perm_all["p"] >= 0.05):
             st.warning(
-                "🟡 **MEDIUM recommendation: Preprocessing SUGGESTED**\n\n"
-                "Non-dominant species show signal. Try batch correction."
+                "🟡 **MEDIUM: Preprocessing SUGGESTED**\n\n"
+                "Signal in non-dominant species masked in combined analysis."
             )
         else:
             st.info("🟢 **Signal detected. Optional: Phase 1 filtering.**")
@@ -542,25 +444,17 @@ def render_eda(model: MSData | None, index_col: str | None, species_col: str | N
         st.caption("Single-species dataset.")
         col1, col2 = st.columns([2, 1])
         with col1:
-            fig_pca = create_filtered_pca_plot(
-                df_json, numeric_cols, None, None, ""
-            )
+            fig_pca = create_pca_plot(df_log2, numeric_cols)
             st.plotly_chart(fig_pca, width="stretch", key=f"pca_{label}")
         with col2:
-            permanova = compute_permanova(df_json, numeric_cols)
-            st.metric(
-                "Pseudo-F",
-                f"{permanova['F']:.2f}" if not np.isnan(permanova["F"]) else "N/A",
-            )
-            st.metric(
-                "p-value",
-                f"{permanova['p']:.4f}" if not np.isnan(permanova["p"]) else "N/A",
-            )
+            perm = permanova_core(df_log2, numeric_cols)
+            st.metric("Pseudo-F", f"{perm['F']:.2f}" if not np.isnan(perm["F"]) else "N/A")
+            st.metric("p-value", f"{perm['p']:.4f}" if not np.isnan(perm["p"]) else "N/A")
 
     st.markdown("---")
 
     st.markdown("### Normality analysis")
-    stats_df = analyze_transformations(df_json, numeric_cols, model.transforms)
+    stats_df = analyze_transformations(df_log2, numeric_cols, model.transforms)
     if not stats_df.empty:
         best_idx = stats_df["Shapiro W"].idxmax()
         best_transform = stats_df.loc[best_idx, "Transformation"]
