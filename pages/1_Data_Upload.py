@@ -27,7 +27,7 @@ class MSData:
     filled: pd.DataFrame
     log2_filled: pd.DataFrame
     numeric_cols: List[str]
-    ones_count: int  # new
+    ones_count: int
 
 
 def auto_rename_columns(columns: List[str]) -> dict:
@@ -54,21 +54,22 @@ def filter_by_species(df: pd.DataFrame, col: str, species_tags: list[str]) -> pd
 def build_msdata(processed_df: pd.DataFrame, numeric_cols_renamed: List[str]) -> MSData:
     original = processed_df.copy()
 
-    # 1) Quant columns → numeric; non-numeric (e.g. '#NUM!') → NaN
-    numeric_block = original[numeric_cols_renamed].apply(
-        pd.to_numeric, errors="coerce"
+    # 1) Force all selected quant columns to numeric float64 BEFORE any operations
+    original[numeric_cols_renamed] = (
+        original[numeric_cols_renamed]
+        .apply(pd.to_numeric, errors="coerce")
+        .astype("float64")
     )
-    original[numeric_cols_renamed] = numeric_block
 
     # 2) Filled: NaN, 0, 1 → 1
     filled = original.copy()
     vals = filled[numeric_cols_renamed]
-    vals = vals.fillna(1)
-    vals = vals.where(~vals.isin([0, 1]), 1)
+    vals = vals.fillna(1.0)
+    vals = vals.where(~vals.isin([0.0, 1.0]), 1.0)
     filled[numeric_cols_renamed] = vals
 
-    # Count cells equal to 1 after filling/reformatting
-    ones_count = (filled[numeric_cols_renamed] == 1).sum().sum()
+    # Count cells == 1 after filling
+    ones_count = (filled[numeric_cols_renamed] == 1.0).to_numpy().sum()
 
     # 3) log2(filled)
     log2_filled = filled.copy()
@@ -81,6 +82,7 @@ def build_msdata(processed_df: pd.DataFrame, numeric_cols_renamed: List[str]) ->
         numeric_cols=numeric_cols_renamed,
         ones_count=ones_count,
     )
+
 
 # ------------- session state -------------
 defaults = {
@@ -111,7 +113,7 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file:
     if st.session_state.raw_df is None:
-        raw_df = pd.read_csv(uploaded_file)  # first row is header
+        raw_df = pd.read_csv(uploaded_file)
         st.session_state.raw_df = raw_df
     raw_df = st.session_state.raw_df
 
@@ -240,97 +242,64 @@ if uploaded_file:
 
         numeric_cols_renamed = [st.session_state.column_renames.get(c, c) for c in numeric_cols_orig]
 
-def build_msdata(processed_df: pd.DataFrame, numeric_cols_renamed: List[str]) -> MSData:
-    original = processed_df.copy()
+        # Species filter
+        processed_df = working_df.copy()
+        if species_col and species_tags:
+            processed_df = filter_by_species(processed_df, species_col, species_tags)
+            st.info(f"Filtered to {len(processed_df):,} rows matching: {', '.join(species_tags)}")
 
-    # 1) Force all selected quant columns to numeric float64 BEFORE caching/fragment logic
-    original[numeric_cols_renamed] = (
-        original[numeric_cols_renamed]
-        .apply(pd.to_numeric, errors="coerce")
-        .astype("float64")
-    )
+        # Preview
+        st.markdown("### Data preview")
+        st.dataframe(processed_df.head(10), use_container_width=True, height=300)
 
-    # 2) Filled: NaN, 0, 1 → 1
-    filled = original.copy()
-    vals = filled[numeric_cols_renamed]
-    vals = vals.fillna(1.0)
-    vals = vals.where(~vals.isin([0, 1, 0.0, 1.0]), 1.0)
-    filled[numeric_cols_renamed] = vals
+        conditions = set()
+        for c in numeric_cols_renamed:
+            if len(c) >= 1:
+                conditions.add(c[0] if c[0].isalpha() else c.rsplit("_", 1)[0])
 
-    # Count cells == 1 after filling
-    ones_count = (filled[numeric_cols_renamed] == 1.0).to_numpy().sum()
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Rows", f"{len(processed_df):,}")
+        c2.metric("Samples", len(numeric_cols_renamed))
+        c3.metric("Conditions", len(conditions))
+        c4.metric("Data level", "Peptide" if species_col and "PEPTIDE" in species_col.upper() else "Protein")
 
-    # 3) log2(filled)
-    log2_filled = filled.copy()
-    log2_filled[numeric_cols_renamed] = np.log2(log2_filled[numeric_cols_renamed])
+        # Cache
+        st.markdown("---")
+        data_type = "protein"
+        existing_key = f"{data_type}_model"
+        index_key = f"{data_type}_index_col"
+        mask_key = f"{data_type}_missing_mask"
 
-    return MSData(
-        original=original,
-        filled=filled,
-        log2_filled=log2_filled,
-        numeric_cols=numeric_cols_renamed,
-        ones_count=ones_count,
-    )
+        if st.session_state.get(existing_key) is not None:
+            st.warning(f"{data_type.capitalize()} data already cached. Confirming will overwrite.")
 
-# Species filter
-processed_df = working_df.copy()
-if species_col and species_tags:
-    processed_df = filter_by_species(processed_df, species_col, species_tags)
-    st.info(f"Filtered to {len(processed_df):,} rows matching: {', '.join(species_tags)}")
+        col_b1, col_b2, _ = st.columns([1, 1, 3])
+        with col_b1:
+            if st.button("Confirm & cache", type="primary"):
+                model = build_msdata(processed_df, numeric_cols_renamed)
+                missing_mask = processed_df[numeric_cols_renamed].isna() | (
+                    processed_df[numeric_cols_renamed] <= 1.0
+                )
 
-# Preview
-st.markdown("### Data preview")
-st.dataframe(processed_df.head(10), use_container_width=True, height=300)
+                st.session_state[existing_key] = model
+                st.session_state[index_key] = pg_col
+                st.session_state[mask_key] = missing_mask
 
-conditions = set()
-for c in numeric_cols_renamed:
-    if len(c) >= 1:
-        conditions.add(c[0] if c[0].isalpha() else c.rsplit("_", 1)[0])
+                st.session_state.raw_df = None
+                st.session_state.column_renames = {}
+                st.session_state.selected_quant_cols = []
+                st.session_state.upload_key += 1
+                st.rerun()
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Rows", f"{len(processed_df):,}")
-c2.metric("Samples", len(numeric_cols_renamed))
-c3.metric("Conditions", len(conditions))
-c4.metric("Data level", "Peptide" if species_col and "PEPTIDE" in species_col.upper() else "Protein")
+        with col_b2:
+            if st.button("Cancel"):
+                st.session_state.raw_df = None
+                st.session_state.column_renames = {}
+                st.session_state.selected_quant_cols = []
+                st.session_state.upload_key += 1
+                st.rerun()
 
-# Cache
-st.markdown("---")
-data_type = "protein"  # or determine from context if you have a toggle
-existing_key = f"{data_type}_model"
-index_key = f"{data_type}_index_col"
-mask_key = f"{data_type}_missing_mask"
-
-if st.session_state.get(existing_key) is not None:
-    st.warning(f"{data_type.capitalize()} data already cached. Confirming will overwrite.")
-
-col_b1, col_b2, _ = st.columns([1, 1, 3])
-with col_b1:
-    if st.button("Confirm & cache", type="primary"):
-        model = build_msdata(processed_df, numeric_cols_renamed)
-        missing_mask = processed_df[numeric_cols_renamed].isna() | (
-            processed_df[numeric_cols_renamed] <= 1
-        )
-
-        st.session_state[existing_key] = model
-        st.session_state[index_key] = pg_col
-        st.session_state[mask_key] = missing_mask
-
-        st.session_state.raw_df = None
-        st.session_state.column_renames = {}
-        st.session_state.selected_quant_cols = []
-        st.session_state.upload_key += 1
-        st.rerun()
-
-with col_b2:
-    if st.button("Cancel"):
-        st.session_state.raw_df = None
-        st.session_state.column_renames = {}
-        st.session_state.selected_quant_cols = []
-        st.session_state.upload_key += 1
-        st.rerun()
-        config_fragment()
-    else:
-        st.info("Upload a CSV file to begin")
+    config_fragment()
 
 render_navigation(back_page="app.py", next_page="pages/2_EDA.py")
 render_footer()
