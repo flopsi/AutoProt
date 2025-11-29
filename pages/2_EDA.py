@@ -25,7 +25,6 @@ st.set_page_config(
     page_icon="📊",
     layout="wide",
 )
-
 # --- Adaptive CSS ---
 st.markdown(f"""
 <style>
