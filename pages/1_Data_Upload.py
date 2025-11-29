@@ -288,10 +288,8 @@ def config_fragment():
                 st.session_state.original_numeric_cols = []
                 st.session_state.upload_key += 1
                 st.rerun()
-
-    config_fragment()
-    else:
-        st.info("Upload a CSV file to begin")
+            else:
+                st.info("Upload a CSV file to begin")
 
 
 @st.fragment
