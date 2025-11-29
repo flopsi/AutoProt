@@ -20,14 +20,13 @@ render_header()
 
 @dataclass
 class MSData:
-    original: pd.DataFrame        # after filtering + renaming
-    filled: pd.DataFrame          # numeric 0/NaN/1 -> 1
-    log2_filled: pd.DataFrame     # log2(filled)
-    numeric_cols: List[str]       # renamed intensity columns (A1,A2,...)
+    original: pd.DataFrame
+    filled: pd.DataFrame
+    log2_filled: pd.DataFrame
+    numeric_cols: List[str]
 
 
 def auto_rename_columns(columns: List[str]) -> dict:
-    """Auto-rename numeric columns as A1,A2,A3,B1,B2,B3,... (groups of 3)."""
     rename_map = {}
     letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     for i, col in enumerate(columns):
@@ -48,20 +47,13 @@ def filter_by_species(df: pd.DataFrame, col: str, species_tags: list[str]) -> pd
     return df[df[col].astype(str).str.contains(pattern, case=False, na=False)]
 
 
-def quant_group_key(col: str, n: int = 25) -> str:
-    """Group key based on the last n characters of the original column name."""
-    col_str = str(col)
-    return col_str[-n:] if len(col_str) > n else col_str
-
-
 def build_msdata(processed_df: pd.DataFrame, numeric_cols_renamed: List[str]) -> MSData:
-    """Create original, filled, and log2_filled variants."""
     original = processed_df.copy()
 
     filled = processed_df.copy()
     vals = filled[numeric_cols_renamed]
     vals = vals.fillna(1)
-    vals = vals.where(~vals.isin([0, 1]), 1)  # 0/1 -> 1
+    vals = vals.where(~vals.isin([0, 1]), 1)
     filled[numeric_cols_renamed] = vals
 
     log2_filled = filled.copy()
@@ -89,8 +81,6 @@ defaults = {
     "raw_df": None,
     "column_renames": {},
     "original_numeric_cols": [],
-    "all_numeric_candidates": [],
-    "quant_groups": {},
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -107,64 +97,49 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file:
-    # Read file only once per upload cycle
     if st.session_state.raw_df is None:
         raw_df = pd.read_csv(uploaded_file)
         st.session_state.raw_df = raw_df
 
-        # 1) All numeric candidates
+        # Detect all numeric columns (candidates)
         numeric_all = [c for c in raw_df.columns if pd.api.types.is_numeric_dtype(raw_df[c])]
         if not numeric_all:
             st.error("No numeric columns detected. Please upload a matrix with numeric intensities.")
             st.stop()
 
-        # 2) Build quant groups by last 25 chars
-        group_map: dict[str, list[str]] = {}
-        for c in numeric_all:
-            key = quant_group_key(c, n=25)
-            group_map.setdefault(key, []).append(c)
-
-        st.session_state.all_numeric_candidates = numeric_all
-        st.session_state.quant_groups = group_map
-
-        # Default: all groups -> all numeric columns
         st.session_state.original_numeric_cols = numeric_all
         st.session_state.column_renames = auto_rename_columns(numeric_all)
 
     raw_df = st.session_state.raw_df
-    numeric_all = st.session_state.all_numeric_candidates
-    group_map = st.session_state.quant_groups
+    numeric_all = st.session_state.original_numeric_cols
 
     st.success(f"Loaded {len(raw_df):,} rows, {len(raw_df.columns)} columns")
 
     # --------------------------
-    # Quant group selection
+    # Quant column selection with last-25-char labels
     # --------------------------
-    st.markdown("### Select quantitative column groups")
-    st.caption(
-        "Columns are grouped by the last 25 characters of their original name. "
-        "Select which groups (typically 3 replicates) are quantitative."
+    st.markdown("### Select quantitative columns")
+    st.caption("Each option shows the last 25 characters of the original numeric column name.")
+
+    # Build display labels: "…<last 25 chars>"
+    def last25(name: str) -> str:
+        s = str(name)
+        return s[-25:] if len(s) > 25 else s
+
+    options = numeric_all
+    format_func = lambda col: last25(col)
+
+    selected_numeric = st.multiselect(
+        "Quantitative intensity columns",
+        options=options,
+        default=options,         # default: all numeric are quant
+        format_func=format_func,
+        key="quant_cols_select",
     )
 
-    all_groups = list(group_map.keys())
-    selected_groups = st.multiselect(
-        "Quant groups (last 25 chars of original column name)",
-        options=all_groups,
-        default=all_groups,
-        key="quant_group_select",
-    )
-
-    if not selected_groups:
-        st.error("Select at least one quant group to continue.")
+    if not selected_numeric:
+        st.error("Select at least one quantitative column to continue.")
         st.stop()
-
-    # Expand selected groups back to concrete columns
-    selected_numeric = []
-    for g in selected_groups:
-        selected_numeric.extend(group_map.get(g, []))
-
-    # De-duplicate while preserving original order
-    selected_numeric = [c for c in numeric_all if c in selected_numeric]
 
     st.session_state.original_numeric_cols = selected_numeric
     st.session_state.column_renames = auto_rename_columns(selected_numeric)
@@ -242,7 +217,7 @@ if uploaded_file:
                 st.session_state.column_renames.update(edited_names)
                 st.rerun(scope="fragment")
 
-        # Apply renames to raw_df
+        # Apply renames
         rename_map = {k: v for k, v in st.session_state.column_renames.items() if k in raw_df.columns}
         working_df = raw_df.rename(columns=rename_map)
 
@@ -260,7 +235,7 @@ if uploaded_file:
             processed_df = filter_by_species(processed_df, filter_col, species_tags)
             st.info(f"Filtered to {len(processed_df):,} rows matching: {', '.join(species_tags)}")
 
-        # 4) Preview + metrics
+        # 4) Preview
         st.markdown("### Data preview")
 
         conditions = set()
@@ -302,12 +277,9 @@ if uploaded_file:
                 st.session_state[index_key] = protein_group_col
                 st.session_state[mask_key] = missing_mask
 
-                # Clear upload state
                 st.session_state.raw_df = None
                 st.session_state.column_renames = {}
                 st.session_state.original_numeric_cols = []
-                st.session_state.all_numeric_candidates = []
-                st.session_state.quant_groups = {}
                 st.session_state.upload_key += 1
                 st.rerun()
 
@@ -316,8 +288,6 @@ if uploaded_file:
                 st.session_state.raw_df = None
                 st.session_state.column_renames = {}
                 st.session_state.original_numeric_cols = []
-                st.session_state.all_numeric_candidates = []
-                st.session_state.quant_groups = []
                 st.session_state.upload_key += 1
                 st.rerun()
 
