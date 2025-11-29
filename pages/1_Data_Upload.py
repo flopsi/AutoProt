@@ -272,67 +272,65 @@ def build_msdata(processed_df: pd.DataFrame, numeric_cols_renamed: List[str]) ->
         ones_count=ones_count,
     )
 
-        # Species filter
-        processed_df = working_df.copy()
-        if species_col and species_tags:
-            processed_df = filter_by_species(processed_df, species_col, species_tags)
-            st.info(f"Filtered to {len(processed_df):,} rows matching: {', '.join(species_tags)}")
+# Species filter
+processed_df = working_df.copy()
+if species_col and species_tags:
+    processed_df = filter_by_species(processed_df, species_col, species_tags)
+    st.info(f"Filtered to {len(processed_df):,} rows matching: {', '.join(species_tags)}")
 
-        # Preview
-        st.markdown("### Data preview")
-        st.dataframe(processed_df.head(10), use_container_width=True, height=300)
+# Preview
+st.markdown("### Data preview")
+st.dataframe(processed_df.head(10), use_container_width=True, height=300)
 
-        conditions = set()
-        for c in numeric_cols_renamed:
-            if len(c) >= 1:
-                conditions.add(c[0] if c[0].isalpha() else c.rsplit("_", 1)[0])
+conditions = set()
+for c in numeric_cols_renamed:
+    if len(c) >= 1:
+        conditions.add(c[0] if c[0].isalpha() else c.rsplit("_", 1)[0])
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Rows", f"{len(processed_df):,}")
-        c2.metric("Samples", len(numeric_cols_renamed))
-        c3.metric("Conditions", len(conditions))
-        c4.metric("Data level", "Peptide" if species_col and "PEPTIDE" in species_col.upper() else "Protein")
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Rows", f"{len(processed_df):,}")
+c2.metric("Samples", len(numeric_cols_renamed))
+c3.metric("Conditions", len(conditions))
+c4.metric("Data level", "Peptide" if species_col and "PEPTIDE" in species_col.upper() else "Protein")
 
-        # Cache
-        st.markdown("---")
-        data_type = "protein"  # or determine from context if you have a toggle
-        existing_key = f"{data_type}_model"
-        index_key = f"{data_type}_index_col"
-        mask_key = f"{data_type}_missing_mask"
+# Cache
+st.markdown("---")
+data_type = "protein"  # or determine from context if you have a toggle
+existing_key = f"{data_type}_model"
+index_key = f"{data_type}_index_col"
+mask_key = f"{data_type}_missing_mask"
 
-        if st.session_state.get(existing_key) is not None:
-            st.warning(f"{data_type.capitalize()} data already cached. Confirming will overwrite.")
+if st.session_state.get(existing_key) is not None:
+    st.warning(f"{data_type.capitalize()} data already cached. Confirming will overwrite.")
 
-        col_b1, col_b2, _ = st.columns([1, 1, 3])
-        with col_b1:
-            if st.button("Confirm & cache", type="primary"):
-                model = build_msdata(processed_df, numeric_cols_renamed)
-                missing_mask = processed_df[numeric_cols_renamed].isna() | (
-                    processed_df[numeric_cols_renamed] <= 1
-                )
+col_b1, col_b2, _ = st.columns([1, 1, 3])
+with col_b1:
+    if st.button("Confirm & cache", type="primary"):
+        model = build_msdata(processed_df, numeric_cols_renamed)
+        missing_mask = processed_df[numeric_cols_renamed].isna() | (
+            processed_df[numeric_cols_renamed] <= 1
+        )
 
-                st.session_state[existing_key] = model
-                st.session_state[index_key] = pg_col
-                st.session_state[mask_key] = missing_mask
+        st.session_state[existing_key] = model
+        st.session_state[index_key] = pg_col
+        st.session_state[mask_key] = missing_mask
 
-                st.session_state.raw_df = None
-                st.session_state.column_renames = {}
-                st.session_state.selected_quant_cols = []
-                st.session_state.upload_key += 1
-                st.rerun()
+        st.session_state.raw_df = None
+        st.session_state.column_renames = {}
+        st.session_state.selected_quant_cols = []
+        st.session_state.upload_key += 1
+        st.rerun()
 
-        with col_b2:
-            if st.button("Cancel"):
-                st.session_state.raw_df = None
-                st.session_state.column_renames = {}
-                st.session_state.selected_quant_cols = []
-                st.session_state.upload_key += 1
-                st.rerun()
-
-    config_fragment()
-
-else:
-    st.info("Upload a CSV file to begin")
+with col_b2:
+    if st.button("Cancel"):
+        st.session_state.raw_df = None
+        st.session_state.column_renames = {}
+        st.session_state.selected_quant_cols = []
+        st.session_state.upload_key += 1
+        st.rerun()
+        config_fragment()
+    else:
+        st.info("Upload a CSV file to begin")
 
 render_navigation(back_page="app.py", next_page="pages/2_EDA.py")
 render_footer()
