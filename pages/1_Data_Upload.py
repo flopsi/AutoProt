@@ -24,6 +24,7 @@ class MSData:
     filled: pd.DataFrame
     log2_filled: pd.DataFrame
     numeric_cols: List[str]
+    ones_count: int  # new
 
 
 def auto_rename_columns(columns: List[str]) -> dict:
