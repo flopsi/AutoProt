@@ -142,8 +142,7 @@ if uploaded_file:
     original_numeric_cols = st.session_state.original_numeric_cols
     non_numeric_cols = [c for c in raw_df.columns if c not in original_numeric_cols]
 
-    @st.fragment
-    def config_fragment():
+
     @st.fragment
     def config_fragment():
         # 1) Column configuration
