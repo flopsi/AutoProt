@@ -100,8 +100,7 @@ if uploaded_file:
     if st.session_state.raw_df is None:
         raw_df = pd.read_csv(uploaded_file)
         st.session_state.raw_df = raw_df
-
-# Detect all numeric columns (candidates)
+        # Detect all numeric columns (candidates)
 numeric_all = [c for c in raw_df.columns if pd.api.types.is_numeric_dtype(raw_df[c])]
 if not numeric_all:
     st.error("No numeric columns detected. Please upload a matrix with numeric intensities.")
