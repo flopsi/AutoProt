@@ -25,11 +25,7 @@ class MSData:
     log2_filled: pd.DataFrame     # log2(filled)
     numeric_cols: List[str]       # renamed intensity columns (A1,A2,...)
 
-def quant_group_key(col: str, n: int = 25) -> str:
-    """Group key based on the last n characters of the original column name."""
-    col_str = str(col)
-    return col_str[-n:] if len(col_str) > n else col_str
-    
+
 def auto_rename_columns(columns: List[str]) -> dict:
     """Auto-rename numeric columns as A1,A2,A3,B1,B2,B3,... (groups of 3)."""
     rename_map = {}
@@ -52,9 +48,10 @@ def filter_by_species(df: pd.DataFrame, col: str, species_tags: list[str]) -> pd
     return df[df[col].astype(str).str.contains(pattern, case=False, na=False)]
 
 
-def is_quant_column(name: str) -> bool:
-    """Heuristic: quant intensity columns usually end with .raw (Thermo) or .d (Bruker)."""
-    return name.endswith(".raw") or name.endswith(".d")
+def quant_group_key(col: str, n: int = 25) -> str:
+    """Group key based on the last n characters of the original column name."""
+    col_str = str(col)
+    return col_str[-n:] if len(col_str) > n else col_str
 
 
 def build_msdata(processed_df: pd.DataFrame, numeric_cols_renamed: List[str]) -> MSData:
@@ -93,6 +90,7 @@ defaults = {
     "column_renames": {},
     "original_numeric_cols": [],
     "all_numeric_candidates": [],
+    "quant_groups": {},
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -126,39 +124,39 @@ if uploaded_file:
             key = quant_group_key(c, n=25)
             group_map.setdefault(key, []).append(c)
 
-st.session_state.all_numeric_candidates = numeric_all
-st.session_state.quant_groups = group_map
-    
-        # Default: all groups (all numeric columns)
-st.session_state.original_numeric_cols = numeric_all
-st.session_state.column_renames = auto_rename_columns(numeric_all)
+        st.session_state.all_numeric_candidates = numeric_all
+        st.session_state.quant_groups = group_map
 
-raw_df = st.session_state.raw_df
-numeric_all = st.session_state.all_numeric_candidates
-group_map = st.session_state.quant_groups
+        # Default: all groups -> all numeric columns
+        st.session_state.original_numeric_cols = numeric_all
+        st.session_state.column_renames = auto_rename_columns(numeric_all)
 
-st.success(f"Loaded {len(raw_df):,} rows, {len(raw_df.columns)} columns")
+    raw_df = st.session_state.raw_df
+    numeric_all = st.session_state.all_numeric_candidates
+    group_map = st.session_state.quant_groups
+
+    st.success(f"Loaded {len(raw_df):,} rows, {len(raw_df.columns)} columns")
 
     # --------------------------
     # Quant group selection
     # --------------------------
-st.markdown("### Select quantitative column groups")
-st.caption(
+    st.markdown("### Select quantitative column groups")
+    st.caption(
         "Columns are grouped by the last 25 characters of their original name. "
         "Select which groups (typically 3 replicates) are quantitative."
     )
 
-all_groups = list(group_map.keys())
-selected_groups = st.multiselect(
-    "Quant groups (last 25 chars)",
-    options=all_groups,
-    default=all_groups,          # default = keep everything
-    key="quant_group_select",
+    all_groups = list(group_map.keys())
+    selected_groups = st.multiselect(
+        "Quant groups (last 25 chars of original column name)",
+        options=all_groups,
+        default=all_groups,
+        key="quant_group_select",
     )
 
-if not selected_groups:
-    st.error("Select at least one quant group to continue.")
-    st.stop()
+    if not selected_groups:
+        st.error("Select at least one quant group to continue.")
+        st.stop()
 
     # Expand selected groups back to concrete columns
     selected_numeric = []
@@ -176,9 +174,6 @@ if not selected_groups:
 
     @st.fragment
     def config_fragment():
-        # (rest of your fragment body unchanged, using original_numeric_cols / non_numeric_cols)
-        ...
-
         # 1) Column configuration
         with st.expander("Column configuration", expanded=True):
             col1, col2, col3 = st.columns(3)
@@ -312,6 +307,7 @@ if not selected_groups:
                 st.session_state.column_renames = {}
                 st.session_state.original_numeric_cols = []
                 st.session_state.all_numeric_candidates = []
+                st.session_state.quant_groups = {}
                 st.session_state.upload_key += 1
                 st.rerun()
 
@@ -321,6 +317,7 @@ if not selected_groups:
                 st.session_state.column_renames = {}
                 st.session_state.original_numeric_cols = []
                 st.session_state.all_numeric_candidates = []
+                st.session_state.quant_groups = []
                 st.session_state.upload_key += 1
                 st.rerun()
 
