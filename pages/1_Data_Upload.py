@@ -252,6 +252,11 @@ if uploaded_file:
 
         numeric_cols_renamed = [st.session_state.column_renames.get(c, c) for c in numeric_cols_orig]
 
+        # Force numeric conversion on working_df BEFORE any comparisons
+        working_df[numeric_cols_renamed] = (
+            working_df[numeric_cols_renamed].apply(pd.to_numeric, errors="coerce").astype("float64")
+        )
+
         # Species filter
         processed_df = working_df.copy()
         if species_col and species_tags:
@@ -301,15 +306,18 @@ if uploaded_file:
                 st.session_state.column_renames = {}
                 st.session_state.selected_quant_cols = []
                 st.session_state.upload_key += 1
+                st.cache_data.clear()
                 st.rerun()
 
         with col_b2:
             if st.button("Cancel"):
+                st.cache_data.clear()
                 st.session_state.raw_df = None
                 st.session_state.column_renames = {}
                 st.session_state.selected_quant_cols = []
                 st.session_state.upload_key += 1
                 st.rerun()
+
 
     config_fragment()
 
