@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import plotly.express as px
 from scipy import stats
 from sklearn.preprocessing import PowerTransformer, QuantileTransformer, StandardScaler
 from sklearn.decomposition import PCA
@@ -49,7 +48,6 @@ def get_condition_groups(cols: list[str]) -> dict:
     return groups
 
 
-# Color palette for conditions
 CONDITION_COLORS = [
     '#E71316', '#262262', '#EA7600', '#B5BD00', '#54585A', '#00A9E0',
     '#7B2D8E', '#00B388', '#F7941D', '#0072CE', '#DA1884', '#78BE20'
@@ -60,7 +58,6 @@ def get_condition_color_map(conditions: list[str]) -> dict:
     return {c: CONDITION_COLORS[i % len(CONDITION_COLORS)] for i, c in enumerate(sorted(conditions))}
 
 
-# --- Transformation functions ---
 TRANSFORMATIONS = {
     "Raw": lambda x: x,
     "Log2": lambda x: np.log2(np.maximum(x, 1)),
@@ -161,50 +158,46 @@ def create_missing_distribution_chart(df_json: str, numeric_cols: list[str], lab
 
 @st.cache_data
 def create_condition_violin_plot(df_json: str, numeric_cols: list[str]) -> go.Figure:
-    """Create violin plot with all conditions, replicates colored by condition."""
+    """Create grouped violin plot - one violin per sample, grouped by condition."""
     df = pd.read_json(df_json)
     groups = get_condition_groups(numeric_cols)
-    sorted_cols = sort_columns_by_condition(numeric_cols)
     color_map = get_condition_color_map(list(groups.keys()))
-
-    # Build long-form data
-    plot_data = []
-    for col in sorted_cols:
-        condition = col[0] if len(col) >= 1 and col[0].isalpha() else "X"
-        values = np.log2(np.maximum(df[col].values, 1))
-        for v in values:
-            plot_data.append({"Sample": col, "Condition": condition, "log2_intensity": v})
-
-    plot_df = pd.DataFrame(plot_data)
 
     fig = go.Figure()
 
-    # Add violin for each sample, colored by condition
-    for col in sorted_cols:
-        condition = col[0] if len(col) >= 1 and col[0].isalpha() else "X"
-        sample_data = plot_df[plot_df["Sample"] == col]
+    # Add one violin trace per condition (all replicates pooled for legend grouping)
+    for condition in sorted(groups.keys()):
+        cols = groups[condition]
 
-        fig.add_trace(go.Violin(
-            x=[col] * len(sample_data),
-            y=sample_data["log2_intensity"],
-            name=condition,
-            legendgroup=condition,
-            scalegroup=col,
-            line_color=color_map[condition],
-            fillcolor=color_map[condition],
-            opacity=0.7,
-            box_visible=True,
-            meanline_visible=True,
-            showlegend=(col == groups[condition][0])  # Show legend only once per condition
-        ))
+        # For each replicate in this condition
+        for i, col in enumerate(sorted(cols)):
+            values = np.log2(np.maximum(df[col].values, 1))
 
+            fig.add_trace(go.Violin(
+                x=[condition] * len(values),
+                y=values,
+                name=condition,
+                legendgroup=condition,
+                scalegroup=condition,
+                line_color=color_map[condition],
+                fillcolor=color_map[condition],
+                opacity=0.7,
+                showlegend=(i == 0),  # Show legend only once per condition
+                hoverinfo='y',
+                text=[col] * len(values),
+                hovertemplate=f"{col}<br>log2: %{{y:.2f}}<extra></extra>"
+            ))
+
+    fig.update_traces(box_visible=True, meanline_visible=True)
     fig.update_layout(
-        title="Sample intensity distributions (log2)",
-        xaxis_title="Sample", yaxis_title="log2(intensity)",
-        height=450, violinmode='group',
-        plot_bgcolor="white", paper_bgcolor="rgba(0,0,0,0)",
+        title="Sample intensity distributions by condition (log2)",
+        xaxis_title="Condition",
+        yaxis_title="log2(intensity)",
+        height=450,
+        violinmode='group',
+        plot_bgcolor="white",
+        paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Arial", color="#54585A"),
-        xaxis=dict(tickangle=45),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     return fig
@@ -212,43 +205,28 @@ def create_condition_violin_plot(df_json: str, numeric_cols: list[str]) -> go.Fi
 
 @st.cache_data
 def compute_pca(df_json: str, numeric_cols: list[str]) -> tuple:
-    """Compute PCA on samples (columns)."""
     df = pd.read_json(df_json)
-
-    # Transpose: rows=samples, cols=proteins
     data = np.log2(np.maximum(df[numeric_cols].values, 1))
-    data_T = data.T  # samples x proteins
-
-    # Remove any columns with zero variance
+    data_T = data.T
     valid_cols = np.std(data_T, axis=0) > 0
     data_clean = data_T[:, valid_cols]
-
-    # Scale and PCA
     scaler = StandardScaler()
     data_scaled = scaler.fit_transform(data_clean)
-
     pca = PCA(n_components=min(3, len(numeric_cols)))
     pca_result = pca.fit_transform(data_scaled)
-
     return pca_result, pca.explained_variance_ratio_, numeric_cols
 
 
 @st.cache_data
 def create_pca_plot(df_json: str, numeric_cols: list[str]) -> go.Figure:
-    """Create PCA scatter plot."""
     pca_result, var_explained, cols = compute_pca(df_json, numeric_cols)
-
     groups = get_condition_groups(cols)
     color_map = get_condition_color_map(list(groups.keys()))
     sorted_cols = sort_columns_by_condition(cols)
-
-    # Map samples to conditions
     conditions = [c[0] if len(c) >= 1 and c[0].isalpha() else "X" for c in sorted_cols]
-    colors = [color_map[c] for c in conditions]
 
     fig = go.Figure()
 
-    # Add scatter for each condition
     for cond in sorted(groups.keys()):
         mask = [c == cond for c in conditions]
         indices = [i for i, m in enumerate(mask) if m]
@@ -277,12 +255,9 @@ def create_pca_plot(df_json: str, numeric_cols: list[str]) -> go.Figure:
 
 @st.cache_data
 def compute_permanova(df_json: str, numeric_cols: list[str], n_perm: int = 999) -> dict:
-    """Compute PERMANOVA to test if variance is explained by condition."""
     df = pd.read_json(df_json)
-
     data = np.log2(np.maximum(df[numeric_cols].values, 1))
-    data_T = data.T  # samples x proteins
-
+    data_T = data.T
     sorted_cols = sort_columns_by_condition(numeric_cols)
     conditions = np.array([c[0] if len(c) >= 1 and c[0].isalpha() else "X" for c in sorted_cols])
     unique_conds = np.unique(conditions)
@@ -290,18 +265,12 @@ def compute_permanova(df_json: str, numeric_cols: list[str], n_perm: int = 999) 
     if len(unique_conds) < 2:
         return {"F": np.nan, "p": np.nan, "R2": np.nan}
 
-    # Compute distance matrix (Euclidean)
     from scipy.spatial.distance import pdist, squareform
     dist_matrix = squareform(pdist(data_T, metric='euclidean'))
-
     n = len(conditions)
 
-    # Compute F-statistic
     def compute_f_stat(dist_mat, groups):
-        # Total sum of squares
         ss_total = np.sum(dist_mat ** 2) / (2 * n)
-
-        # Within-group sum of squares
         ss_within = 0
         for g in np.unique(groups):
             mask = groups == g
@@ -309,31 +278,22 @@ def compute_permanova(df_json: str, numeric_cols: list[str], n_perm: int = 999) 
             if n_g > 1:
                 within_dist = dist_mat[np.ix_(mask, mask)]
                 ss_within += np.sum(within_dist ** 2) / (2 * n_g)
-
         ss_between = ss_total - ss_within
-
         df_between = len(np.unique(groups)) - 1
         df_within = n - len(np.unique(groups))
-
         if df_within == 0 or ss_within == 0:
             return np.nan, np.nan
-
         f_stat = (ss_between / df_between) / (ss_within / df_within)
         r2 = ss_between / ss_total
-
         return f_stat, r2
 
     f_obs, r2 = compute_f_stat(dist_matrix, conditions)
-
-    # Permutation test
     f_perms = []
     for _ in range(n_perm):
         perm_cond = np.random.permutation(conditions)
         f_perm, _ = compute_f_stat(dist_matrix, perm_cond)
         f_perms.append(f_perm)
-
     p_value = (np.sum(np.array(f_perms) >= f_obs) + 1) / (n_perm + 1)
-
     return {"F": f_obs, "p": p_value, "R2": r2}
 
 
@@ -356,10 +316,8 @@ with tab_protein:
     if protein_data is not None:
         numeric_cols = get_numeric_cols(protein_data)
         st.caption(f"**{len(protein_data):,} proteins** × **{len(numeric_cols)} samples**")
-
         df_json = protein_data.to_json()
 
-        # --- Heatmap + Missing values ---
         col1, col2 = st.columns([2, 1])
         with col1:
             fig_heat = create_intensity_heatmap(df_json, protein_idx, numeric_cols)
@@ -370,16 +328,14 @@ with tab_protein:
 
         st.markdown("---")
 
-        # --- Violin plots ---
         st.markdown("### Sample distributions")
         fig_violin = create_condition_violin_plot(df_json, numeric_cols)
         st.plotly_chart(fig_violin, use_container_width=True)
 
         st.markdown("---")
 
-        # --- PCA + PERMANOVA ---
         st.markdown("### Variance analysis")
-        st.caption("PCA clustering and PERMANOVA test for biological variance")
+        st.caption("PCA clustering and PERMANOVA test for biological variance (all conditions)")
 
         col1, col2 = st.columns([2, 1])
         with col1:
@@ -389,11 +345,9 @@ with tab_protein:
         with col2:
             st.markdown("#### PERMANOVA results")
             permanova = compute_permanova(df_json, numeric_cols)
-
             st.metric("Pseudo-F statistic", f"{permanova['F']:.2f}" if not np.isnan(permanova['F']) else "N/A")
             st.metric("R² (variance explained)", f"{permanova['R2']*100:.1f}%" if not np.isnan(permanova['R2']) else "N/A")
             st.metric("p-value", f"{permanova['p']:.4f}" if not np.isnan(permanova['p']) else "N/A")
-
             if permanova['p'] < 0.05:
                 st.success("✓ Significant biological variance (p < 0.05)")
             elif not np.isnan(permanova['p']):
@@ -401,10 +355,8 @@ with tab_protein:
 
         st.markdown("---")
 
-        # --- Normality analysis ---
         st.markdown("### Normality analysis")
         st.caption("Testing which transformation best normalizes intensity distributions")
-
         stats_df = analyze_transformations(df_json, numeric_cols)
         best_idx = stats_df["Shapiro W"].idxmax()
         best_transform = stats_df.loc[best_idx, "Transformation"]
@@ -427,7 +379,6 @@ with tab_peptide:
     if peptide_data is not None:
         numeric_cols = get_numeric_cols(peptide_data)
         st.caption(f"**{len(peptide_data):,} peptides** × **{len(numeric_cols)} samples**")
-
         df_json = peptide_data.to_json()
 
         col1, col2 = st.columns([2, 1])
@@ -447,7 +398,7 @@ with tab_peptide:
         st.markdown("---")
 
         st.markdown("### Variance analysis")
-        st.caption("PCA clustering and PERMANOVA test for biological variance")
+        st.caption("PCA clustering and PERMANOVA test for biological variance (all conditions)")
 
         col1, col2 = st.columns([2, 1])
         with col1:
@@ -457,11 +408,9 @@ with tab_peptide:
         with col2:
             st.markdown("#### PERMANOVA results")
             permanova = compute_permanova(df_json, numeric_cols)
-
             st.metric("Pseudo-F statistic", f"{permanova['F']:.2f}" if not np.isnan(permanova['F']) else "N/A")
             st.metric("R² (variance explained)", f"{permanova['R2']*100:.1f}%" if not np.isnan(permanova['R2']) else "N/A")
             st.metric("p-value", f"{permanova['p']:.4f}" if not np.isnan(permanova['p']) else "N/A")
-
             if permanova['p'] < 0.05:
                 st.success("✓ Significant biological variance (p < 0.05)")
             elif not np.isnan(permanova['p']):
@@ -471,7 +420,6 @@ with tab_peptide:
 
         st.markdown("### Normality analysis")
         st.caption("Testing which transformation best normalizes intensity distributions")
-
         stats_df = analyze_transformations(df_json, numeric_cols)
         best_idx = stats_df["Shapiro W"].idxmax()
         best_transform = stats_df.loc[best_idx, "Transformation"]
