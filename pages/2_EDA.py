@@ -267,11 +267,12 @@ def render_eda(model: MSData | None, index_col: str | None, label: str):
         return
 
     numeric_cols = model.numeric_cols
-    df_json = model.raw_filled[numeric_cols].to_json()
+    # Use precomputed log2 transform, not raw_filled
+    df_json = model.transforms.log2[numeric_cols].to_json()
     mask = st.session_state.get(f"{label}_missing_mask")
-    mask_json = (mask if mask is not None else pd.DataFrame(False, index=model.raw_filled.index, columns=numeric_cols)).to_json()
+    mask_json = (mask if mask is not None else pd.DataFrame(False, index=model.transforms.log2.index, columns=numeric_cols)).to_json()
 
-    st.caption(f"**{len(model.raw_filled):,} {label}s** × **{len(numeric_cols)} samples** | **{model.missing_count:,} missing cells** (NaN/0/1)")
+    st.caption(f"**{len(model.transforms.log2):,} {label}s** × **{len(numeric_cols)} samples** | **{model.missing_count:,} missing cells** (NaN/0/1)")
 
     # Row 1: Heatmap + missing
     col1, col2 = st.columns([2, 1])
@@ -312,22 +313,48 @@ def render_eda(model: MSData | None, index_col: str | None, label: str):
 
     st.markdown("---")
 
-    # Row 4: Normality
+    # Row 4: Normality - use ALL transformation precomputes
     st.markdown("### Normality analysis")
     st.caption("Testing which transformation best normalizes intensity distributions.")
 
-    stats_df = analyze_transformations(df_json, numeric_cols)
-    best_idx = stats_df["W"].idxmax()
+    # Create stats for all precomputed transforms
+    transforms_dict = {
+        "Raw (log2 filled)": model.transforms.log2[numeric_cols].values.flatten(),
+        "Log10": model.transforms.log10[numeric_cols].values.flatten(),
+        "Square root": model.transforms.sqrt[numeric_cols].values.flatten(),
+        "Cube root": model.transforms.cbrt[numeric_cols].values.flatten(),
+        "Yeo-Johnson": model.transforms.yeo_johnson[numeric_cols].values.flatten(),
+        "Quantile": model.transforms.quantile[numeric_cols].values.flatten(),
+    }
+
+    results = []
+    for name, vals in transforms_dict.items():
+        clean = vals[np.isfinite(vals)]
+        if len(clean) >= 20:
+            sample = np.random.choice(clean, min(5000, len(clean)), replace=False)
+            try:
+                W, p = stats.shapiro(sample)
+            except Exception:
+                W, p = np.nan, np.nan
+            results.append({
+                "Transformation": name,
+                "Kurtosis": stats.kurtosis(clean),
+                "Skewness": stats.skew(clean),
+                "Shapiro W": W,
+                "Shapiro p": p,
+            })
+
+    stats_df = pd.DataFrame(results)
+    best_idx = stats_df["Shapiro W"].idxmax()
     best_transform = stats_df.loc[best_idx, "Transformation"]
 
     styled_df = stats_df.style.apply(
         lambda row: ["background-color: #B5BD00; color: white"] * len(row) if row["Transformation"] == best_transform else [""] * len(row),
         axis=1
-    ).format({"Kurtosis": "{:.3f}", "Skewness": "{:.3f}", "W": "{:.4f}", "p": "{:.2e}"})
+    ).format({"Kurtosis": "{:.3f}", "Skewness": "{:.3f}", "Shapiro W": "{:.4f}", "Shapiro p": "{:.2e}"})
 
     st.dataframe(styled_df, width='stretch', hide_index=True)
-    st.success(f"Recommended: **{best_transform}** (Shapiro W = {stats_df.loc[best_idx, 'W']:.4f})")
-
+    st.success(f"Recommended: **{best_transform}** (Shapiro W = {stats_df.loc[best_idx, 'Shapiro W']:.4f})")
 
 with tab_protein:
     render_eda(protein_model, protein_idx, "protein")
