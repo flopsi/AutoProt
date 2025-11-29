@@ -170,8 +170,11 @@ defaults = {
     "peptide_data": None,
     "protein_index_col": None,
     "peptide_index_col": None,
+    "protein_missing_mask": None,  # NEW
+    "peptide_missing_mask": None,  # NEW
     "upload_key": 0,
 }
+
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -334,17 +337,23 @@ if uploaded_file:
     with col_btn1:
         if st.button("✓ Confirm & cache", type="primary"):
             cache_df = processed_df.copy()
-            # Replace NaN and 0 with 1 in numeric columns
+            
+            # Store missing value mask BEFORE imputation
+            missing_mask = cache_df[numeric_final].isna() | (cache_df[numeric_final] == 0)
+            
+            # Replace NaN and 0 with 1
             cache_df[numeric_final] = cache_df[numeric_final].fillna(1).replace(0, 1)
             
             st.session_state[existing_key] = cache_df
             st.session_state[index_key] = protein_group_col
+            st.session_state[f"{data_type}_missing_mask"] = missing_mask  # NEW
             
             st.session_state.uploaded_df = None
             st.session_state.processed_df = None
             st.session_state.column_names = {}
             st.session_state.upload_key += 1
             st.rerun()
+
 
 else:
     st.info("👆 Upload a CSV file to begin")
