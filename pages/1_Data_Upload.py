@@ -101,120 +101,119 @@ if uploaded_file:
         raw_df = pd.read_csv(uploaded_file)
         st.session_state.raw_df = raw_df
         # Detect all numeric columns (candidates)
-numeric_all = [c for c in raw_df.columns if pd.api.types.is_numeric_dtype(raw_df[c])]
-if not numeric_all:
-    st.error("No numeric columns detected. Please upload a matrix with numeric intensities.")
-    st.stop()
+        numeric_all = [c for c in raw_df.columns if pd.api.types.is_numeric_dtype(raw_df[c])]
+        if not numeric_all:
+        st.error("No numeric columns detected. Please upload a matrix with numeric intensities.")
+        st.stop()
+    
+        st.session_state.original_numeric_cols = numeric_all
+        st.session_state.column_renames = auto_rename_columns(numeric_all)
 
-    st.session_state.original_numeric_cols = numeric_all
-    st.session_state.column_renames = auto_rename_columns(numeric_all)
-
-    raw_df = st.session_state.raw_df
-    numeric_all = st.session_state.original_numeric_cols
-
-    st.success(f"Loaded {len(raw_df):,} rows, {len(raw_df.columns)} columns")
+        raw_df = st.session_state.raw_df
+        numeric_all = st.session_state.original_numeric_cols
+    
+        st.success(f"Loaded {len(raw_df):,} rows, {len(raw_df.columns)} columns")
 
     # --------------------------
     # Quant column selection with last-25-char labels
     # --------------------------
-    st.markdown("### Select quantitative columns")
-    st.caption("Each option shows the last 25 characters of the original numeric column name.")
+st.markdown("### Select quantitative columns")
+st.caption("Each option shows the last 25 characters of the original numeric column name.")
 
     # Build display labels: "…<last 25 chars>"
-    def last25(name: str) -> str:
-        s = str(name)
-        return s[-25:] if len(s) > 25 else s
+def last25(name: str) -> str:
+    s = str(name)
+    return s[-25:] if len(s) > 25 else s
 
-    options = numeric_all
-    format_func = lambda col: last25(col)
+options = numeric_all
+format_func = lambda col: last25(col)
 
-    selected_numeric = st.multiselect(
-        "Quantitative intensity columns",
-        options=options,
-        default=options,         # default: all numeric are quant
-        format_func=format_func,
-        key="quant_cols_select",
-    )
+selected_numeric = st.multiselect(
+    "Quantitative intensity columns",
+    options=options,
+    default=options,         # default: all numeric are quant
+    format_func=format_func,
+    key="quant_cols_select",
+)
 
-    if not selected_numeric:
-        st.error("Select at least one quantitative column to continue.")
-        st.stop()
+if not selected_numeric:
+    st.error("Select at least one quantitative column to continue.")
+    st.stop()
 
     st.session_state.original_numeric_cols = selected_numeric
     st.session_state.column_renames = auto_rename_columns(selected_numeric)
-
     original_numeric_cols = st.session_state.original_numeric_cols
     non_numeric_cols = [c for c in raw_df.columns if c not in original_numeric_cols]
 
-    @st.fragment
-    def config_fragment():
-        # 1) Column configuration
-        with st.expander("Column configuration", expanded=True):
-            col1, col2, col3 = st.columns(3)
+@st.fragment
+def config_fragment():
+    # 1) Column configuration
+    with st.expander("Column configuration", expanded=True):
+        col1, col2, col3 = st.columns(3)
 
-            with col1:
-                st.markdown("**Protein group column**")
-                protein_group_col = st.selectbox(
-                    "Select protein group IDs",
-                    options=["None"] + non_numeric_cols,
-                    index=1 if non_numeric_cols else 0,
-                    label_visibility="collapsed",
-                    key="pg_col",
-                )
-                protein_group_col = None if protein_group_col == "None" else protein_group_col
+        with col1:
+            st.markdown("**Protein group column**")
+            protein_group_col = st.selectbox(
+                "Select protein group IDs",
+                options=["None"] + non_numeric_cols,
+                index=1 if non_numeric_cols else 0,
+                label_visibility="collapsed",
+                key="pg_col",
+            )
+            protein_group_col = None if protein_group_col == "None" else protein_group_col
 
-            with col2:
-                st.markdown("**Sequence column (peptide data)**")
-                sequence_col = st.selectbox(
-                    "Select peptide sequences",
-                    options=["None"] + non_numeric_cols,
-                    index=0,
-                    label_visibility="collapsed",
-                    key="seq_col",
-                )
-                sequence_col = None if sequence_col == "None" else sequence_col
-                is_peptide_data = sequence_col is not None
+        with col2:
+            st.markdown("**Sequence column (peptide data)**")
+            sequence_col = st.selectbox(
+                "Select peptide sequences",
+                options=["None"] + non_numeric_cols,
+                index=0,
+                label_visibility="collapsed",
+                key="seq_col",
+            )
+            sequence_col = None if sequence_col == "None" else sequence_col
+            is_peptide_data = sequence_col is not None
 
-            with col3:
-                st.markdown("**Data level**")
-                if is_peptide_data:
-                    st.markdown('<span class="status-badge badge-peptide">Peptide</span>', unsafe_allow_html=True)
-                else:
-                    st.markdown('<span class="status-badge badge-protein">Protein</span>', unsafe_allow_html=True)
+        with col3:
+            st.markdown("**Data level**")
+            if is_peptide_data:
+                st.markdown('<span class="status-badge badge-peptide">Peptide</span>', unsafe_allow_html=True)
+            else:
+                st.markdown('<span class="status-badge badge-protein">Protein</span>', unsafe_allow_html=True)
 
-            st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
 
-            col_sp1, col_sp2 = st.columns([3, 1])
-            with col_sp1:
-                species_tags = st.multiselect(
-                    "Species filter tags",
-                    options=["_HUMAN", "_YEAST", "_ECOLI", "_MOUSE"],
-                    default=["_HUMAN"],
-                    key="species",
-                )
-            with col_sp2:
-                custom_species = st.text_input("Custom tag", key="custom_sp")
-                if custom_species and custom_species not in species_tags:
-                    species_tags = species_tags + [custom_species]
+        col_sp1, col_sp2 = st.columns([3, 1])
+        with col_sp1:
+            species_tags = st.multiselect(
+                "Species filter tags",
+                options=["_HUMAN", "_YEAST", "_ECOLI", "_MOUSE"],
+                default=["_HUMAN"],
+                key="species",
+            )
+        with col_sp2:
+            custom_species = st.text_input("Custom tag", key="custom_sp")
+            if custom_species and custom_species not in species_tags:
+                species_tags = species_tags + [custom_species]
 
-        # 2) Column renaming
-        with st.expander("Edit column names (auto-named as A1,A2,A3,B1,B2,B3,...)", expanded=False):
-            st.caption("Columns are grouped in sets of 3 replicates per condition.")
-            edited_names = {}
-            cols_per_row = 6
-            for i in range(0, len(original_numeric_cols), cols_per_row):
-                row_cols = st.columns(cols_per_row)
-                for j, orig_col in enumerate(original_numeric_cols[i : i + cols_per_row]):
-                    with row_cols[j]:
-                        edited_names[orig_col] = st.text_input(
-                            f"Col {i + j + 1}",
-                            value=st.session_state.column_renames.get(orig_col, orig_col),
-                            key=f"edit_{i + j}",
-                        )
+    # 2) Column renaming
+    with st.expander("Edit column names (auto-named as A1,A2,A3,B1,B2,B3,...)", expanded=False):
+        st.caption("Columns are grouped in sets of 3 replicates per condition.")
+        edited_names = {}
+        cols_per_row = 6
+        for i in range(0, len(original_numeric_cols), cols_per_row):
+            row_cols = st.columns(cols_per_row)
+            for j, orig_col in enumerate(original_numeric_cols[i : i + cols_per_row]):
+                with row_cols[j]:
+                    edited_names[orig_col] = st.text_input(
+                        f"Col {i + j + 1}",
+                        value=st.session_state.column_renames.get(orig_col, orig_col),
+                        key=f"edit_{i + j}",
+                    )
 
-            if st.button("Apply renames"):
-                st.session_state.column_renames.update(edited_names)
-                st.rerun(scope="fragment")
+        if st.button("Apply renames"):
+            st.session_state.column_renames.update(edited_names)
+            st.rerun(scope="fragment")
 
         # Apply renames
         rename_map = {k: v for k, v in st.session_state.column_renames.items() if k in raw_df.columns}
