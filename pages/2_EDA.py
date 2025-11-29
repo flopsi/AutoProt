@@ -159,7 +159,11 @@ def create_missing_distribution_chart(df_json: str, numeric_cols: list[str], lab
 
 import plotly.express as px
 
-def create_superplot_violin(df: pd.DataFrame, numeric_cols: list[str]) -> go.Figure:
+@st.cache_data
+def create_superplot_violin(df_json: str, numeric_cols: list[str]) -> go.Figure:
+    # df_json is a JSON string → convert back to DataFrame
+    df = pd.read_json(df_json)
+
     # -----------------------------
     # Create log2-transformed copy
     # -----------------------------
@@ -172,27 +176,26 @@ def create_superplot_violin(df: pd.DataFrame, numeric_cols: list[str]) -> go.Fig
     df_long = df_log2.melt(
         id_vars=[c for c in df_log2.columns if c not in numeric_cols],
         value_vars=numeric_cols,
-        var_name="Sample",          # e.g. "A1", "B3"
-        value_name="log2_value"
+        var_name="Sample",          # e.g. A1, B3
+        value_name="log2_value",
     )
 
-    # -----------------------------
-    # Extract condition & replicate from renamed sample
-    # -----------------------------
-    # Condition = first letter (A,B,C,...) ; Replicate = remaining digits
+    # Condition = first letter; Replicate = remaining digits
     df_long["Condition"] = df_long["Sample"].str.extract(r"^([A-Z])")
     df_long["Replicate"] = df_long["Sample"].str.extract(r"^.[R]?(\d+)")
     df_long["Cond_Rep"] = df_long["Condition"] + "_R" + df_long["Replicate"]
 
     # -----------------------------
-    # Define x-axis order: group replicates per condition
+    # Define x-axis order
     # -----------------------------
     cond_order = df_long["Condition"].dropna().unique()
     x_order = []
     for cond in cond_order:
         reps = sorted(
-            df_long.loc[df_long["Condition"] == cond, "Replicate"].dropna().unique(),
-            key=lambda r: int(r)
+            df_long.loc[df_long["Condition"] == cond, "Replicate"]
+            .dropna()
+            .unique(),
+            key=lambda r: int(r),
         )
         x_order.extend([f"{cond}_R{r}" for r in reps])
 
@@ -220,7 +223,6 @@ def create_superplot_violin(df: pd.DataFrame, numeric_cols: list[str]) -> go.Fig
         plot_bgcolor="white",
         paper_bgcolor="rgba(0,0,0,0)",
     )
-
     return fig
 
 
