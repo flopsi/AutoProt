@@ -1,18 +1,7 @@
 import streamlit as st
 import pandas as pd
 import re
-
-COLORS = {
-    "red": "#E71316",
-    "dark_red": "#A6192E",
-    "gray": "#54585A",
-    "light_gray": "#E2E3E4",
-    "white": "#FFFFFF",
-    "navy": "#262262",
-    "orange": "#EA7600",
-    "dark_surface": "#2D2D2D",
-    "dark_text": "#E2E3E4",
-}
+from components import inject_custom_css, render_navbar, render_footer, COLORS
 
 st.set_page_config(
     page_title="Data Upload | Thermo Fisher Scientific",
@@ -21,62 +10,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-st.markdown("""
-<style>
-    [data-testid="stSidebar"] { display: none; }
-    [data-testid="collapsedControl"] { display: none; }
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown(f"""
-<style>
-    body, .stMarkdown, .stText {{
-        font-family: Arial, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    }}
-    .stButton > button {{
-        background-color: {COLORS['red']};
-        color: white;
-        border: none;
-        padding: 10px 20px;
-        border-radius: 4px;
-        font-weight: 500;
-    }}
-    .stButton > button:hover {{
-        background-color: {COLORS['dark_red']};
-    }}
-    .header-banner {{
-        background: linear-gradient(90deg, {COLORS['red']} 0%, {COLORS['dark_red']} 100%);
-        padding: 20px;
-        border-radius: 8px;
-        margin-bottom: 30px;
-    }}
-    .header-banner h1 {{
-        color: white;
-        margin: 0;
-        font-size: 28pt;
-    }}
-    .header-banner p {{
-        color: white;
-        margin: 5px 0 0 0;
-        opacity: 0.9;
-    }}
-    .status-badge {{
-        display: inline-block;
-        padding: 4px 12px;
-        border-radius: 12px;
-        font-size: 12px;
-        font-weight: 500;
-    }}
-    .badge-protein {{
-        background-color: {COLORS['navy']};
-        color: white;
-    }}
-    .badge-peptide {{
-        background-color: {COLORS['orange']};
-        color: white;
-    }}
-</style>
-""", unsafe_allow_html=True)
+inject_custom_css()
+render_navbar(active_page="upload")
 
 
 def extract_condition_replicate(col_name: str) -> str:
@@ -102,16 +37,7 @@ def filter_by_species(df: pd.DataFrame, col: str, species_tags: list[str]) -> pd
     return df[df[col].astype(str).str.contains(pattern, case=False, na=False)]
 
 
-def render_header(title: str, subtitle: str):
-    st.markdown(f"""
-    <div class="header-banner">
-        <h1>{title}</h1>
-        <p>{subtitle}</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-# --- Session State Initialization (separate keys for protein/peptide upload flow) ---
+# Session state init
 if "protein_data" not in st.session_state:
     st.session_state.protein_data = None
 if "peptide_data" not in st.session_state:
@@ -127,15 +53,8 @@ if "peptide_missing_mask" not in st.session_state:
 if "upload_key" not in st.session_state:
     st.session_state.upload_key = 0
 
-col_nav1, col_nav2, _ = st.columns([1, 1, 4])
-with col_nav1:
-    if st.button("← Home"):
-        st.switch_page("app.py")
-with col_nav2:
-    if st.button("EDA →"):
-        st.switch_page("pages/2_EDA.py")
-
-render_header("Data upload", "Import and configure mass spectrometry output matrices")
+st.markdown("## Data upload")
+st.caption("Import and configure mass spectrometry output matrices")
 
 uploaded_file = st.file_uploader(
     "Upload proteomics CSV",
@@ -209,7 +128,6 @@ if uploaded_file:
         processed_df = filter_by_species(processed_df, filter_col, species_tags)
         st.info(f"Filtered to {len(processed_df):,} rows matching: {', '.join(species_tags)}")
 
-    # Recalculate numeric columns from processed df
     numeric_cols_final = [c for c in processed_df.columns if pd.api.types.is_numeric_dtype(processed_df[c])]
 
     st.markdown("### Data preview")
@@ -238,19 +156,13 @@ if uploaded_file:
     with col_btn1:
         if st.button("Confirm & cache", type="primary"):
             cache_df = processed_df.copy()
-
-            # Create missing mask BEFORE imputation (NaN or values <= 1 considered missing)
             missing_mask = cache_df[numeric_cols_final].isna() | (cache_df[numeric_cols_final] <= 1)
-
-            # Replace NaN and 0 with 1
             cache_df[numeric_cols_final] = cache_df[numeric_cols_final].fillna(1).replace(0, 1)
 
-            # Store in session state with correct keys
             st.session_state[existing_key] = cache_df
             st.session_state[index_key] = protein_group_col
             st.session_state[mask_key] = missing_mask
 
-            # Reset upload for next file
             st.session_state.upload_key += 1
             st.rerun()
 
@@ -262,7 +174,6 @@ if uploaded_file:
 else:
     st.info("Upload a CSV file to begin")
 
-# --- Display Cached Data ---
 if st.session_state.protein_data is not None or st.session_state.peptide_data is not None:
     st.markdown("---")
     st.markdown("### Cached datasets")
@@ -274,7 +185,6 @@ if st.session_state.protein_data is not None or st.session_state.peptide_data is
             st.caption(f"Index column: `{st.session_state.protein_index_col}`")
             st.dataframe(st.session_state.protein_data.head(5), use_container_width=True)
 
-            # Show missing value stats
             if st.session_state.protein_missing_mask is not None:
                 mask = st.session_state.protein_missing_mask
                 total = mask.size
@@ -294,7 +204,6 @@ if st.session_state.protein_data is not None or st.session_state.peptide_data is
             st.caption(f"Index column: `{st.session_state.peptide_index_col}`")
             st.dataframe(st.session_state.peptide_data.head(5), use_container_width=True)
 
-            # Show missing value stats
             if st.session_state.peptide_missing_mask is not None:
                 mask = st.session_state.peptide_missing_mask
                 total = mask.size
@@ -309,10 +218,4 @@ if st.session_state.protein_data is not None or st.session_state.peptide_data is
         else:
             st.caption("No peptide data uploaded yet")
 
-st.markdown("---")
-st.markdown(f"""
-<div style="text-align: center; color: {COLORS['gray']}; font-size: 12px; padding: 20px 0;">
-    <p><strong>For research use only</strong></p>
-    <p>© 2024 Thermo Fisher Scientific Inc. All rights reserved.</p>
-</div>
-""", unsafe_allow_html=True)
+render_footer()
