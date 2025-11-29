@@ -42,7 +42,7 @@ for key, default in [
     ("protein_data", None), ("peptide_data", None),
     ("protein_index_col", None), ("peptide_index_col", None),
     ("protein_missing_mask", None), ("peptide_missing_mask", None),
-    ("upload_key", 0), ("raw_df", None)
+    ("upload_key", 0), ("raw_df", None), ("column_renames", {})
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -64,6 +64,7 @@ if uploaded_file:
         raw_df = pd.read_csv(uploaded_file)
         renamed_df, _ = detect_and_rename_numeric_cols(raw_df)
         st.session_state.raw_df = renamed_df
+        st.session_state.column_renames = {c: c for c in renamed_df.columns}
 
     renamed_df = st.session_state.raw_df
     st.success(f"Loaded {len(renamed_df):,} rows, {len(renamed_df.columns)} columns")
@@ -122,14 +123,39 @@ if uploaded_file:
                 if custom_species and custom_species not in species_tags:
                     species_tags = species_tags + [custom_species]
 
+        # Column renaming section
+        with st.expander("Edit column names", expanded=False):
+            edited_names = {}
+            cols_per_row = 4
+            for i in range(0, len(numeric_cols), cols_per_row):
+                row_cols = st.columns(cols_per_row)
+                for j, col in enumerate(numeric_cols[i:i+cols_per_row]):
+                    with row_cols[j]:
+                        edited_names[col] = st.text_input(
+                            col,
+                            value=st.session_state.column_renames.get(col, col),
+                            key=f"edit_{col}"
+                        )
+
+            if st.button("Apply renames"):
+                st.session_state.column_renames.update(edited_names)
+                st.rerun(scope="fragment")
+
+        # Apply column renames
+        final_rename = {k: v for k, v in st.session_state.column_renames.items() if k != v and k in renamed_df.columns}
+        working_df = renamed_df.rename(columns=final_rename)
+
+        # Update numeric cols after rename
+        numeric_cols_renamed = [st.session_state.column_renames.get(c, c) for c in numeric_cols]
+
         # Apply species filter
         filter_col = None
         for potential in ["PG.ProteinNames", "ProteinNames", "Protein.Names"]:
-            if potential in renamed_df.columns:
+            if potential in working_df.columns:
                 filter_col = potential
                 break
 
-        processed_df = renamed_df.copy()
+        processed_df = working_df.copy()
         if species_tags and filter_col:
             processed_df = filter_by_species(processed_df, filter_col, species_tags)
             st.info(f"Filtered to {len(processed_df):,} rows matching: {', '.join(species_tags)}")
@@ -169,12 +195,14 @@ if uploaded_file:
                 st.session_state[index_key] = protein_group_col
                 st.session_state[mask_key] = missing_mask
                 st.session_state.raw_df = None
+                st.session_state.column_renames = {}
                 st.session_state.upload_key += 1
-                st.rerun()  # Full rerun to update header
+                st.rerun()
 
         with col_btn2:
             if st.button("Cancel"):
                 st.session_state.raw_df = None
+                st.session_state.column_renames = {}
                 st.session_state.upload_key += 1
                 st.rerun()
 
