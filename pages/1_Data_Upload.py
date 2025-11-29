@@ -17,7 +17,9 @@ st.set_page_config(
 inject_custom_css()
 render_header()
 
-
+def is_quant_column(name: str) -> bool:
+    return name.endswith(".raw") or name.endswith(".d")
+    
 @dataclass
 class MSData:
     original: pd.DataFrame       # after filtering + renaming
