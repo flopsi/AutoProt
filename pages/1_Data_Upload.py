@@ -111,21 +111,21 @@ def render_header(title: str, subtitle: str):
     """, unsafe_allow_html=True)
 
 
-defaults = {
-    "uploaded_df": None,
-    "processed_df": None,
-    "column_names": {},
-    "protein_data": None,
-    "peptide_data": None,
-    "protein_index_col": None,
-    "peptide_index_col": None,
-    "protein_missing_mask": None,
-    "peptide_missing_mask": None,
-    "upload_key": 0,
-}
-for k, v in defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
+# --- Session State Initialization (separate keys for protein/peptide upload flow) ---
+if "protein_data" not in st.session_state:
+    st.session_state.protein_data = None
+if "peptide_data" not in st.session_state:
+    st.session_state.peptide_data = None
+if "protein_index_col" not in st.session_state:
+    st.session_state.protein_index_col = None
+if "peptide_index_col" not in st.session_state:
+    st.session_state.peptide_index_col = None
+if "protein_missing_mask" not in st.session_state:
+    st.session_state.protein_missing_mask = None
+if "peptide_missing_mask" not in st.session_state:
+    st.session_state.peptide_missing_mask = None
+if "upload_key" not in st.session_state:
+    st.session_state.upload_key = 0
 
 col_nav1, col_nav2, _ = st.columns([1, 1, 4])
 with col_nav1:
@@ -147,11 +147,7 @@ if uploaded_file:
     raw_df = pd.read_csv(uploaded_file)
     renamed_df, rename_map = detect_and_rename_numeric_cols(raw_df)
 
-    if st.session_state.uploaded_df is None or not renamed_df.columns.equals(st.session_state.uploaded_df.columns):
-        st.session_state.uploaded_df = renamed_df.copy()
-        st.session_state.column_names = {c: c for c in renamed_df.columns}
-
-    st.success(f"✓ Loaded {len(renamed_df):,} rows, {len(renamed_df.columns)} columns")
+    st.success(f"Loaded {len(renamed_df):,} rows, {len(renamed_df.columns)} columns")
 
     non_numeric_cols = [c for c in renamed_df.columns if not pd.api.types.is_numeric_dtype(renamed_df[c])]
     numeric_cols = [c for c in renamed_df.columns if pd.api.types.is_numeric_dtype(renamed_df[c])]
@@ -201,45 +197,27 @@ if uploaded_file:
             if custom_species and custom_species not in species_tags:
                 species_tags.append(custom_species)
 
-    with st.expander("Edit column names", expanded=False):
-        edited_names = {}
-        cols_per_row = 4
-        for i in range(0, len(numeric_cols), cols_per_row):
-            row_cols = st.columns(cols_per_row)
-            for j, col in enumerate(numeric_cols[i:i+cols_per_row]):
-                with row_cols[j]:
-                    edited_names[col] = st.text_input(
-                        col,
-                        value=st.session_state.column_names.get(col, col),
-                        key=f"edit_{col}"
-                    )
-
-        if st.button("Apply renames"):
-            st.session_state.column_names.update(edited_names)
-            st.rerun()
-
-    final_rename = {k: v for k, v in st.session_state.column_names.items() if k != v}
-    processed_df = renamed_df.rename(columns=final_rename)
-    numeric_final = [st.session_state.column_names.get(c, c) for c in numeric_cols]
-
+    # Apply species filter
     filter_col = None
     for potential in ["PG.ProteinNames", "ProteinNames", "Protein.Names"]:
-        if potential in processed_df.columns:
+        if potential in renamed_df.columns:
             filter_col = potential
             break
 
+    processed_df = renamed_df.copy()
     if species_tags and filter_col:
         processed_df = filter_by_species(processed_df, filter_col, species_tags)
         st.info(f"Filtered to {len(processed_df):,} rows matching: {', '.join(species_tags)}")
 
-    st.session_state.processed_df = processed_df
+    # Recalculate numeric columns from processed df
+    numeric_cols_final = [c for c in processed_df.columns if pd.api.types.is_numeric_dtype(processed_df[c])]
 
     st.markdown("### Data preview")
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Rows", f"{len(processed_df):,}")
-    c2.metric("Numeric columns", len(numeric_final))
-    c3.metric("Conditions", len(set(c.rsplit('_', 1)[0] for c in numeric_final if '_' in c)))
+    c2.metric("Numeric columns", len(numeric_cols_final))
+    c3.metric("Conditions", len(set(c.rsplit('_', 1)[0] for c in numeric_cols_final if '_' in c)))
     c4.metric("Data level", "Peptide" if is_peptide_data else "Protein")
 
     st.dataframe(processed_df.head(10), use_container_width=True, height=300)
@@ -248,8 +226,9 @@ if uploaded_file:
     data_type = "peptide" if is_peptide_data else "protein"
     existing_key = f"{data_type}_data"
     index_key = f"{data_type}_index_col"
+    mask_key = f"{data_type}_missing_mask"
 
-    if st.session_state[existing_key] is not None:
+    if st.session_state.get(existing_key) is not None:
         st.warning(f"{data_type.capitalize()} data already cached. Confirming will overwrite.")
 
     st.markdown(f"### Cache as {data_type} data?")
@@ -259,36 +238,31 @@ if uploaded_file:
     with col_btn1:
         if st.button("Confirm & cache", type="primary"):
             cache_df = processed_df.copy()
-            
-            # Recalculate numeric columns from processed df
-            numeric_final = [c for c in cache_df.columns if pd.api.types.is_numeric_dtype(cache_df[c])]
-            
-            missing_mask = cache_df[numeric_final].isna() | (cache_df[numeric_final] == 0)
-            cache_df[numeric_final] = cache_df[numeric_final].fillna(1).replace(0, 1)
-            
+
+            # Create missing mask BEFORE imputation (NaN or values <= 1 considered missing)
+            missing_mask = cache_df[numeric_cols_final].isna() | (cache_df[numeric_cols_final] <= 1)
+
+            # Replace NaN and 0 with 1
+            cache_df[numeric_cols_final] = cache_df[numeric_cols_final].fillna(1).replace(0, 1)
+
+            # Store in session state with correct keys
             st.session_state[existing_key] = cache_df
             st.session_state[index_key] = protein_group_col
-            st.session_state[f"{data_type}_missing_mask"] = missing_mask
-            st.session_state[f"{data_type}_numeric_cols"] = numeric_final  # Store numeric cols too
-            
-            st.session_state.uploaded_df = None
-            st.session_state.processed_df = None
-            st.session_state.column_names = {}
+            st.session_state[mask_key] = missing_mask
+
+            # Reset upload for next file
             st.session_state.upload_key += 1
             st.rerun()
 
-
     with col_btn2:
         if st.button("Cancel"):
-            st.session_state.uploaded_df = None
-            st.session_state.processed_df = None
-            st.session_state.column_names = {}
             st.session_state.upload_key += 1
             st.rerun()
 
 else:
     st.info("Upload a CSV file to begin")
 
+# --- Display Cached Data ---
 if st.session_state.protein_data is not None or st.session_state.peptide_data is not None:
     st.markdown("---")
     st.markdown("### Cached datasets")
@@ -299,6 +273,14 @@ if st.session_state.protein_data is not None or st.session_state.peptide_data is
         if st.session_state.protein_data is not None:
             st.caption(f"Index column: `{st.session_state.protein_index_col}`")
             st.dataframe(st.session_state.protein_data.head(5), use_container_width=True)
+
+            # Show missing value stats
+            if st.session_state.protein_missing_mask is not None:
+                mask = st.session_state.protein_missing_mask
+                total = mask.size
+                missing = mask.sum().sum()
+                st.caption(f"Missing values: {missing:,} ({100*missing/total:.1f}%)")
+
             if st.button("Clear protein data"):
                 st.session_state.protein_data = None
                 st.session_state.protein_index_col = None
@@ -311,6 +293,14 @@ if st.session_state.protein_data is not None or st.session_state.peptide_data is
         if st.session_state.peptide_data is not None:
             st.caption(f"Index column: `{st.session_state.peptide_index_col}`")
             st.dataframe(st.session_state.peptide_data.head(5), use_container_width=True)
+
+            # Show missing value stats
+            if st.session_state.peptide_missing_mask is not None:
+                mask = st.session_state.peptide_missing_mask
+                total = mask.size
+                missing = mask.sum().sum()
+                st.caption(f"Missing values: {missing:,} ({100*missing/total:.1f}%)")
+
             if st.button("Clear peptide data"):
                 st.session_state.peptide_data = None
                 st.session_state.peptide_index_col = None
