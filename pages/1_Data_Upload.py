@@ -100,30 +100,35 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file:
-    # Cache raw_df so we don't re-read on each rerun
     if st.session_state.raw_df is None:
         raw_df = pd.read_csv(uploaded_file)
         st.session_state.raw_df = raw_df
 
-        # 1) Detect numeric candidate columns
-        numeric_candidates = [c for c in raw_df.columns if pd.api.types.is_numeric_dtype(raw_df[c])]
-        st.session_state.original_numeric_cols = numeric_candidates
-        st.session_state.column_renames = auto_rename_columns(numeric_candidates)
+        # 1) detect numeric candidates
+        numeric_all = [c for c in raw_df.columns if pd.api.types.is_numeric_dtype(raw_df[c])]
+
+        # 2) pre-select likely quant columns: numeric AND .raw/.d
+        quant_default = [c for c in numeric_all if is_quant_column(c)]
+        if not quant_default:
+            quant_default = numeric_all  # fallback
+
+        st.session_state.original_numeric_cols = quant_default
+        st.session_state.all_numeric_candidates = numeric_all
+        st.session_state.column_renames = auto_rename_columns(quant_default)
 
     raw_df = st.session_state.raw_df
-    numeric_candidates = st.session_state.original_numeric_cols
+    numeric_all = st.session_state.all_numeric_candidates
+    quant_default = st.session_state.original_numeric_cols
 
     st.success(f"Loaded {len(raw_df):,} rows, {len(raw_df.columns)} columns")
 
     st.markdown("### Select quantitative columns")
-    st.caption("Auto-detected numeric columns are shown below. Deselect columns that are not quant intensities.")
+    st.caption("Numeric columns ending in .raw (Thermo) or .d (Bruker) are pre-selected as quant columns.")
 
-    # 2) Let user deselect numeric columns that are not quant
     selected_numeric = st.multiselect(
         "Quantitative intensity columns",
-        options=numeric_candidates,
-        default=numeric_candidates,
-        help="Typically come in groups of three with similar original names.",
+        options=numeric_all,
+        default=quant_default,
         key="quant_cols_select",
     )
 
@@ -131,7 +136,6 @@ if uploaded_file:
         st.error("Select at least one quantitative column to continue.")
         st.stop()
 
-    # Update state to use only selected quant columns
     st.session_state.original_numeric_cols = selected_numeric
     st.session_state.column_renames = auto_rename_columns(selected_numeric)
 
@@ -140,9 +144,6 @@ if uploaded_file:
 
     @st.fragment
     def config_fragment():
-        ...
-        # the rest of the previous config_fragment body stays the same,
-        # and it now uses `original_numeric_cols` as the quant columns
     @st.fragment
     def config_fragment():
         # 1) Column configuration
