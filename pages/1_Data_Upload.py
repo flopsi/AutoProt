@@ -134,7 +134,6 @@ if uploaded_file:
             key="pg_col",
         )
         pg_col = None if pg_col == "None" else pg_col
-
     with col2:
         species_col = st.selectbox(
             "Species annotation column (optional)",
@@ -143,6 +142,17 @@ if uploaded_file:
             key="species_col_select",
         )
         species_col = None if species_col == "None" else species_col
+
+# Add peptide sequence column selector
+peptide_seq_col = st.selectbox(
+    "Peptide sequence column (optional)",
+    options=["None"] + all_cols,
+    index=0,
+    key="peptide_seq_col_select",
+)
+peptide_seq_col = None if peptide_seq_col == "None" else peptide_seq_col
+st.session_state.peptide_seq_col = peptide_seq_col
+
 
     other_metadata = st.multiselect(
         "Additional metadata columns (optional)",
