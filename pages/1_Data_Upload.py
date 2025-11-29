@@ -142,8 +142,8 @@ st.success(f"Loaded {len(raw_df):,} rows, {len(raw_df.columns)} columns")
     # --------------------------
     # Quant group selection
     # --------------------------
-    st.markdown("### Select quantitative column groups")
-    st.caption(
+st.markdown("### Select quantitative column groups")
+st.caption(
         "Columns are grouped by the last 25 characters of their original name. "
         "Select which groups (typically 3 replicates) are quantitative."
     )
