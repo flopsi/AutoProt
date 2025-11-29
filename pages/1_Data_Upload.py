@@ -259,18 +259,24 @@ if uploaded_file:
     with col_btn1:
         if st.button("Confirm & cache", type="primary"):
             cache_df = processed_df.copy()
+            
+            # Recalculate numeric columns from processed df
+            numeric_final = [c for c in cache_df.columns if pd.api.types.is_numeric_dtype(cache_df[c])]
+            
             missing_mask = cache_df[numeric_final].isna() | (cache_df[numeric_final] == 0)
             cache_df[numeric_final] = cache_df[numeric_final].fillna(1).replace(0, 1)
-
+            
             st.session_state[existing_key] = cache_df
             st.session_state[index_key] = protein_group_col
             st.session_state[f"{data_type}_missing_mask"] = missing_mask
-
+            st.session_state[f"{data_type}_numeric_cols"] = numeric_final  # Store numeric cols too
+            
             st.session_state.uploaded_df = None
             st.session_state.processed_df = None
             st.session_state.column_names = {}
             st.session_state.upload_key += 1
             st.rerun()
+
 
     with col_btn2:
         if st.button("Cancel"):
