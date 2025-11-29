@@ -70,6 +70,22 @@ def extract_species_from_protein_id(protein_id: str) -> str:
     else:
         return "UNKNOWN"
 
+    # Extract species from protein ID column
+    if pg_col and pg_col in working_df.columns:
+        working_df["_extracted_species"] = working_df[pg_col].apply(extract_species_from_protein_id)
+        species_col_to_use = "_extracted_species"
+        
+        # DEBUG: Show species distribution
+        st.write("Species distribution:", working_df["_extracted_species"].value_counts().to_dict())
+    else:
+        species_col_to_use = None
+
+    # Filter by extracted species
+    processed_df = working_df.copy()
+    if species_col_to_use and species_tags:
+        st.write(f"Filtering for: {species_tags}")  # DEBUG
+        processed_df = filter_by_species(processed_df, species_col_to_use, species_tags)
+        st.info(f"Filtered to {len(processed_df):,} rows matching: {', '.join(species_tags)}")
 
 def filter_by_species(df: pd.DataFrame, species_col: str | None, species_tags: list[str]) -> pd.DataFrame:
     """Filter by species tags."""
