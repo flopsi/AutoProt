@@ -59,7 +59,7 @@ def auto_rename_columns(columns: List[str]) -> dict:
     return rename_map
 
 
-def filter_by_species(df: pd.DataFrame, col: str, species_tags: list[str]) -> pd.DataFrame:
+def filter_by_species(df: pd.DataFrame, col: str | None, species_tags: list[str]) -> pd.DataFrame:
     """Vectorized species filtering using regex mask."""
     if not species_tags or not col or col not in df.columns:
         return df
@@ -72,7 +72,7 @@ def filter_by_species(df: pd.DataFrame, col: str, species_tags: list[str]) -> pd
 # Transform computation
 # -----------------------
 def _compute_yeo_johnson_transform(df: pd.DataFrame) -> pd.DataFrame:
-    """Vectorized Yeo-Johnson transform."""
+    """Yeo-Johnson transform per column."""
     result = df.copy()
     for col in df.columns:
         clean = df[col].dropna()
@@ -100,9 +100,7 @@ def _compute_condition_cvs(df: pd.DataFrame) -> pd.DataFrame:
     cvs = {}
     for col in df.columns:
         condition = col[0] if col and col[0].isalpha() else "X"
-        if condition not in cvs:
-            cvs[condition] = []
-        cvs[condition].append(df[col])
+        cvs.setdefault(condition, []).append(df[col])
 
     result = {}
     for condition, cols_data in cvs.items():
@@ -142,8 +140,10 @@ def build_msdata(processed_df: pd.DataFrame, numeric_cols_renamed: List[str]) ->
 
     # Fill: NaN, 0, 1 → 1
     raw_filled = raw.copy()
-    for col in numeric_cols_renamed:
-        raw_filled[col] = raw_filled[col].fillna(1.0).where(~raw_filled[col].isin([0.0, 1.0]), 1.0)
+    vals = raw_filled[numeric_cols_renamed]
+    vals = vals.fillna(1.0)
+    vals = vals.where(~vals.isin([0.0, 1.0]), 1.0)
+    raw_filled[numeric_cols_renamed] = vals
 
     missing_count = (raw_filled[numeric_cols_renamed] == 1.0).to_numpy().sum()
 
@@ -173,6 +173,8 @@ DEFAULTS = {
     "peptide_model": None,
     "protein_index_col": None,
     "peptide_index_col": None,
+    "protein_species_col": None,
+    "peptide_species_col": None,
     "peptide_seq_col": None,
     "protein_missing_mask": None,
     "peptide_missing_mask": None,
@@ -188,7 +190,6 @@ for k, v in DEFAULTS.items():
 
 
 def reset_upload_state():
-    """Consolidated reset function."""
     st.cache_data.clear()
     st.session_state.raw_df = None
     st.session_state.column_renames = {}
@@ -214,7 +215,6 @@ if not uploaded_file:
     render_footer()
     st.stop()
 
-# Load or retrieve cached dataframe
 if st.session_state.raw_df is None:
     raw_df = pd.read_csv(uploaded_file)
     st.session_state.raw_df = raw_df
@@ -222,7 +222,7 @@ else:
     raw_df = st.session_state.raw_df
 
 st.success(f"Loaded {len(raw_df):,} rows, {len(raw_df.columns)} columns")
-st.dataframe(raw_df.head(5), width='stretch', height=250)
+st.dataframe(raw_df.head(5), width="stretch", height=250)
 
 all_cols = list(raw_df.columns)
 
@@ -231,15 +231,30 @@ st.markdown("### Select metadata columns")
 
 col1, col2, col3 = st.columns(3)
 with col1:
-    pg_col = st.selectbox("Protein group / ID column", options=["None"] + all_cols, index=1 if all_cols else 0, key="pg_col")
+    pg_col = st.selectbox(
+        "Protein group / ID column",
+        options=["None"] + all_cols,
+        index=1 if all_cols else 0,
+        key="pg_col",
+    )
     pg_col = None if pg_col == "None" else pg_col
 
 with col2:
-    species_col = st.selectbox("Species annotation column (optional)", options=["None"] + all_cols, index=0, key="species_col_select")
+    species_col = st.selectbox(
+        "Species annotation column (optional)",
+        options=["None"] + all_cols,
+        index=0,
+        key="species_col_select",
+    )
     species_col = None if species_col == "None" else species_col
 
 with col3:
-    peptide_seq_col = st.selectbox("Peptide sequence column (optional)", options=["None"] + all_cols, index=0, key="peptide_seq_col_select")
+    peptide_seq_col = st.selectbox(
+        "Peptide sequence column (optional)",
+        options=["None"] + all_cols,
+        index=0,
+        key="peptide_seq_col_select",
+    )
     peptide_seq_col = None if peptide_seq_col == "None" else peptide_seq_col
 
 other_metadata = st.multiselect(
@@ -322,7 +337,6 @@ def config_fragment():
     rename_map = {k: v for k, v in st.session_state.column_renames.items() if k in raw_df.columns}
     working_df = raw_df.rename(columns=rename_map)
 
-    # Force numeric conversion early
     numeric_cols_renamed = [st.session_state.column_renames.get(c, c) for c in numeric_cols_orig]
     working_df[numeric_cols_renamed] = (
         working_df[numeric_cols_renamed]
@@ -330,15 +344,13 @@ def config_fragment():
         .astype("float64")
     )
 
-    # Species filter
     processed_df = filter_by_species(working_df, species_col, species_tags)
     if species_col and species_tags:
         st.info(f"Filtered to {len(processed_df):,} rows matching: {', '.join(species_tags)}")
 
     st.markdown("### Data preview")
-    st.dataframe(processed_df.head(10), width='stretch', height=300)
+    st.dataframe(processed_df.head(10), width="stretch", height=300)
 
-    # Metrics
     conditions = {col[0] for col in numeric_cols_renamed if col and col[0].isalpha()}
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Rows", f"{len(processed_df):,}")
@@ -346,11 +358,11 @@ def config_fragment():
     c3.metric("Conditions", len(conditions))
     c4.metric("Data level", "Peptide" if peptide_seq_col else "Protein")
 
-    # Cache buttons
     st.markdown("---")
-    data_type = "protein"
+    data_type = "protein"  # current app version: one type at a time
     existing_key = f"{data_type}_model"
     index_key = f"{data_type}_index_col"
+    species_key = f"{data_type}_species_col"
     seq_key = f"{data_type}_seq_col"
     mask_key = f"{data_type}_missing_mask"
 
@@ -365,6 +377,7 @@ def config_fragment():
 
             st.session_state[existing_key] = model
             st.session_state[index_key] = pg_col
+            st.session_state[species_key] = species_col
             st.session_state[seq_key] = peptide_seq_col
             st.session_state[mask_key] = missing_mask
 
