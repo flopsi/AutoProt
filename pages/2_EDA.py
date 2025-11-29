@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import matplotlib.pyplot as plt
+import seaborn as sns
 from scipy import stats
 from sklearn.preprocessing import PowerTransformer, QuantileTransformer
 from components import inject_custom_css, render_header, render_navigation, render_footer, COLORS
@@ -103,7 +104,6 @@ def analyze_transformations(df_json: str, numeric_cols: list[str]) -> pd.DataFra
 
 @st.cache_data
 def create_intensity_heatmap(df_json: str, index_col: str, numeric_cols: list[str]) -> go.Figure:
-    """Static log2 heatmap."""
     df = pd.read_json(df_json)
 
     if index_col and index_col in df.columns:
@@ -167,12 +167,9 @@ def create_missing_distribution_chart(df_json: str, numeric_cols: list[str], lab
     return fig
 
 
-@st.cache_data
-def create_condition_comparison_plot(df_json: str, numeric_cols: list[str], 
-                                      cond_a: str, cond_b: str) -> go.Figure:
-    """Create violin + box + points plot comparing two conditions."""
-    df = pd.read_json(df_json)
-
+def create_condition_violin_plot(df: pd.DataFrame, numeric_cols: list[str], 
+                                  cond_a: str, cond_b: str):
+    """Create split violin plot with seaborn comparing two conditions."""
     groups = get_condition_groups(numeric_cols)
     cols_a = groups.get(cond_a, [])
     cols_b = groups.get(cond_b, [])
@@ -184,117 +181,36 @@ def create_condition_comparison_plot(df_json: str, numeric_cols: list[str],
     mean_a = np.log2(np.maximum(df[cols_a].mean(axis=1).values, 1))
     mean_b = np.log2(np.maximum(df[cols_b].mean(axis=1).values, 1))
 
-    # Sample for visualization (max 500 points for performance)
-    n_points = len(mean_a)
-    if n_points > 500:
-        idx = np.random.choice(n_points, 500, replace=False)
-        mean_a_sample = mean_a[idx]
-        mean_b_sample = mean_b[idx]
-    else:
-        idx = np.arange(n_points)
-        mean_a_sample = mean_a
-        mean_b_sample = mean_b
+    # Create long-form dataframe for seaborn
+    plot_df = pd.DataFrame({
+        'log2_intensity': np.concatenate([mean_a, mean_b]),
+        'Condition': [cond_a] * len(mean_a) + [cond_b] * len(mean_b)
+    })
 
-    fig = go.Figure()
+    # Create figure
+    fig, ax = plt.subplots(figsize=(8, 6))
 
-    # Violin for condition A (left side)
-    fig.add_trace(go.Violin(
-        y=mean_a,
-        x=[cond_a] * len(mean_a),
-        side='negative',
-        name=cond_a,
-        line_color='#262262',
-        fillcolor='rgba(38, 34, 98, 0.5)',
-        meanline_visible=True,
-        showlegend=True
-    ))
-
-    # Violin for condition B (right side)
-    fig.add_trace(go.Violin(
-        y=mean_b,
-        x=[cond_a] * len(mean_b),  # Same x position for split violin
-        side='positive',
-        name=cond_b,
-        line_color='#EA7600',
-        fillcolor='rgba(234, 118, 0, 0.5)',
-        meanline_visible=True,
-        showlegend=True
-    ))
-
-    # Connecting lines (sampled)
-    for i in range(len(mean_a_sample)):
-        fig.add_trace(go.Scatter(
-            x=[0.85, 1.15],
-            y=[mean_a_sample[i], mean_b_sample[i]],
-            mode='lines',
-            line=dict(color='gray', width=0.5),
-            opacity=0.3,
-            showlegend=False,
-            hoverinfo='skip'
-        ))
-
-    # Points for A
-    fig.add_trace(go.Scatter(
-        x=[0.85] * len(mean_a_sample),
-        y=mean_a_sample,
-        mode='markers',
-        marker=dict(color='#262262', size=4, opacity=0.6),
-        name=f'{cond_a} points',
-        showlegend=False,
-        hovertemplate=f'{cond_a}: %{{y:.2f}}<extra></extra>'
-    ))
-
-    # Points for B
-    fig.add_trace(go.Scatter(
-        x=[1.15] * len(mean_b_sample),
-        y=mean_b_sample,
-        mode='markers',
-        marker=dict(color='#EA7600', size=4, opacity=0.6),
-        name=f'{cond_b} points',
-        showlegend=False,
-        hovertemplate=f'{cond_b}: %{{y:.2f}}<extra></extra>'
-    ))
-
-    # Box plots
-    fig.add_trace(go.Box(
-        y=mean_a,
-        x=[0.92] * len(mean_a),
-        width=0.08,
-        marker_color='#262262',
-        line_color='#262262',
-        fillcolor='rgba(38, 34, 98, 0.7)',
-        showlegend=False,
-        boxmean=True
-    ))
-
-    fig.add_trace(go.Box(
-        y=mean_b,
-        x=[1.08] * len(mean_b),
-        width=0.08,
-        marker_color='#EA7600',
-        line_color='#EA7600',
-        fillcolor='rgba(234, 118, 0, 0.7)',
-        showlegend=False,
-        boxmean=True
-    ))
-
-    fig.update_layout(
-        title=f"Condition comparison: {cond_a} vs {cond_b} (log2 mean intensity)",
-        yaxis_title="log2(intensity)",
-        xaxis=dict(
-            tickmode='array',
-            tickvals=[0.85, 1.15],
-            ticktext=[cond_a, cond_b],
-            range=[0.4, 1.6]
-        ),
-        height=500,
-        plot_bgcolor="white",
-        paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Arial", color="#54585A"),
-        violingap=0,
-        violinmode='overlay',
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    # Split violin with inner box
+    sns.violinplot(
+        data=plot_df,
+        x='Condition',
+        y='log2_intensity',
+        hue='Condition',
+        split=True,
+        inner='box',
+        palette={cond_a: '#262262', cond_b: '#EA7600'},
+        ax=ax,
+        legend=False
     )
+
+    ax.set_ylabel('log2(mean intensity)')
+    ax.set_xlabel('')
+    ax.set_title(f'Condition comparison: {cond_a} vs {cond_b}')
+
+    # Style
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
 
     return fig
 
@@ -377,9 +293,10 @@ with tab_protein:
                 cond_b = st.selectbox("Condition B", conditions, index=min(1, len(conditions)-1), key="prot_cond_b")
 
             if cond_a != cond_b:
-                fig = create_condition_comparison_plot(df_json, numeric_cols, cond_a, cond_b)
+                fig = create_condition_violin_plot(protein_data, numeric_cols, cond_a, cond_b)
                 if fig:
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.pyplot(fig)
+                    plt.close(fig)
             else:
                 st.warning("Select different conditions to compare")
 
@@ -394,7 +311,6 @@ with tab_peptide:
 
         df_json = peptide_data.to_json()
 
-        # --- Static heatmap and missing values ---
         col1, col2 = st.columns([2, 1])
         with col1:
             fig_heat = create_intensity_heatmap(df_json, peptide_idx, numeric_cols)
@@ -448,9 +364,10 @@ with tab_peptide:
                 cond_b = st.selectbox("Condition B", conditions, index=min(1, len(conditions)-1), key="pep_cond_b")
 
             if cond_a != cond_b:
-                fig = create_condition_comparison_plot(df_json, numeric_cols, cond_a, cond_b)
+                fig = create_condition_violin_plot(peptide_data, numeric_cols, cond_a, cond_b)
                 if fig:
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.pyplot(fig)
+                    plt.close(fig)
             else:
                 st.warning("Select different conditions to compare")
 
