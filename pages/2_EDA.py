@@ -159,37 +159,68 @@ def create_missing_distribution_chart(df_json: str, numeric_cols: list[str], lab
 
 import plotly.express as px
 
-@st.cache_data
-def create_condition_violin_plot(df_json: str, numeric_cols: list[str]) -> go.Figure:
-    """Violin plot with px.violin: y=log2, x=replicate, color=condition."""
-    df_wide = pd.read_json(df_json)
-    groups = get_condition_groups(numeric_cols)  # {"A": ["A1","A2","A3"], ...}
+def create_superplot_violin(df: pd.DataFrame, numeric_cols: list[str]) -> go.Figure:
+    # -----------------------------
+    # Create log2-transformed copy
+    # -----------------------------
+    df_log2 = df.copy()
+    df_log2[numeric_cols] = np.log2(df_log2[numeric_cols].replace(0, np.nan))
 
-    # Build long-form table
-    records = []
-    for condition, cols in groups.items():
-        cols = sorted(cols)
-        for rep_idx, col in enumerate(cols, start=1):
-            vals = np.log2(np.maximum(df_wide[col].values, 1))
-            for v in vals:
-                records.append(
-                    {"log2_value": v,
-                     "replicate": f"R{rep_idx}",
-                     "condition": condition,
-                     "sample": col}
-                )
+    # -----------------------------
+    # Melt into long format
+    # -----------------------------
+    df_long = df_log2.melt(
+        id_vars=[c for c in df_log2.columns if c not in numeric_cols],
+        value_vars=numeric_cols,
+        var_name="Sample",          # e.g. "A1", "B3"
+        value_name="log2_value"
+    )
 
-    df_long = pd.DataFrame(records)
+    # -----------------------------
+    # Extract condition & replicate from renamed sample
+    # -----------------------------
+    # Condition = first letter (A,B,C,...) ; Replicate = remaining digits
+    df_long["Condition"] = df_long["Sample"].str.extract(r"^([A-Z])")
+    df_long["Replicate"] = df_long["Sample"].str.extract(r"^.[R]?(\d+)")
+    df_long["Cond_Rep"] = df_long["Condition"] + "_R" + df_long["Replicate"]
 
+    # -----------------------------
+    # Define x-axis order: group replicates per condition
+    # -----------------------------
+    cond_order = df_long["Condition"].dropna().unique()
+    x_order = []
+    for cond in cond_order:
+        reps = sorted(
+            df_long.loc[df_long["Condition"] == cond, "Replicate"].dropna().unique(),
+            key=lambda r: int(r)
+        )
+        x_order.extend([f"{cond}_R{r}" for r in reps])
+
+    # -----------------------------
+    # Plotly Express grouped SuperPlot
+    # -----------------------------
     fig = px.violin(
         df_long,
+        x="Cond_Rep",
         y="log2_value",
-        x="replicate",
-        color="condition",
+        color="Condition",
         box=True,
         points=False,
-        hover_data=["sample", "condition", "replicate"],
+        category_orders={"Cond_Rep": x_order},
+        color_discrete_sequence=px.colors.qualitative.Set2,
     )
+
+    fig.update_traces(jitter=0.3, scalemode="count")
+    fig.update_layout(
+        title="Sample intensity distributions by condition & replicate (log2)",
+        violingap=0.05,
+        violinmode="group",
+        xaxis_title="Condition & replicate",
+        yaxis_title="log2(intensity)",
+        plot_bgcolor="white",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+
     return fig
 
 
