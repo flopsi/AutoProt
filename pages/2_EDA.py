@@ -2,14 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-
-COLORS = {
-    "red": "#E71316",
-    "dark_red": "#A6192E",
-    "gray": "#54585A",
-    "light_gray": "#E2E3E4",
-    "navy": "#262262",
-}
+from components import inject_custom_css, render_navbar, render_footer, COLORS
 
 st.set_page_config(
     page_title="EDA | Thermo Fisher Scientific",
@@ -18,48 +11,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-st.markdown("""
-<style>
-    [data-testid="stSidebar"] { display: none; }
-    [data-testid="collapsedControl"] { display: none; }
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown(f"""
-<style>
-    body, .stMarkdown, .stText {{
-        font-family: Arial, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    }}
-    .stButton > button {{
-        background-color: {COLORS['red']};
-        color: white;
-        border: none;
-        padding: 10px 20px;
-        border-radius: 4px;
-        font-weight: 500;
-    }}
-    .stButton > button:hover {{
-        background-color: {COLORS['dark_red']};
-    }}
-    .header-banner {{
-        background: linear-gradient(90deg, {COLORS['red']} 0%, {COLORS['dark_red']} 100%);
-        padding: 20px;
-        border-radius: 8px;
-        margin-bottom: 30px;
-    }}
-    .header-banner h1 {{ color: white; margin: 0; font-size: 28pt; }}
-    .header-banner p {{ color: white; margin: 5px 0 0 0; opacity: 0.9; }}
-</style>
-""", unsafe_allow_html=True)
-
-
-def render_header(title: str, subtitle: str):
-    st.markdown(f"""
-    <div class="header-banner">
-        <h1>{title}</h1>
-        <p>{subtitle}</p>
-    </div>
-    """, unsafe_allow_html=True)
+inject_custom_css()
+render_navbar(active_page="eda")
 
 
 def parse_protein_group(pg_str: str) -> str:
@@ -149,15 +102,8 @@ def create_intensity_heatmap(df: pd.DataFrame, index_col: str,
     return fig
 
 
-col_nav1, col_nav2, _ = st.columns([1, 1, 4])
-with col_nav1:
-    if st.button("← Home"):
-        st.switch_page("app.py")
-with col_nav2:
-    if st.button("← Upload"):
-        st.switch_page("pages/1_Data_Upload.py")
-
-render_header("Exploratory data analysis", "Visualize intensity distributions and missing values")
+st.markdown("## Exploratory data analysis")
+st.caption("Visualize intensity distributions and missing values")
 
 protein_data = st.session_state.get("protein_data")
 peptide_data = st.session_state.get("peptide_data")
@@ -232,10 +178,4 @@ with tab_peptide:
     else:
         st.info("No peptide data uploaded yet")
 
-st.markdown("---")
-st.markdown(f"""
-<div style="text-align: center; color: {COLORS['gray']}; font-size: 12px; padding: 20px 0;">
-    <p><strong>For research use only</strong></p>
-    <p>© 2024 Thermo Fisher Scientific Inc. All rights reserved.</p>
-</div>
-""", unsafe_allow_html=True)
+render_footer()
