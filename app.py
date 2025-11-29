@@ -75,7 +75,7 @@ with col1:
     </div>
     """, unsafe_allow_html=True)
     if st.button("Go to Data Upload", key="nav_upload", use_container_width=True):
-        st.switch_page("pages/1_Data_Upload.py")
+        st.switch_page("1_Data_Upload.py")
 
 with col2:
     st.markdown("""
