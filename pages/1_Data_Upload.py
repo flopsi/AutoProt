@@ -148,17 +148,17 @@ st.caption(
         "Select which groups (typically 3 replicates) are quantitative."
     )
 
-    all_groups = list(group_map.keys())
-    selected_groups = st.multiselect(
-        "Quant groups (last 25 chars)",
-        options=all_groups,
-        default=all_groups,          # default = keep everything
-        key="quant_group_select",
+all_groups = list(group_map.keys())
+selected_groups = st.multiselect(
+    "Quant groups (last 25 chars)",
+    options=all_groups,
+    default=all_groups,          # default = keep everything
+    key="quant_group_select",
     )
 
-    if not selected_groups:
-        st.error("Select at least one quant group to continue.")
-        st.stop()
+if not selected_groups:
+    st.error("Select at least one quant group to continue.")
+    st.stop()
 
     # Expand selected groups back to concrete columns
     selected_numeric = []
