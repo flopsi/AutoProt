@@ -2,7 +2,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from scipy import stats
+from sklearn.preprocessing import PowerTransformer, QuantileTransformer
 from components import inject_custom_css, render_header, render_navigation, render_footer, COLORS
 
 st.set_page_config(
@@ -35,85 +37,60 @@ def sort_columns_by_condition(cols: list[str]) -> list[str]:
     return sorted(cols, key=sort_key)
 
 
+def get_condition_groups(cols: list[str]) -> dict:
+    """Group columns by condition prefix (e.g., A1,A2,A3 -> A)."""
+    groups = {}
+    for col in cols:
+        if len(col) >= 1 and col[0].isalpha():
+            prefix = col[0]
+            if prefix not in groups:
+                groups[prefix] = []
+            groups[prefix].append(col)
+    return groups
+
+
 # --- Transformation functions ---
-def transform_raw(x):
-    return x
-
 def transform_log2(x):
-    return np.log2(x + 1)
-
-def transform_log10(x):
-    return np.log10(x + 1)
-
-def transform_sqrt(x):
-    return np.sqrt(x)
-
-def transform_cbrt(x):
-    return np.cbrt(x)
-
-def transform_boxcox(x):
-    # Box-Cox requires positive values
-    x_pos = x[x > 0]
-    if len(x_pos) < 3:
-        return x
-    try:
-        transformed, _ = stats.boxcox(x_pos)
-        return transformed
-    except:
-        return x_pos
+    return np.log2(np.maximum(x, 1))
 
 
 TRANSFORMATIONS = {
-    "Raw": transform_raw,
+    "Raw": lambda x: x,
     "Log2": transform_log2,
-    "Log10": transform_log10,
-    "Square root": transform_sqrt,
-    "Cube root": transform_cbrt,
-    "Box-Cox": transform_boxcox,
+    "Log10": lambda x: np.log10(np.maximum(x, 1)),
+    "Square root": lambda x: np.sqrt(x),
+    "Cube root": lambda x: np.cbrt(x),
+    "Yeo-Johnson": lambda x: PowerTransformer(method='yeo-johnson', standardize=False).fit_transform(x.reshape(-1, 1)).flatten() if len(x) > 1 else x,
+    "Quantile": lambda x: QuantileTransformer(output_distribution='normal', random_state=42).fit_transform(x.reshape(-1, 1)).flatten() if len(x) > 1 else x,
 }
 
 
 @st.cache_data
 def compute_normality_stats(values: np.ndarray) -> dict:
-    """Compute normality statistics for a 1D array."""
-    # Remove NaN and inf
     clean = values[np.isfinite(values)]
-
     if len(clean) < 20:
         return {"kurtosis": np.nan, "skewness": np.nan, "W": np.nan, "p": np.nan}
-
-    # Sample for Shapiro (max 5000)
-    if len(clean) > 5000:
-        sample = np.random.choice(clean, 5000, replace=False)
-    else:
-        sample = clean
-
+    sample = np.random.choice(clean, min(5000, len(clean)), replace=False)
     try:
         W, p = stats.shapiro(sample)
     except:
         W, p = np.nan, np.nan
-
-    return {
-        "kurtosis": stats.kurtosis(clean),
-        "skewness": stats.skew(clean),
-        "W": W,
-        "p": p
-    }
+    return {"kurtosis": stats.kurtosis(clean), "skewness": stats.skew(clean), "W": W, "p": p}
 
 
 @st.cache_data
 def analyze_transformations(df_json: str, numeric_cols: list[str]) -> pd.DataFrame:
-    """Analyze all transformations and return stats DataFrame."""
     df = pd.read_json(df_json)
-
-    # Flatten all numeric values
     all_values = df[numeric_cols].values.flatten()
-    all_values = all_values[all_values > 0]  # Remove zeros for transforms
+    all_values = all_values[np.isfinite(all_values) & (all_values > 0)]
 
     results = []
     for name, func in TRANSFORMATIONS.items():
-        transformed = func(all_values.copy())
-        stats_dict = compute_normality_stats(transformed)
+        try:
+            transformed = func(all_values.copy())
+            stats_dict = compute_normality_stats(transformed)
+        except:
+            stats_dict = {"kurtosis": np.nan, "skewness": np.nan, "W": np.nan, "p": np.nan}
         results.append({
             "Transformation": name,
             "Kurtosis": stats_dict["kurtosis"],
@@ -121,13 +98,12 @@ def analyze_transformations(df_json: str, numeric_cols: list[str]) -> pd.DataFra
             "Shapiro W": stats_dict["W"],
             "Shapiro p": stats_dict["p"]
         })
-
     return pd.DataFrame(results)
 
 
 @st.cache_data
-def create_intensity_heatmap(df_json: str, index_col: str, numeric_cols: list[str], 
-                              transform_name: str = "Log2") -> go.Figure:
+def create_intensity_heatmap(df_json: str, index_col: str, numeric_cols: list[str]) -> go.Figure:
+    """Static log2 heatmap."""
     df = pd.read_json(df_json)
 
     if index_col and index_col in df.columns:
@@ -136,26 +112,23 @@ def create_intensity_heatmap(df_json: str, index_col: str, numeric_cols: list[st
         labels = [f"Row {i}" for i in range(len(df))]
 
     sorted_cols = sort_columns_by_condition(numeric_cols)
-
-    # Apply selected transformation
-    transform_func = TRANSFORMATIONS.get(transform_name, transform_log2)
-    intensity_transformed = df[sorted_cols].apply(lambda x: transform_func(x))
+    intensity_log2 = np.log2(np.maximum(df[sorted_cols].values, 1))
 
     fig = go.Figure(data=go.Heatmap(
-        z=intensity_transformed.values,
+        z=intensity_log2,
         x=sorted_cols,
         y=labels,
         colorscale="Viridis",
         showscale=True,
-        colorbar=dict(title=transform_name),
-        hovertemplate="Protein: %{y}<br>Sample: %{x}<br>Value: %{z:.2f}<extra></extra>"
+        colorbar=dict(title="log2"),
+        hovertemplate="Protein: %{y}<br>Sample: %{x}<br>log2: %{z:.2f}<extra></extra>"
     ))
 
     fig.update_layout(
-        title=f"Intensity distribution ({transform_name})",
+        title="Intensity distribution (log2)",
         xaxis_title="Samples",
         yaxis_title="",
-        height=600,
+        height=500,
         yaxis=dict(tickfont=dict(size=8)),
         xaxis=dict(tickangle=45),
         plot_bgcolor="white",
@@ -166,24 +139,16 @@ def create_intensity_heatmap(df_json: str, index_col: str, numeric_cols: list[st
 
 
 @st.cache_data
-def create_missing_distribution_chart(df_json: str, numeric_cols: list[str], 
-                                       label: str = "protein groups") -> go.Figure:
+def create_missing_distribution_chart(df_json: str, numeric_cols: list[str], label: str) -> go.Figure:
     df = pd.read_json(df_json)
-
     missing_per_row = (df[numeric_cols] == 1).sum(axis=1)
     total_rows = len(df)
     max_missing = len(numeric_cols)
 
-    counts = []
-    labels = []
-    for i in range(max_missing + 1):
-        count = (missing_per_row == i).sum()
-        pct = 100 * count / total_rows
-        counts.append(pct)
-        labels.append(str(i))
+    counts = [(missing_per_row == i).sum() / total_rows * 100 for i in range(max_missing + 1)]
 
     fig = go.Figure(data=go.Bar(
-        x=labels,
+        x=[str(i) for i in range(max_missing + 1)],
         y=counts,
         marker_color="#262262",
         hovertemplate="Missing: %{x}<br>Percent: %{y:.1f}%<extra></extra>"
@@ -193,12 +158,144 @@ def create_missing_distribution_chart(df_json: str, numeric_cols: list[str],
         title=f"Missing values per {label}",
         xaxis_title="Number of missing values",
         yaxis_title="% of total",
-        height=400,
+        height=350,
         plot_bgcolor="white",
         paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Arial", color="#54585A"),
         bargap=0.2
     )
+    return fig
+
+
+@st.cache_data
+def create_condition_comparison_plot(df_json: str, numeric_cols: list[str], 
+                                      cond_a: str, cond_b: str) -> go.Figure:
+    """Create violin + box + points plot comparing two conditions."""
+    df = pd.read_json(df_json)
+
+    groups = get_condition_groups(numeric_cols)
+    cols_a = groups.get(cond_a, [])
+    cols_b = groups.get(cond_b, [])
+
+    if not cols_a or not cols_b:
+        return None
+
+    # Get mean per condition per row, log2 transform
+    mean_a = np.log2(np.maximum(df[cols_a].mean(axis=1).values, 1))
+    mean_b = np.log2(np.maximum(df[cols_b].mean(axis=1).values, 1))
+
+    # Sample for visualization (max 500 points for performance)
+    n_points = len(mean_a)
+    if n_points > 500:
+        idx = np.random.choice(n_points, 500, replace=False)
+        mean_a_sample = mean_a[idx]
+        mean_b_sample = mean_b[idx]
+    else:
+        idx = np.arange(n_points)
+        mean_a_sample = mean_a
+        mean_b_sample = mean_b
+
+    fig = go.Figure()
+
+    # Violin for condition A (left side)
+    fig.add_trace(go.Violin(
+        y=mean_a,
+        x=[cond_a] * len(mean_a),
+        side='negative',
+        name=cond_a,
+        line_color='#262262',
+        fillcolor='rgba(38, 34, 98, 0.5)',
+        meanline_visible=True,
+        showlegend=True
+    ))
+
+    # Violin for condition B (right side)
+    fig.add_trace(go.Violin(
+        y=mean_b,
+        x=[cond_a] * len(mean_b),  # Same x position for split violin
+        side='positive',
+        name=cond_b,
+        line_color='#EA7600',
+        fillcolor='rgba(234, 118, 0, 0.5)',
+        meanline_visible=True,
+        showlegend=True
+    ))
+
+    # Connecting lines (sampled)
+    for i in range(len(mean_a_sample)):
+        fig.add_trace(go.Scatter(
+            x=[0.85, 1.15],
+            y=[mean_a_sample[i], mean_b_sample[i]],
+            mode='lines',
+            line=dict(color='gray', width=0.5),
+            opacity=0.3,
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+
+    # Points for A
+    fig.add_trace(go.Scatter(
+        x=[0.85] * len(mean_a_sample),
+        y=mean_a_sample,
+        mode='markers',
+        marker=dict(color='#262262', size=4, opacity=0.6),
+        name=f'{cond_a} points',
+        showlegend=False,
+        hovertemplate=f'{cond_a}: %{{y:.2f}}<extra></extra>'
+    ))
+
+    # Points for B
+    fig.add_trace(go.Scatter(
+        x=[1.15] * len(mean_b_sample),
+        y=mean_b_sample,
+        mode='markers',
+        marker=dict(color='#EA7600', size=4, opacity=0.6),
+        name=f'{cond_b} points',
+        showlegend=False,
+        hovertemplate=f'{cond_b}: %{{y:.2f}}<extra></extra>'
+    ))
+
+    # Box plots
+    fig.add_trace(go.Box(
+        y=mean_a,
+        x=[0.92] * len(mean_a),
+        width=0.08,
+        marker_color='#262262',
+        line_color='#262262',
+        fillcolor='rgba(38, 34, 98, 0.7)',
+        showlegend=False,
+        boxmean=True
+    ))
+
+    fig.add_trace(go.Box(
+        y=mean_b,
+        x=[1.08] * len(mean_b),
+        width=0.08,
+        marker_color='#EA7600',
+        line_color='#EA7600',
+        fillcolor='rgba(234, 118, 0, 0.7)',
+        showlegend=False,
+        boxmean=True
+    ))
+
+    fig.update_layout(
+        title=f"Condition comparison: {cond_a} vs {cond_b} (log2 mean intensity)",
+        yaxis_title="log2(intensity)",
+        xaxis=dict(
+            tickmode='array',
+            tickvals=[0.85, 1.15],
+            ticktext=[cond_a, cond_b],
+            range=[0.4, 1.6]
+        ),
+        height=500,
+        plot_bgcolor="white",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Arial", color="#54585A"),
+        violingap=0,
+        violinmode='overlay',
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+
     return fig
 
 
@@ -218,83 +315,102 @@ if protein_data is None and peptide_data is None:
 tab_protein, tab_peptide = st.tabs(["Protein data", "Peptide data"])
 
 with tab_protein:
-    @st.fragment
-    def protein_analysis():
-        if protein_data is not None:
-            numeric_cols = get_numeric_cols(protein_data)
-            st.caption(f"**{len(protein_data):,} proteins** × **{len(numeric_cols)} samples**")
+    if protein_data is not None:
+        numeric_cols = get_numeric_cols(protein_data)
+        st.caption(f"**{len(protein_data):,} proteins** × **{len(numeric_cols)} samples**")
 
-            df_json = protein_data.to_json()
+        df_json = protein_data.to_json()
 
-            # --- Normality Analysis ---
+        # --- Static heatmap and missing values ---
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            fig_heat = create_intensity_heatmap(df_json, protein_idx, numeric_cols)
+            st.plotly_chart(fig_heat, use_container_width=True)
+        with col2:
+            fig_bar = create_missing_distribution_chart(df_json, numeric_cols, "protein groups")
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+        st.markdown("---")
+
+        # --- Normality analysis fragment ---
+        @st.fragment
+        def protein_normality():
             st.markdown("### Normality analysis")
             st.caption("Testing which transformation best normalizes intensity distributions")
 
             stats_df = analyze_transformations(df_json, numeric_cols)
-
-            # Find best transformation (highest W)
             best_idx = stats_df["Shapiro W"].idxmax()
             best_transform = stats_df.loc[best_idx, "Transformation"]
 
-            # Display stats table
             def highlight_best(row):
                 if row["Transformation"] == best_transform:
                     return ["background-color: #B5BD00; color: white"] * len(row)
                 return [""] * len(row)
 
             styled_df = stats_df.style.apply(highlight_best, axis=1).format({
-                "Kurtosis": "{:.3f}",
-                "Skewness": "{:.3f}",
-                "Shapiro W": "{:.4f}",
-                "Shapiro p": "{:.2e}"
+                "Kurtosis": "{:.3f}", "Skewness": "{:.3f}",
+                "Shapiro W": "{:.4f}", "Shapiro p": "{:.2e}"
             })
             st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            st.success(f"Recommended: **{best_transform}** (Shapiro W = {stats_df.loc[best_idx, 'Shapiro W']:.4f})")
 
-            st.success(f"Recommended transformation: **{best_transform}** (highest Shapiro W = {stats_df.loc[best_idx, 'Shapiro W']:.4f})")
+        protein_normality()
 
-            # Transformation selector
-            selected_transform = st.selectbox(
-                "Select transformation for visualization",
-                options=list(TRANSFORMATIONS.keys()),
-                index=list(TRANSFORMATIONS.keys()).index(best_transform),
-                key="protein_transform"
-            )
+        st.markdown("---")
 
-            # Store selected transformation
-            st.session_state["protein_selected_transform"] = selected_transform
+        # --- Condition comparison fragment ---
+        @st.fragment
+        def protein_comparison():
+            st.markdown("### Condition comparison")
 
-            st.markdown("---")
+            groups = get_condition_groups(numeric_cols)
+            conditions = sorted(groups.keys())
 
-            # --- Visualizations ---
+            if len(conditions) < 2:
+                st.warning("Need at least 2 conditions for comparison")
+                return
+
             col1, col2 = st.columns(2)
-
             with col1:
-                fig_heat = create_intensity_heatmap(df_json, protein_idx, numeric_cols, selected_transform)
-                st.plotly_chart(fig_heat, use_container_width=True)
-
+                cond_a = st.selectbox("Condition A", conditions, index=0, key="prot_cond_a")
             with col2:
-                fig_bar = create_missing_distribution_chart(df_json, numeric_cols, "protein groups")
-                st.plotly_chart(fig_bar, use_container_width=True)
-        else:
-            st.info("No protein data uploaded yet")
+                cond_b = st.selectbox("Condition B", conditions, index=min(1, len(conditions)-1), key="prot_cond_b")
 
-    protein_analysis()
+            if cond_a != cond_b:
+                fig = create_condition_comparison_plot(df_json, numeric_cols, cond_a, cond_b)
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("Select different conditions to compare")
+
+        protein_comparison()
+    else:
+        st.info("No protein data uploaded yet")
 
 with tab_peptide:
-    @st.fragment
-    def peptide_analysis():
-        if peptide_data is not None:
-            numeric_cols = get_numeric_cols(peptide_data)
-            st.caption(f"**{len(peptide_data):,} peptides** × **{len(numeric_cols)} samples**")
+    if peptide_data is not None:
+        numeric_cols = get_numeric_cols(peptide_data)
+        st.caption(f"**{len(peptide_data):,} peptides** × **{len(numeric_cols)} samples**")
 
-            df_json = peptide_data.to_json()
+        df_json = peptide_data.to_json()
 
-            # --- Normality Analysis ---
+        # --- Static heatmap and missing values ---
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            fig_heat = create_intensity_heatmap(df_json, peptide_idx, numeric_cols)
+            st.plotly_chart(fig_heat, use_container_width=True)
+        with col2:
+            fig_bar = create_missing_distribution_chart(df_json, numeric_cols, "peptides")
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+        st.markdown("---")
+
+        @st.fragment
+        def peptide_normality():
             st.markdown("### Normality analysis")
             st.caption("Testing which transformation best normalizes intensity distributions")
 
             stats_df = analyze_transformations(df_json, numeric_cols)
-
             best_idx = stats_df["Shapiro W"].idxmax()
             best_transform = stats_df.loc[best_idx, "Transformation"]
 
@@ -304,39 +420,43 @@ with tab_peptide:
                 return [""] * len(row)
 
             styled_df = stats_df.style.apply(highlight_best, axis=1).format({
-                "Kurtosis": "{:.3f}",
-                "Skewness": "{:.3f}",
-                "Shapiro W": "{:.4f}",
-                "Shapiro p": "{:.2e}"
+                "Kurtosis": "{:.3f}", "Skewness": "{:.3f}",
+                "Shapiro W": "{:.4f}", "Shapiro p": "{:.2e}"
             })
             st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            st.success(f"Recommended: **{best_transform}** (Shapiro W = {stats_df.loc[best_idx, 'Shapiro W']:.4f})")
 
-            st.success(f"Recommended transformation: **{best_transform}** (highest Shapiro W = {stats_df.loc[best_idx, 'Shapiro W']:.4f})")
+        peptide_normality()
 
-            selected_transform = st.selectbox(
-                "Select transformation for visualization",
-                options=list(TRANSFORMATIONS.keys()),
-                index=list(TRANSFORMATIONS.keys()).index(best_transform),
-                key="peptide_transform"
-            )
+        st.markdown("---")
 
-            st.session_state["peptide_selected_transform"] = selected_transform
+        @st.fragment
+        def peptide_comparison():
+            st.markdown("### Condition comparison")
 
-            st.markdown("---")
+            groups = get_condition_groups(numeric_cols)
+            conditions = sorted(groups.keys())
+
+            if len(conditions) < 2:
+                st.warning("Need at least 2 conditions for comparison")
+                return
 
             col1, col2 = st.columns(2)
-
             with col1:
-                fig_heat = create_intensity_heatmap(df_json, peptide_idx, numeric_cols, selected_transform)
-                st.plotly_chart(fig_heat, use_container_width=True)
-
+                cond_a = st.selectbox("Condition A", conditions, index=0, key="pep_cond_a")
             with col2:
-                fig_bar = create_missing_distribution_chart(df_json, numeric_cols, "peptides")
-                st.plotly_chart(fig_bar, use_container_width=True)
-        else:
-            st.info("No peptide data uploaded yet")
+                cond_b = st.selectbox("Condition B", conditions, index=min(1, len(conditions)-1), key="pep_cond_b")
 
-    peptide_analysis()
+            if cond_a != cond_b:
+                fig = create_condition_comparison_plot(df_json, numeric_cols, cond_a, cond_b)
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("Select different conditions to compare")
+
+        peptide_comparison()
+    else:
+        st.info("No peptide data uploaded yet")
 
 render_navigation(back_page="pages/1_Data_Upload.py", next_page=None)
 render_footer()
