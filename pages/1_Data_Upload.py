@@ -14,20 +14,24 @@ inject_custom_css()
 render_header()
 
 
-def extract_condition_replicate(col_name: str) -> str:
-    match = re.search(r'([A-Z]\d{2}-[A-Z]\d{2})_(\d{2})', col_name)
-    if match:
-        condition, rep = match.groups()
-        return f"{condition}_{int(rep)}"
-    return col_name
-
-
-def detect_and_rename_numeric_cols(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+def auto_rename_columns(columns: list[str]) -> dict:
+    """Auto-rename numeric columns as A1,A2,A3,B1,B2,B3,... (groups of 3)."""
     rename_map = {}
-    for col in df.columns:
-        if pd.api.types.is_numeric_dtype(df[col]):
-            rename_map[col] = extract_condition_replicate(col)
-    return df.rename(columns=rename_map), rename_map
+    condition_letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+    for i, col in enumerate(columns):
+        condition_idx = i // 3
+        replicate_num = (i % 3) + 1
+
+        if condition_idx < len(condition_letters):
+            new_name = f"{condition_letters[condition_idx]}{replicate_num}"
+        else:
+            # Fallback for >26 conditions
+            new_name = f"C{condition_idx+1}_{replicate_num}"
+
+        rename_map[col] = new_name
+
+    return rename_map
 
 
 def filter_by_species(df: pd.DataFrame, col: str, species_tags: list[str]) -> pd.DataFrame:
@@ -42,7 +46,8 @@ for key, default in [
     ("protein_data", None), ("peptide_data", None),
     ("protein_index_col", None), ("peptide_index_col", None),
     ("protein_missing_mask", None), ("peptide_missing_mask", None),
-    ("upload_key", 0), ("raw_df", None), ("column_renames", {})
+    ("upload_key", 0), ("raw_df", None), ("column_renames", {}),
+    ("original_numeric_cols", [])
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -51,7 +56,6 @@ for key, default in [
 st.markdown("## Data upload")
 st.caption("Import and configure mass spectrometry output matrices")
 
-# File uploader (outside fragment - needs full rerun on new file)
 uploaded_file = st.file_uploader(
     "Upload proteomics CSV",
     type=["csv"],
@@ -59,22 +63,24 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file:
-    # Cache raw dataframe in session state to avoid re-reading
     if st.session_state.raw_df is None:
         raw_df = pd.read_csv(uploaded_file)
-        renamed_df, _ = detect_and_rename_numeric_cols(raw_df)
-        st.session_state.raw_df = renamed_df
-        st.session_state.column_renames = {c: c for c in renamed_df.columns}
+        st.session_state.raw_df = raw_df
 
-    renamed_df = st.session_state.raw_df
-    st.success(f"Loaded {len(renamed_df):,} rows, {len(renamed_df.columns)} columns")
+        # Get numeric columns and auto-rename
+        numeric_cols = [c for c in raw_df.columns if pd.api.types.is_numeric_dtype(raw_df[c])]
+        st.session_state.original_numeric_cols = numeric_cols
+        st.session_state.column_renames = auto_rename_columns(numeric_cols)
 
-    non_numeric_cols = [c for c in renamed_df.columns if not pd.api.types.is_numeric_dtype(renamed_df[c])]
-    numeric_cols = [c for c in renamed_df.columns if pd.api.types.is_numeric_dtype(renamed_df[c])]
+    raw_df = st.session_state.raw_df
+    original_numeric_cols = st.session_state.original_numeric_cols
+
+    st.success(f"Loaded {len(raw_df):,} rows, {len(raw_df.columns)} columns")
+
+    non_numeric_cols = [c for c in raw_df.columns if not pd.api.types.is_numeric_dtype(raw_df[c])]
 
     @st.fragment
     def config_fragment():
-        """Fragment for configuration - reruns fast on filter changes."""
         with st.expander("Column configuration", expanded=True):
             col1, col2, col3 = st.columns(3)
 
@@ -124,17 +130,18 @@ if uploaded_file:
                     species_tags = species_tags + [custom_species]
 
         # Column renaming section
-        with st.expander("Edit column names", expanded=False):
+        with st.expander("Edit column names (auto-named as A1,A2,A3,B1,B2,B3,...)", expanded=False):
+            st.caption("Columns are grouped in sets of 3 replicates per condition")
             edited_names = {}
-            cols_per_row = 4
-            for i in range(0, len(numeric_cols), cols_per_row):
+            cols_per_row = 6
+            for i in range(0, len(original_numeric_cols), cols_per_row):
                 row_cols = st.columns(cols_per_row)
-                for j, col in enumerate(numeric_cols[i:i+cols_per_row]):
+                for j, orig_col in enumerate(original_numeric_cols[i:i+cols_per_row]):
                     with row_cols[j]:
-                        edited_names[col] = st.text_input(
-                            col,
-                            value=st.session_state.column_renames.get(col, col),
-                            key=f"edit_{col}"
+                        edited_names[orig_col] = st.text_input(
+                            f"Col {i+j+1}",
+                            value=st.session_state.column_renames.get(orig_col, orig_col),
+                            key=f"edit_{i+j}"
                         )
 
             if st.button("Apply renames"):
@@ -142,11 +149,11 @@ if uploaded_file:
                 st.rerun(scope="fragment")
 
         # Apply column renames
-        final_rename = {k: v for k, v in st.session_state.column_renames.items() if k != v and k in renamed_df.columns}
-        working_df = renamed_df.rename(columns=final_rename)
+        rename_map = {k: v for k, v in st.session_state.column_renames.items() if k in raw_df.columns}
+        working_df = raw_df.rename(columns=rename_map)
 
-        # Update numeric cols after rename
-        numeric_cols_renamed = [st.session_state.column_renames.get(c, c) for c in numeric_cols]
+        # Get renamed numeric columns
+        numeric_cols_renamed = [st.session_state.column_renames.get(c, c) for c in original_numeric_cols]
 
         # Apply species filter
         filter_col = None
@@ -160,14 +167,18 @@ if uploaded_file:
             processed_df = filter_by_species(processed_df, filter_col, species_tags)
             st.info(f"Filtered to {len(processed_df):,} rows matching: {', '.join(species_tags)}")
 
-        numeric_cols_final = [c for c in processed_df.columns if pd.api.types.is_numeric_dtype(processed_df[c])]
-
         st.markdown("### Data preview")
+
+        # Count conditions (unique prefixes)
+        conditions = set()
+        for c in numeric_cols_renamed:
+            if len(c) >= 1:
+                conditions.add(c[0] if c[0].isalpha() else c.rsplit('_', 1)[0])
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Rows", f"{len(processed_df):,}")
-        c2.metric("Numeric columns", len(numeric_cols_final))
-        c3.metric("Conditions", len(set(c.rsplit('_', 1)[0] for c in numeric_cols_final if '_' in c)))
+        c2.metric("Samples", len(numeric_cols_renamed))
+        c3.metric("Conditions", len(conditions))
         c4.metric("Data level", "Peptide" if is_peptide_data else "Protein")
 
         st.dataframe(processed_df.head(10), use_container_width=True, height=300)
@@ -188,14 +199,15 @@ if uploaded_file:
         with col_btn1:
             if st.button("Confirm & cache", type="primary"):
                 cache_df = processed_df.copy()
-                missing_mask = cache_df[numeric_cols_final].isna() | (cache_df[numeric_cols_final] <= 1)
-                cache_df[numeric_cols_final] = cache_df[numeric_cols_final].fillna(1).replace(0, 1)
+                missing_mask = cache_df[numeric_cols_renamed].isna() | (cache_df[numeric_cols_renamed] <= 1)
+                cache_df[numeric_cols_renamed] = cache_df[numeric_cols_renamed].fillna(1).replace(0, 1)
 
                 st.session_state[existing_key] = cache_df
                 st.session_state[index_key] = protein_group_col
                 st.session_state[mask_key] = missing_mask
                 st.session_state.raw_df = None
                 st.session_state.column_renames = {}
+                st.session_state.original_numeric_cols = []
                 st.session_state.upload_key += 1
                 st.rerun()
 
@@ -203,6 +215,7 @@ if uploaded_file:
             if st.button("Cancel"):
                 st.session_state.raw_df = None
                 st.session_state.column_renames = {}
+                st.session_state.original_numeric_cols = []
                 st.session_state.upload_key += 1
                 st.rerun()
 
@@ -214,7 +227,6 @@ else:
 
 @st.fragment
 def cached_data_fragment():
-    """Fragment for displaying cached data."""
     if st.session_state.protein_data is None and st.session_state.peptide_data is None:
         return
 
