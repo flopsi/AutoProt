@@ -187,20 +187,8 @@ def create_condition_violin_plot(df_json: str, numeric_cols: list[str]) -> go.Fi
         x="replicate",
         color="condition",
         box=True,
-        points="all",
+        points=False,
         hover_data=["sample", "condition", "replicate"],
-    )
-
-    fig.update_layout(
-        title="Sample intensity distributions by replicate and condition (log2)",
-        xaxis_title="Replicate",
-        yaxis_title="log2(intensity)",
-        height=500,
-        plot_bgcolor="white",
-        paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Arial", color="#54585A"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                    xanchor="right", x=1),
     )
     return fig
 
