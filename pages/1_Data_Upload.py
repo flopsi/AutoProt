@@ -84,6 +84,7 @@ defaults = {
     "raw_df": None,
     "column_renames": {},
     "original_numeric_cols": [],
+    "all_numeric_candidates": [],      # ← add this
 }
 for k, v in defaults.items():
     if k not in st.session_state:
