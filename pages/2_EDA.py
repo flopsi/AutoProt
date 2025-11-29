@@ -212,17 +212,6 @@ def create_superplot_violin(df_json: str, numeric_cols: list[str]) -> go.Figure:
         category_orders={"Cond_Rep": x_order},
         color_discrete_sequence=px.colors.qualitative.Set2,
     )
-
-    fig.update_traces(jitter=0.3, scalemode="count")
-    fig.update_layout(
-        title="Sample intensity distributions by condition & replicate (log2)",
-        violingap=0.05,
-        violinmode="group",
-        xaxis_title="Condition & replicate",
-        yaxis_title="log2(intensity)",
-        plot_bgcolor="white",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
     return fig
 
 
