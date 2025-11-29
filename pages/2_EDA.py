@@ -158,46 +158,44 @@ def create_missing_distribution_chart(df_json: str, numeric_cols: list[str], lab
 
 @st.cache_data
 def create_condition_violin_plot(df_json: str, numeric_cols: list[str]) -> go.Figure:
-    """Grouped violin plot per condition with wider, clearer violins."""
+    """One violin per condition (A,B,...) pooling its 3 replicates."""
     df = pd.read_json(df_json)
-    groups = get_condition_groups(numeric_cols)
+    groups = get_condition_groups(numeric_cols)  # e.g. {"A": ["A1","A2","A3"], ...}
     color_map = get_condition_color_map(list(groups.keys()))
 
     fig = go.Figure()
 
     for condition in sorted(groups.keys()):
         cols = sorted(groups[condition])
+        # pool all replicate values for this condition
+        values = np.log2(np.maximum(df[cols].values.flatten(), 1))
 
-        for i, col in enumerate(cols):
-            values = np.log2(np.maximum(df[col].values, 1))
-
-            fig.add_trace(go.Violin(
-                x=[condition] * len(values),
-                y=values,
-                name=f"{condition}{i+1}",          # show replicate id in legend
-                legendgroup=condition,
-                scalegroup=condition,
-                line_color=color_map[condition],
-                fillcolor=color_map[condition],
-                opacity=0.7,
-                width=0.6,                         # make violins wider (0–1, relative)
-                spanmode="hard",                   # keep within category
-                hoverinfo="y+name",
-                hovertemplate="Sample: %{text}<br>log2: %{y:.2f}<extra></extra>",
-                text=[col] * len(values),
-                showlegend=(i == 0)                # one legend entry per condition
-            ))
-
-    fig.update_traces(box_visible=True, meanline_visible=True)
+        fig.add_trace(go.Violin(
+            x=[condition] * len(values),
+            y=values,
+            name=f"Condition {condition}",
+            legendgroup=condition,
+            scalegroup=condition,
+            line_color=color_map[condition],
+            fillcolor=color_map[condition],
+            opacity=0.7,
+            width=0.8,
+            spanmode="hard",
+            box_visible=True,
+            meanline_visible=True,
+            points="all",
+            jitter=0.05,
+            hovertemplate=f"Condition {condition}<br>log2: %{y:.2f}<extra></extra>"
+        ))
 
     fig.update_layout(
         title="Sample intensity distributions by condition (log2)",
         xaxis_title="Condition",
         yaxis_title="log2(intensity)",
         height=500,
-        violinmode="group",                        # group per condition
-        violingap=0.15,                            # space between violins
-        violingroupgap=0.25,                       # space between condition groups
+        violinmode="group",
+        violingap=0.2,
+        violingroupgap=0.25,
         plot_bgcolor="white",
         paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Arial", color="#54585A"),
