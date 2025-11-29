@@ -359,12 +359,14 @@ def config_fragment():
     c4.metric("Data level", "Peptide" if peptide_seq_col else "Protein")
 
     st.markdown("---")
-    data_type = "protein"
+    data_type = "peptide" if peptide_seq_col else "protein"
     existing_key = f"{data_type}_model"
     index_key = f"{data_type}_index_col"
     species_key = f"{data_type}_species_col"
     seq_key = f"{data_type}_seq_col"
     mask_key = f"{data_type}_missing_mask"
+
+
 
     if st.session_state.get(existing_key) is not None:
         st.warning(f"{data_type.capitalize()} data already cached. Confirming will overwrite.")
