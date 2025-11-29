@@ -12,7 +12,6 @@ COLORS = {
     "navy": "#262262",
     "green": "#B5BD00",
     "orange": "#EA7600",
-    # Dark mode variants
     "dark_bg": "#1E1E1E",
     "dark_surface": "#2D2D2D",
     "dark_text": "#E2E3E4",
@@ -28,12 +27,9 @@ st.set_page_config(
 # --- Adaptive CSS (Light/Dark based on system preference) ---
 st.markdown(f"""
 <style>
-    /* Base styles */
     body, .stMarkdown, .stText {{
         font-family: Arial, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     }}
-    
-    /* Button styling (consistent across themes) */
     .stButton > button {{
         background-color: {COLORS['red']};
         color: white;
@@ -45,8 +41,6 @@ st.markdown(f"""
     .stButton > button:hover {{
         background-color: {COLORS['dark_red']};
     }}
-    
-    /* Header banner (consistent) */
     .header-banner {{
         background: linear-gradient(90deg, {COLORS['red']} 0%, {COLORS['dark_red']} 100%);
         padding: 20px;
@@ -63,8 +57,6 @@ st.markdown(f"""
         margin: 5px 0 0 0;
         opacity: 0.9;
     }}
-    
-    /* Status badges (consistent) */
     .status-badge {{
         display: inline-block;
         padding: 4px 12px;
@@ -80,8 +72,6 @@ st.markdown(f"""
         background-color: {COLORS['orange']};
         color: white;
     }}
-    
-    /* === LIGHT MODE (default) === */
     @media (prefers-color-scheme: light) {{
         .sidebar-header {{
             background-color: {COLORS['gray']};
@@ -89,19 +79,7 @@ st.markdown(f"""
         .footer-text {{
             color: {COLORS['gray']};
         }}
-        .metric-card {{
-            background-color: {COLORS['light_gray']};
-            border-left: 4px solid {COLORS['red']};
-        }}
-        .info-box {{
-            background-color: {COLORS['light_gray']};
-            color: {COLORS['gray']};
-            border-radius: 4px;
-            padding: 10px 15px;
-        }}
     }}
-    
-    /* === DARK MODE === */
     @media (prefers-color-scheme: dark) {{
         .sidebar-header {{
             background-color: {COLORS['dark_surface']};
@@ -109,17 +87,6 @@ st.markdown(f"""
         .footer-text {{
             color: {COLORS['dark_text']};
         }}
-        .metric-card {{
-            background-color: {COLORS['dark_surface']};
-            border-left: 4px solid {COLORS['red']};
-        }}
-        .info-box {{
-            background-color: {COLORS['dark_surface']};
-            color: {COLORS['dark_text']};
-            border-radius: 4px;
-            padding: 10px 15px;
-        }}
-        /* Improve contrast for captions in dark mode */
         .stCaption {{
             color: {COLORS['dark_text']} !important;
         }}
@@ -128,7 +95,6 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 
-# --- Helper Functions ---
 def extract_condition_replicate(col_name: str) -> str:
     match = re.search(r'([A-Z]\d{2}-[A-Z]\d{2})_(\d{2})', col_name)
     if match:
@@ -170,11 +136,10 @@ defaults = {
     "peptide_data": None,
     "protein_index_col": None,
     "peptide_index_col": None,
-    "protein_missing_mask": None,  # NEW
-    "peptide_missing_mask": None,  # NEW
+    "protein_missing_mask": None,
+    "peptide_missing_mask": None,
     "upload_key": 0,
 }
-
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -222,7 +187,6 @@ if uploaded_file:
     
     st.success(f"✓ Loaded {len(renamed_df):,} rows, {len(renamed_df.columns)} columns")
     
-    # --- Configuration Panel ---
     non_numeric_cols = [c for c in renamed_df.columns if not pd.api.types.is_numeric_dtype(renamed_df[c])]
     numeric_cols = [c for c in renamed_df.columns if pd.api.types.is_numeric_dtype(renamed_df[c])]
     
@@ -259,7 +223,6 @@ if uploaded_file:
         
         st.markdown("<br>", unsafe_allow_html=True)
         
-        # Species filter
         col_sp1, col_sp2 = st.columns([3, 1])
         with col_sp1:
             species_tags = st.multiselect(
@@ -272,7 +235,6 @@ if uploaded_file:
             if custom_species and custom_species not in species_tags:
                 species_tags.append(custom_species)
     
-    # Column name editor
     with st.expander("✏️ Edit column names", expanded=False):
         edited_names = {}
         cols_per_row = 4
@@ -290,13 +252,11 @@ if uploaded_file:
             st.session_state.column_names.update(edited_names)
             st.rerun()
     
-    # --- Apply Configurations ---
     final_rename = {k: v for k, v in st.session_state.column_names.items() if k != v}
     processed_df = renamed_df.rename(columns=final_rename)
     
     numeric_final = [st.session_state.column_names.get(c, c) for c in numeric_cols]
     
-    # Species filter
     filter_col = None
     for potential in ["PG.ProteinNames", "ProteinNames", "Protein.Names"]:
         if potential in processed_df.columns:
@@ -309,7 +269,6 @@ if uploaded_file:
     
     st.session_state.processed_df = processed_df
     
-    # --- Preview ---
     st.markdown("### 📊 Data preview")
     
     c1, c2, c3, c4 = st.columns(4)
@@ -320,8 +279,6 @@ if uploaded_file:
     
     st.dataframe(processed_df.head(10), use_container_width=True, height=300)
     
-    # --- Confirm & Cache ---
-        # --- Confirm & Cache ---
     st.markdown("---")
     data_type = "peptide" if is_peptide_data else "protein"
     existing_key = f"{data_type}_data"
@@ -338,27 +295,31 @@ if uploaded_file:
         if st.button("✓ Confirm & cache", type="primary"):
             cache_df = processed_df.copy()
             
-            # Store missing value mask BEFORE imputation
             missing_mask = cache_df[numeric_final].isna() | (cache_df[numeric_final] == 0)
             
-            # Replace NaN and 0 with 1
             cache_df[numeric_final] = cache_df[numeric_final].fillna(1).replace(0, 1)
             
             st.session_state[existing_key] = cache_df
             st.session_state[index_key] = protein_group_col
-            st.session_state[f"{data_type}_missing_mask"] = missing_mask  # NEW
+            st.session_state[f"{data_type}_missing_mask"] = missing_mask
             
             st.session_state.uploaded_df = None
             st.session_state.processed_df = None
             st.session_state.column_names = {}
             st.session_state.upload_key += 1
             st.rerun()
-
+    
+    with col_btn2:
+        if st.button("✕ Cancel"):
+            st.session_state.uploaded_df = None
+            st.session_state.processed_df = None
+            st.session_state.column_names = {}
+            st.session_state.upload_key += 1
+            st.rerun()
 
 else:
     st.info("👆 Upload a CSV file to begin")
 
-# --- Display Cached Data ---
 if st.session_state.protein_data is not None or st.session_state.peptide_data is not None:
     st.markdown("---")
     st.markdown("### 📦 Cached datasets")
@@ -373,6 +334,7 @@ if st.session_state.protein_data is not None or st.session_state.peptide_data is
             if st.button("🗑️ Clear protein data"):
                 st.session_state.protein_data = None
                 st.session_state.protein_index_col = None
+                st.session_state.protein_missing_mask = None
                 st.rerun()
         else:
             st.caption("No protein data uploaded yet")
@@ -385,11 +347,11 @@ if st.session_state.protein_data is not None or st.session_state.peptide_data is
             if st.button("🗑️ Clear peptide data"):
                 st.session_state.peptide_data = None
                 st.session_state.peptide_index_col = None
+                st.session_state.peptide_missing_mask = None
                 st.rerun()
         else:
             st.caption("No peptide data uploaded yet")
 
-# --- Footer ---
 st.markdown("---")
 st.markdown("""
 <div class="footer-text" style="text-align: center; font-size: 12px; padding: 20px 0;">
