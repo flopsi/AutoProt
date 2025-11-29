@@ -8,7 +8,18 @@ from sklearn.preprocessing import PowerTransformer, QuantileTransformer, Standar
 from sklearn.decomposition import PCA
 
 from components import inject_custom_css, render_header, render_navigation, render_footer, COLORS
-from 1_Data_Upload import MSData  # or wherever MSData is defined
+
+
+from dataclasses import dataclass
+from typing import List
+
+@dataclass
+class MSData:
+    original: pd.DataFrame
+    filled: pd.DataFrame
+    log2_filled: pd.DataFrame
+    numeric_cols: List[str]
+
 
 st.set_page_config(
     page_title="EDA | Thermo Fisher Scientific",
