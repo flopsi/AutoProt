@@ -20,14 +20,13 @@ render_header()
 
 @dataclass
 class MSData:
-    original: pd.DataFrame        # after filtering + renaming
-    filled: pd.DataFrame          # numeric 0/NaN/1 -> 1
-    log2_filled: pd.DataFrame     # log2(filled)
-    numeric_cols: List[str]       # renamed intensity columns (A1,A2,...)
+    original: pd.DataFrame
+    filled: pd.DataFrame
+    log2_filled: pd.DataFrame
+    numeric_cols: List[str]
 
 
 def auto_rename_columns(columns: List[str]) -> dict:
-    """Auto-rename numeric columns as A1,A2,A3,B1,B2,B3,... (groups of 3)."""
     rename_map = {}
     letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     for i, col in enumerate(columns):
@@ -49,13 +48,12 @@ def filter_by_species(df: pd.DataFrame, col: str, species_tags: list[str]) -> pd
 
 
 def build_msdata(processed_df: pd.DataFrame, numeric_cols_renamed: List[str]) -> MSData:
-    """Create original, filled, and log2_filled variants."""
     original = processed_df.copy()
 
     filled = processed_df.copy()
     vals = filled[numeric_cols_renamed]
     vals = vals.fillna(1)
-    vals = vals.where(~vals.isin([0, 1]), 1)  # 0/1 -> 1
+    vals = vals.where(~vals.isin([0, 1]), 1)
     filled[numeric_cols_renamed] = vals
 
     log2_filled = filled.copy()
@@ -69,9 +67,7 @@ def build_msdata(processed_df: pd.DataFrame, numeric_cols_renamed: List[str]) ->
     )
 
 
-# -----------------------
-# Session state init
-# -----------------------
+# ------------- session state -------------
 defaults = {
     "protein_model": None,
     "peptide_model": None,
@@ -82,7 +78,7 @@ defaults = {
     "upload_key": 0,
     "raw_df": None,
     "column_renames": {},
-    "original_numeric_cols": [],
+    "selected_quant_cols": [],
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -99,154 +95,145 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file:
-    # Read file only once per upload cycle
     if st.session_state.raw_df is None:
-        raw_df = pd.read_csv(uploaded_file)
+        raw_df = pd.read_csv(uploaded_file)  # first row is header
         st.session_state.raw_df = raw_df
-
-        # Detect all numeric columns (candidates)
-        numeric_all = [c for c in raw_df.columns if pd.api.types.is_numeric_dtype(raw_df[c])]
-        if not numeric_all:
-            st.error("No numeric columns detected. Please upload a matrix with numeric intensities.")
-            st.stop()
-
-        # By default, treat all numeric as quant; user can deselect below
-        st.session_state.original_numeric_cols = numeric_all
-        st.session_state.column_renames = auto_rename_columns(numeric_all)
-
     raw_df = st.session_state.raw_df
-    numeric_all = [c for c in raw_df.columns if pd.api.types.is_numeric_dtype(raw_df[c])]
-
-    # Safety: if state got out of sync, reset default to all numeric
-    if not st.session_state.original_numeric_cols:
-        st.session_state.original_numeric_cols = numeric_all
-
-    # Ensure defaults are valid options
-    default_numeric = [c for c in st.session_state.original_numeric_cols if c in numeric_all]
-    if not default_numeric:
-        default_numeric = numeric_all
 
     st.success(f"Loaded {len(raw_df):,} rows, {len(raw_df.columns)} columns")
+    st.dataframe(raw_df.head(5), use_container_width=True, height=250)
 
-    # --------------------------
-    # Quant column selection with last-25-char labels
-    # --------------------------
-    st.markdown("### Select quantitative columns")
-    st.caption("Each option shows the last 25 characters of the original numeric column name.")
+    all_cols = list(raw_df.columns)
 
-    def last25(name: str) -> str:
-        s = str(name)
-        return s[-25:] if len(s) > 25 else s
+    # ------- Step 1: select metadata columns (PG, species, etc.) -------
+    st.markdown("### Select metadata columns")
 
-    selected_numeric = st.multiselect(
-        "Quantitative intensity columns",
-        options=numeric_all,
-        default=default_numeric,
-        format_func=last25,
-        key="quant_cols_select",
+    col1, col2 = st.columns(2)
+    with col1:
+        pg_col = st.selectbox(
+            "Protein group / ID column",
+            options=["None"] + all_cols,
+            index=1 if len(all_cols) > 0 else 0,
+            key="pg_col",
+        )
+        pg_col = None if pg_col == "None" else pg_col
+
+    with col2:
+        species_col = st.selectbox(
+            "Species annotation column (optional)",
+            options=["None"] + all_cols,
+            index=0,
+            key="species_col_select",
+        )
+        species_col = None if species_col == "None" else species_col
+
+    other_metadata = st.multiselect(
+        "Additional metadata columns (optional)",
+        options=[c for c in all_cols if c not in {pg_col, species_col} if c is not None],
+        key="other_metadata",
     )
 
-    if not selected_numeric:
-        st.error("Select at least one quantitative column to continue.")
+    meta_cols = [c for c in [pg_col, species_col, *other_metadata] if c is not None]
+
+    # ------- Step 2: candidate quant columns = everything else -------
+    candidate_quant = [c for c in all_cols if c not in meta_cols]
+
+    if not candidate_quant:
+        st.error("No candidate quant columns left after metadata selection.")
         st.stop()
 
-    # Update state based on selection
-    st.session_state.original_numeric_cols = selected_numeric
-    st.session_state.column_renames = auto_rename_columns(selected_numeric)
+    st.markdown("### Select quantitative columns (in groups of 3)")
+    st.caption(
+        "Columns not marked as metadata are grouped in packages of 3. "
+        "Labels show the last 25 characters of each header."
+    )
 
-    original_numeric_cols = st.session_state.original_numeric_cols
-    non_numeric_cols = [c for c in raw_df.columns if c not in original_numeric_cols]
+    def last25(s: str) -> str:
+        s = str(s)
+        return s[-25:] if len(s) > 25 else s
+
+    # Initialize selection state (default: all groups selected)
+    if not st.session_state.selected_quant_cols:
+        st.session_state.selected_quant_cols = candidate_quant.copy()
+
+    selected_quant = []
+
+    group_size = 3
+    for i in range(0, len(candidate_quant), group_size):
+        group = candidate_quant[i : i + group_size]
+        label_parts = [last25(c) for c in group]
+        group_label = " | ".join(label_parts)
+
+        # one checkbox per group
+        checked = st.checkbox(
+            group_label,
+            key=f"quant_group_{i}",
+            value=all(c in st.session_state.selected_quant_cols for c in group),
+        )
+
+        if checked:
+            selected_quant.extend(group)
+
+    if not selected_quant:
+        st.error("Select at least one group of quantitative columns to continue.")
+        st.stop()
+
+    st.session_state.selected_quant_cols = selected_quant
+
+    # From here on, treat selected_quant as numeric/quant columns
+    numeric_cols_orig = selected_quant
+    st.session_state.column_renames = auto_rename_columns(numeric_cols_orig)
+
+    non_numeric_cols = [c for c in all_cols if c not in numeric_cols_orig]
 
     @st.fragment
     def config_fragment():
-        # 1) Column configuration
-        with st.expander("Column configuration", expanded=True):
-            col1, col2, col3 = st.columns(3)
-
-            with col1:
-                st.markdown("**Protein group column**")
-                protein_group_col = st.selectbox(
-                    "Select protein group IDs",
-                    options=["None"] + non_numeric_cols,
-                    index=1 if non_numeric_cols else 0,
-                    label_visibility="collapsed",
-                    key="pg_col",
-                )
-                protein_group_col = None if protein_group_col == "None" else protein_group_col
-
-            with col2:
-                st.markdown("**Sequence column (peptide data)**")
-                sequence_col = st.selectbox(
-                    "Select peptide sequences",
-                    options=["None"] + non_numeric_cols,
-                    index=0,
-                    label_visibility="collapsed",
-                    key="seq_col",
-                )
-                sequence_col = None if sequence_col == "None" else sequence_col
-                is_peptide_data = sequence_col is not None
-
-            with col3:
-                st.markdown("**Data level**")
-                if is_peptide_data:
-                    st.markdown('<span class="status-badge badge-peptide">Peptide</span>', unsafe_allow_html=True)
-                else:
-                    st.markdown('<span class="status-badge badge-protein">Protein</span>', unsafe_allow_html=True)
-
-            st.markdown("<br>", unsafe_allow_html=True)
-
+        # 3) species filter options (on species_col if given)
+        with st.expander("Species filter and column renaming", expanded=True):
             col_sp1, col_sp2 = st.columns([3, 1])
             with col_sp1:
                 species_tags = st.multiselect(
                     "Species filter tags",
                     options=["_HUMAN", "_YEAST", "_ECOLI", "_MOUSE"],
                     default=["_HUMAN"],
-                    key="species",
+                    key="species_tags",
                 )
             with col_sp2:
-                custom_species = st.text_input("Custom tag", key="custom_sp")
+                custom_species = st.text_input("Custom tag", key="custom_sp_tag")
                 if custom_species and custom_species not in species_tags:
                     species_tags = species_tags + [custom_species]
 
-        # 2) Column renaming
-        with st.expander("Edit column names (auto-named as A1,A2,A3,B1,B2,B3,...)", expanded=False):
-            st.caption("Columns are grouped in sets of 3 replicates per condition.")
-            edited_names = {}
-            cols_per_row = 6
-            for i in range(0, len(original_numeric_cols), cols_per_row):
-                row_cols = st.columns(cols_per_row)
-                for j, orig_col in enumerate(original_numeric_cols[i : i + cols_per_row]):
-                    with row_cols[j]:
-                        edited_names[orig_col] = st.text_input(
-                            f"Col {i + j + 1}",
-                            value=st.session_state.column_renames.get(orig_col, orig_col),
-                            key=f"edit_{i + j}",
-                        )
-
-            if st.button("Apply renames"):
-                st.session_state.column_renames.update(edited_names)
-                st.rerun(scope="fragment")
+            with st.expander("Edit quant column names (A1,A2,A3,B1,B2,B3,...)", expanded=False):
+                edited = {}
+                cols_per_row = 6
+                for i in range(0, len(numeric_cols_orig), cols_per_row):
+                    row_cols = st.columns(cols_per_row)
+                    for j, orig in enumerate(numeric_cols_orig[i : i + cols_per_row]):
+                        with row_cols[j]:
+                            edited[orig] = st.text_input(
+                                f"Col {i + j + 1}",
+                                value=st.session_state.column_renames.get(orig, orig),
+                                key=f"rename_{i+j}",
+                            )
+                if st.button("Apply renames"):
+                    st.session_state.column_renames.update(edited)
+                    st.rerun(scope="fragment")
 
         # Apply renames
         rename_map = {k: v for k, v in st.session_state.column_renames.items() if k in raw_df.columns}
         working_df = raw_df.rename(columns=rename_map)
 
-        numeric_cols_renamed = [st.session_state.column_renames.get(c, c) for c in original_numeric_cols]
+        numeric_cols_renamed = [st.session_state.column_renames.get(c, c) for c in numeric_cols_orig]
 
-        # 3) Species filter
-        filter_col = None
-        for potential in ["PG.ProteinNames", "ProteinNames", "Protein.Names"]:
-            if potential in working_df.columns:
-                filter_col = potential
-                break
-
+        # Species filter
         processed_df = working_df.copy()
-        if species_tags and filter_col:
-            processed_df = filter_by_species(processed_df, filter_col, species_tags)
+        if species_col and species_tags:
+            processed_df = filter_by_species(processed_df, species_col, species_tags)
             st.info(f"Filtered to {len(processed_df):,} rows matching: {', '.join(species_tags)}")
 
-        # 4) Preview + metrics
+        # Preview
         st.markdown("### Data preview")
+        st.dataframe(processed_df.head(10), use_container_width=True, height=300)
 
         conditions = set()
         for c in numeric_cols_renamed:
@@ -257,11 +244,48 @@ if uploaded_file:
         c1.metric("Rows", f"{len(processed_df):,}")
         c2.metric("Samples", len(numeric_cols_renamed))
         c3.metric("Conditions", len(conditions))
-        c4.metric("Data level", "Peptide" if is_peptide_data else "Protein")
+        c4.metric("Data level", "Peptide" if species_col and "PEPTIDE" in species_col.upper() else "Protein")
 
-        st.dataframe(processed_df.head(10), use_container_width=True, height=300)
-
-        # 5) Cache
+        # Cache
         st.markdown("---")
-        data_type = "peptide" if is_peptide_data else "protein"
-        existing
+        data_type = "protein"  # or determine from context if you have a toggle
+        existing_key = f"{data_type}_model"
+        index_key = f"{data_type}_index_col"
+        mask_key = f"{data_type}_missing_mask"
+
+        if st.session_state.get(existing_key) is not None:
+            st.warning(f"{data_type.capitalize()} data already cached. Confirming will overwrite.")
+
+        col_b1, col_b2, _ = st.columns([1, 1, 3])
+        with col_b1:
+            if st.button("Confirm & cache", type="primary"):
+                model = build_msdata(processed_df, numeric_cols_renamed)
+                missing_mask = processed_df[numeric_cols_renamed].isna() | (
+                    processed_df[numeric_cols_renamed] <= 1
+                )
+
+                st.session_state[existing_key] = model
+                st.session_state[index_key] = pg_col
+                st.session_state[mask_key] = missing_mask
+
+                st.session_state.raw_df = None
+                st.session_state.column_renames = {}
+                st.session_state.selected_quant_cols = []
+                st.session_state.upload_key += 1
+                st.rerun()
+
+        with col_b2:
+            if st.button("Cancel"):
+                st.session_state.raw_df = None
+                st.session_state.column_renames = {}
+                st.session_state.selected_quant_cols = []
+                st.session_state.upload_key += 1
+                st.rerun()
+
+    config_fragment()
+
+else:
+    st.info("Upload a CSV file to begin")
+
+render_navigation(back_page="app.py", next_page="pages/2_EDA.py")
+render_footer()
