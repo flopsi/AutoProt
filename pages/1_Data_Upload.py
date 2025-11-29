@@ -271,7 +271,7 @@ if uploaded_file:
         c1.metric("Rows", f"{len(processed_df):,}")
         c2.metric("Samples", len(numeric_cols_renamed))
         c3.metric("Conditions", len(conditions))
-        c4.metric("Data level", "Peptide" if species_col and "PEPTIDE" in species_col.upper() else "Protein")
+        c4.metric("Data level", "Peptide" if peptide_seq_col else "Protein")
 
         # Cache
         st.markdown("---")
