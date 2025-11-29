@@ -17,6 +17,9 @@ st.set_page_config(
 inject_custom_css()
 render_header()
 
+@st.cache_data
+def get_msdata(df, quant_cols):
+    return build_msdata(df, quant_cols)
 
 @dataclass
 class MSData:
@@ -236,6 +239,38 @@ if uploaded_file:
         working_df = raw_df.rename(columns=rename_map)
 
         numeric_cols_renamed = [st.session_state.column_renames.get(c, c) for c in numeric_cols_orig]
+
+def build_msdata(processed_df: pd.DataFrame, numeric_cols_renamed: List[str]) -> MSData:
+    original = processed_df.copy()
+
+    # 1) Force all selected quant columns to numeric float64 BEFORE caching/fragment logic
+    original[numeric_cols_renamed] = (
+        original[numeric_cols_renamed]
+        .apply(pd.to_numeric, errors="coerce")
+        .astype("float64")
+    )
+
+    # 2) Filled: NaN, 0, 1 → 1
+    filled = original.copy()
+    vals = filled[numeric_cols_renamed]
+    vals = vals.fillna(1.0)
+    vals = vals.where(~vals.isin([0, 1, 0.0, 1.0]), 1.0)
+    filled[numeric_cols_renamed] = vals
+
+    # Count cells == 1 after filling
+    ones_count = (filled[numeric_cols_renamed] == 1.0).to_numpy().sum()
+
+    # 3) log2(filled)
+    log2_filled = filled.copy()
+    log2_filled[numeric_cols_renamed] = np.log2(log2_filled[numeric_cols_renamed])
+
+    return MSData(
+        original=original,
+        filled=filled,
+        log2_filled=log2_filled,
+        numeric_cols=numeric_cols_renamed,
+        ones_count=ones_count,
+    )
 
         # Species filter
         processed_df = working_df.copy()
