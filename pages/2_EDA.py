@@ -193,26 +193,6 @@ def create_violin_plot(df_json: str, numeric_cols: list[str]) -> go.Figure:
 
 
 @st.cache_data
-def detect_species_distribution(df_json: str, species_col: str | None) -> dict | None:
-    if not species_col:
-        return None
-    df = pd.read_json(df_json)
-    if species_col not in df.columns:
-        return None
-
-    species_counts = df[species_col].value_counts()
-    if len(species_counts) < 2:
-        return None
-
-    return {
-        "species": species_counts.index.tolist(),
-        "counts": species_counts.values.tolist(),
-        "most_frequent": species_counts.index[0],
-        "others": species_counts.index[1:].tolist(),
-    }
-
-
-@st.cache_data
 def create_filtered_pca_plot(
     df_json: str,
     numeric_cols: list[str],
@@ -409,16 +389,16 @@ def render_eda(model: MSData | None, index_col: str | None, species_col: str | N
         return
 
     numeric_cols = model.numeric_cols
-    df_log2 = model.transforms.log2[numeric_cols]
-    df_json = df_log2.to_json()
+    df_log2_data = pd.DataFrame(model.transforms.log2[numeric_cols])
+    df_json = df_log2_data.to_json()
 
     mask = st.session_state.get(f"{label}_missing_mask")
     if mask is None:
-        mask = pd.DataFrame(False, index=df_log2.index, columns=numeric_cols)
+        mask = pd.DataFrame(False, index=df_log2_data.index, columns=numeric_cols)
     mask_json = mask.to_json()
 
     st.caption(
-        f"**{len(df_log2):,} {label}s** × **{len(numeric_cols)} samples** | "
+        f"**{len(df_log2_data):,} {label}s** × **{len(numeric_cols)} samples** | "
         f"**{model.missing_count:,} missing cells** (NaN/0/1)"
     )
 
@@ -443,9 +423,19 @@ def render_eda(model: MSData | None, index_col: str | None, species_col: str | N
     # Row 3: Variance analysis with multi-species PCA
     st.markdown("### Variance analysis")
 
-    species_dist = detect_species_distribution(df_json, species_col)
+    # Detect species from RAW data
+    species_dist = None
+    if species_col and species_col in model.raw.columns:
+        species_counts = model.raw[species_col].value_counts()
+        if len(species_counts) >= 2:
+            species_dist = {
+                "species": species_counts.index.tolist(),
+                "counts": species_counts.values.tolist(),
+                "most_frequent": species_counts.index[0],
+                "others": species_counts.index[1:].tolist(),
+            }
 
-    if species_dist and len(species_dist["species"]) >= 2:
+    if species_dist:
         st.caption(
             "Species detected: "
             f"{', '.join(species_dist['species'])}. "
@@ -520,30 +510,20 @@ def render_eda(model: MSData | None, index_col: str | None, species_col: str | N
         if ps and all(p >= 0.05 for p in ps):
             st.error(
                 "🔴 **STRONG recommendation: Preprocessing REQUIRED**\n\n"
-                "All PCA/PERMANOVA tests are non-significant. This indicates "
-                "technical noise dominates biological signal. Consider:\n"
-                "1. Phase 1: Data quality filtering (low-abundance, high-missing)\n"
-                "2. Phase 2: Batch-aware missing value imputation\n"
-                "3. Phase 3: Batch effect correction (if batches exist)"
+                "All PCA/PERMANOVA tests are non-significant. Start with:\n"
+                "1. Phase 1: Data quality filtering\n"
+                "2. Phase 2: Batch-aware missing value imputation"
             )
         elif not np.isnan(p_oth) and p_oth < 0.05 and (np.isnan(p_all) or p_all >= 0.05):
             st.warning(
                 "🟡 **MEDIUM recommendation: Preprocessing SUGGESTED**\n\n"
-                "Non-dominant species show significant structure while the combined data do not. "
-                "Signal may be masked by dominant species or batch effects. Consider:\n"
-                "1. Batch effect correction (ComBat/SVA)\n"
-                "2. Within-species normalization\n"
-                "3. Re-running PCA/PERMANOVA by species"
+                "Non-dominant species show signal. Try batch correction."
             )
         else:
-            st.info(
-                "🟢 **Signal detected. Optional: Phase 1 filtering to reduce noise.**"
-            )
+            st.info("🟢 **Signal detected. Optional: Phase 1 filtering.**")
 
     else:
-        st.caption(
-            "Single-species dataset. PCA clustering and PERMANOVA on all samples."
-        )
+        st.caption("Single-species dataset.")
         col1, col2 = st.columns([2, 1])
         with col1:
             fig_pca = create_filtered_pca_plot(
@@ -557,55 +537,28 @@ def render_eda(model: MSData | None, index_col: str | None, species_col: str | N
                 f"{permanova['F']:.2f}" if not np.isnan(permanova["F"]) else "N/A",
             )
             st.metric(
-                "R² (var explained)",
-                f"{permanova['R2']*100:.1f}%"
-                if not np.isnan(permanova["R2"])
-                else "N/A",
-            )
-            st.metric(
                 "p-value",
                 f"{permanova['p']:.4f}" if not np.isnan(permanova["p"]) else "N/A",
             )
-            if permanova["p"] < 0.05:
-                st.success("✓ Significant biological variance (p < 0.05)")
-            elif not np.isnan(permanova["p"]):
-                st.warning("No significant biological variance detected")
 
     st.markdown("---")
 
     st.markdown("### Normality analysis")
-    st.caption(
-        "Testing which transformation best normalizes intensity distributions "
-        "(across all samples for this data level)."
-    )
-
     stats_df = analyze_transformations(df_json, numeric_cols, model.transforms)
-    if stats_df.empty:
-        st.info("Not enough data to compute normality metrics.")
-        return
-
-    best_idx = stats_df["Shapiro W"].idxmax()
-    best_transform = stats_df.loc[best_idx, "Transformation"]
-
-    def highlight_best(row):
-        if row["Transformation"] == best_transform:
-            return ["background-color: #B5BD00; color: white"] * len(row)
-        return [""] * len(row)
-
-    styled_df = stats_df.style.apply(highlight_best, axis=1).format(
-        {
+    if not stats_df.empty:
+        best_idx = stats_df["Shapiro W"].idxmax()
+        best_transform = stats_df.loc[best_idx, "Transformation"]
+        styled_df = stats_df.style.apply(
+            lambda row: ["background-color: #B5BD00; color: white"] * len(row) if row["Transformation"] == best_transform else [""] * len(row),
+            axis=1
+        ).format({
             "Kurtosis": "{:.3f}",
             "Skewness": "{:.3f}",
             "Shapiro W": "{:.4f}",
             "Shapiro p": "{:.2e}",
-        }
-    )
-    st.dataframe(styled_df, width="stretch", hide_index=True)
-    st.success(
-        f"Recommended transformation for downstream parametric tests: "
-        f"**{best_transform}** "
-        f"(highest Shapiro W = {stats_df.loc[best_idx, 'Shapiro W']:.4f})"
-    )
+        })
+        st.dataframe(styled_df, width="stretch", hide_index=True)
+        st.success(f"Recommended: **{best_transform}**")
 
 
 with tab_protein:
