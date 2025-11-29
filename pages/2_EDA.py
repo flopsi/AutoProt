@@ -188,46 +188,47 @@ import plotly.express as px
 
 @st.cache_data
 def create_superplot_violin(df_json: str, numeric_cols: list[str]) -> go.Figure:
-    # df_json is a JSON string → convert back to DataFrame
+    """Violin plot: y = log2, x = condition+replicate, color = condition."""
+    # Decode cached JSON back to DataFrame
     df = pd.read_json(df_json)
 
     # -----------------------------
-    # Create log2-transformed copy
+    # Log2-transform numeric columns
     # -----------------------------
     df_log2 = df.copy()
     df_log2[numeric_cols] = np.log2(df_log2[numeric_cols].replace(0, np.nan))
 
     # -----------------------------
-    # Melt into long format
+    # Melt to long format
     # -----------------------------
     df_long = df_log2.melt(
         id_vars=[c for c in df_log2.columns if c not in numeric_cols],
         value_vars=numeric_cols,
-        var_name="Sample",          # e.g. A1, B3
+        var_name="Sample",          # e.g. A1, A2, B1 ...
         value_name="log2_value",
     )
 
-    # Condition = first letter; Replicate = remaining digits
+    # Condition = first letter, Replicate = digits after it
     df_long["Condition"] = df_long["Sample"].str.extract(r"^([A-Z])")
     df_long["Replicate"] = df_long["Sample"].str.extract(r"^.[R]?(\d+)")
     df_long["Cond_Rep"] = df_long["Condition"] + "_R" + df_long["Replicate"]
 
     # -----------------------------
-    # Define x-axis order
+    # X-order: group replicates per condition
     # -----------------------------
     cond_order = df_long["Condition"].dropna().unique()
     x_order = []
     for cond in cond_order:
-        reps = sorted(
+        reps = (
             df_long.loc[df_long["Condition"] == cond, "Replicate"]
             .dropna()
-            .unique(),
-            key=lambda r: int(r),
+            .unique()
         )
+        reps = sorted(reps, key=lambda r: int(r))
         x_order.extend([f"{cond}_R{r}" for r in reps])
 
     # -----------------------------
-    # Plotly Express grouped SuperPlot
+    # Violin plot with wide violins
     # -----------------------------
     fig = px.violin(
         df_long,
@@ -239,6 +240,28 @@ def create_superplot_violin(df_json: str, numeric_cols: list[str]) -> go.Figure:
         category_orders={"Cond_Rep": x_order},
         color_discrete_sequence=px.colors.qualitative.Set2,
     )
+
+    fig.update_traces(
+        width=0.7,          # keep violins wide
+        scalemode="count",
+        jitter=0.2,
+    )
+
+    fig.update_layout(
+        title="Sample intensity distributions by condition & replicate (log2)",
+        violingap=0.05,
+        violingroupgap=0.25,
+        violinmode="group",
+        xaxis_title="Condition & replicate",
+        yaxis_title="log2(intensity)",
+        height=500,
+        plot_bgcolor="white",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Arial", color="#54585A"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="right", x=1),
+    )
+
     return fig
 
 
@@ -432,7 +455,7 @@ with tab_peptide:
         st.markdown("---")
 
         st.markdown("### Sample distributions")
-        fig_violin = create_condition_violin_plot(df_json, numeric_cols)
+        fig_violin = create_superplot_violin(df_json, numeric_cols)
         st.plotly_chart(fig_violin, use_container_width=True)
 
         st.markdown("---")
