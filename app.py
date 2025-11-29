@@ -1,12 +1,5 @@
 import streamlit as st
-
-COLORS = {
-    "red": "#E71316",
-    "dark_red": "#A6192E",
-    "gray": "#54585A",
-    "light_gray": "#E2E3E4",
-    "navy": "#262262",
-}
+from components import inject_custom_css, render_navbar, render_footer, COLORS
 
 st.set_page_config(
     page_title="Proteomics Analysis | Thermo Fisher Scientific",
@@ -15,56 +8,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-st.markdown("""
-<style>
-    [data-testid="stSidebar"] { display: none; }
-    [data-testid="collapsedControl"] { display: none; }
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown(f"""
-<style>
-    body, .stMarkdown, .stText {{
-        font-family: Arial, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    }}
-    .stButton > button {{
-        background-color: {COLORS['red']};
-        color: white;
-        border: none;
-        padding: 10px 20px;
-        border-radius: 4px;
-        font-weight: 500;
-    }}
-    .stButton > button:hover {{
-        background-color: {COLORS['dark_red']};
-    }}
-    .header-banner {{
-        background: linear-gradient(90deg, {COLORS['red']} 0%, {COLORS['dark_red']} 100%);
-        padding: 30px;
-        border-radius: 8px;
-        margin-bottom: 30px;
-    }}
-    .header-banner h1 {{ color: white; margin: 0; font-size: 32pt; }}
-    .header-banner p {{ color: white; margin: 10px 0 0 0; opacity: 0.9; font-size: 14pt; }}
-    .module-card {{
-        background-color: {COLORS['light_gray']};
-        padding: 20px;
-        border-radius: 8px;
-        border-left: 4px solid {COLORS['red']};
-        margin-bottom: 15px;
-        min-height: 120px;
-    }}
-    .module-card h3 {{ margin: 0 0 10px 0; color: {COLORS['gray']}; }}
-    .module-card p {{ margin: 0; color: {COLORS['gray']}; }}
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<div class="header-banner">
-    <h1>Proteomics Analysis Pipeline</h1>
-    <p>Comprehensive data-independent acquisition analysis</p>
-</div>
-""", unsafe_allow_html=True)
+inject_custom_css()
+render_navbar(active_page="home")
 
 st.markdown("### Welcome")
 st.write("This application provides tools for analyzing proteomics data from mass spectrometry experiments.")
@@ -110,9 +55,4 @@ with c2:
         st.info("No peptide data loaded")
 
 st.markdown("---")
-st.markdown(f"""
-<div style="text-align: center; color: {COLORS['gray']}; font-size: 12px; padding: 20px 0;">
-    <p><strong>For research use only</strong></p>
-    <p>© 2024 Thermo Fisher Scientific Inc. All rights reserved.</p>
-</div>
-""", unsafe_allow_html=True)
+render_footer()
