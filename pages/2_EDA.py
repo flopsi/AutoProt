@@ -186,83 +186,45 @@ def create_missing_distribution_chart(df_json: str, numeric_cols: list[str], lab
 
 import plotly.express as px
 
+import plotly.express as px
+import numpy as np
+import pandas as pd
+
 @st.cache_data
-def create_superplot_violin(df_json: str, numeric_cols: list[str]) -> go.Figure:
-    """Violin plot: y = log2, x = condition+replicate, color = condition."""
-    # Decode cached JSON back to DataFrame
+def create_superplot_violin(df_json: str, numeric_cols: list[str]):
+    # df_json is a JSON string from .to_json()
     df = pd.read_json(df_json)
 
-    # -----------------------------
-    # Log2-transform numeric columns
-    # -----------------------------
-    df_log2 = df.copy()
-    df_log2[numeric_cols] = np.log2(df_log2[numeric_cols].replace(0, np.nan))
-
-    # -----------------------------
-    # Melt to long format
-    # -----------------------------
-    df_long = df_log2.melt(
-        id_vars=[c for c in df_log2.columns if c not in numeric_cols],
-        value_vars=numeric_cols,
-        var_name="Sample",          # e.g. A1, A2, B1 ...
-        value_name="log2_value",
+    # Long format with one row per (protein, sample)
+    long_df = df[numeric_cols].melt(
+        var_name="Sample", value_name="intensity"
     )
 
-    # Condition = first letter, Replicate = digits after it
-    df_long["Condition"] = df_long["Sample"].str.extract(r"^([A-Z])")
-    df_long["Replicate"] = df_long["Sample"].str.extract(r"^.[R]?(\d+)")
-    df_long["Cond_Rep"] = df_long["Condition"] + "_R" + df_long["Replicate"]
+    # Log2 transform (0 → NaN, ignored by violin)
+    long_df["log2_value"] = np.log2(long_df["intensity"].replace(0, np.nan))
 
-    # -----------------------------
-    # X-order: group replicates per condition
-    # -----------------------------
-    cond_order = df_long["Condition"].dropna().unique()
-    x_order = []
-    for cond in cond_order:
-        reps = (
-            df_long.loc[df_long["Condition"] == cond, "Replicate"]
-            .dropna()
-            .unique()
-        )
-        reps = sorted(reps, key=lambda r: int(r))
-        x_order.extend([f"{cond}_R{r}" for r in reps])
+    # Condition = first letter; Replicate = digits after it
+    long_df["Condition"] = long_df["Sample"].str.extract(r"^([A-Z])")
+    long_df["Replicate"] = long_df["Sample"].str.extract(r"^.[R]?(\d+)")
 
-    # -----------------------------
-    # Violin plot with wide violins
-    # -----------------------------
+    # Use replicate on x, color by condition – exactly like the tips example
     fig = px.violin(
-        df_long,
-        x="Cond_Rep",
+        long_df,
         y="log2_value",
+        x="Replicate",
         color="Condition",
         box=True,
-        points=False,
-        category_orders={"Cond_Rep": x_order},
-        color_discrete_sequence=px.colors.qualitative.Set2,
+        points="all",
     )
 
-    fig.update_traces(
-        width=0.7,          # keep violins wide
-        scalemode="count",
-        jitter=0.2,
-    )
-
+    fig.update_traces(width=0.7, scalemode="count", jitter=0.2)
     fig.update_layout(
-        title="Sample intensity distributions by condition & replicate (log2)",
-        violingap=0.05,
-        violingroupgap=0.25,
-        violinmode="group",
-        xaxis_title="Condition & replicate",
+        title="Intensity distributions by replicate and condition (log2)",
+        xaxis_title="Replicate",
         yaxis_title="log2(intensity)",
-        height=500,
-        plot_bgcolor="white",
-        paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Arial", color="#54585A"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                    xanchor="right", x=1),
     )
-
     return fig
+
 
 
 
