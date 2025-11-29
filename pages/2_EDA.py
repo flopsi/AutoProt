@@ -6,20 +6,10 @@ import plotly.express as px
 from scipy import stats
 from sklearn.preprocessing import PowerTransformer, QuantileTransformer, StandardScaler
 from sklearn.decomposition import PCA
-
-from components import inject_custom_css, render_header, render_navigation, render_footer, COLORS
-
-
 from dataclasses import dataclass
 from typing import List
 
-@dataclass
-class MSData:
-    original: pd.DataFrame
-    filled: pd.DataFrame
-    log2_filled: pd.DataFrame
-    numeric_cols: List[str]
-
+from components import inject_custom_css, render_header, render_navigation, render_footer, COLORS
 
 st.set_page_config(
     page_title="EDA | Thermo Fisher Scientific",
@@ -30,6 +20,21 @@ st.set_page_config(
 
 inject_custom_css()
 render_header()
+
+
+# -----------------------
+# Data model
+# -----------------------
+@dataclass
+class MSData:
+    original: pd.DataFrame        # after filtering + renaming
+    filled: pd.DataFrame          # numeric 0/NaN/1 -> 1
+    log2_filled: pd.DataFrame     # log2(filled)
+    numeric_cols: List[str]       # renamed intensity columns (A1,A2,...)
+
+
+# Thermo Fisher chart palette (style guide)
+TF_CHART_COLORS = ["#262262", "#A6192E", "#EA7600", "#F1B434", "#B5BD00", "#9BD3DD"]
 
 
 def parse_protein_group(pg_str: str) -> str:
@@ -139,7 +144,7 @@ def create_intensity_heatmap(df_json: str, index_col: str | None, numeric_cols: 
         height=500,
         yaxis=dict(tickfont=dict(size=8)),
         xaxis=dict(tickangle=45),
-        plot_bgcolor="white",
+        plot_bgcolor="#FFFFFF",
         paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Arial", color="#54585A"),
     )
@@ -150,10 +155,9 @@ def create_intensity_heatmap(df_json: str, index_col: str | None, numeric_cols: 
 def create_missing_distribution_chart(mask_json: str, label: str) -> go.Figure:
     mask = pd.read_json(mask_json)
     missing_per_row = mask.sum(axis=1)
-    total_rows = len(mask.columns) * len(mask.index)
+    total = mask.size
     total_missing = mask.sum().sum()
 
-    # distribution per row
     max_missing = mask.shape[1]
     counts = [(missing_per_row == i).sum() / len(mask) * 100 for i in range(max_missing + 1)]
 
@@ -161,7 +165,7 @@ def create_missing_distribution_chart(mask_json: str, label: str) -> go.Figure:
         data=go.Bar(
             x=[str(i) for i in range(max_missing + 1)],
             y=counts,
-            marker_color="#262262",
+            marker_color="#262262",  # NAVY
             hovertemplate="Missing values in row: %{x}<br>Percent: %{y:.1f}%<extra></extra>",
         )
     )
@@ -170,7 +174,7 @@ def create_missing_distribution_chart(mask_json: str, label: str) -> go.Figure:
         xaxis_title="Number of missing values",
         yaxis_title="% of total",
         height=350,
-        plot_bgcolor="white",
+        plot_bgcolor="#FFFFFF",
         paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Arial", color="#54585A"),
         bargap=0.2,
@@ -190,25 +194,16 @@ def create_missing_distribution_chart(mask_json: str, label: str) -> go.Figure:
     return fig
 
 
-import plotly.express as px
-import pandas as pd
+@st.cache_data
+def create_all_conditions_replicate_violin(model_json: str, numeric_cols: list[str]) -> go.Figure:
+    df = pd.read_json(model_json)
+    df_log2 = df[numeric_cols]
 
-def create_all_conditions_replicate_violin(model: MSData) -> go.Figure:
-    """
-    One violin per replicate (A1, A2, A3, B1, ...), all conditions shown.
-    Color = condition (first letter).
-    """
-    df_log2 = model.log2_filled
-    cols = model.numeric_cols
-
-    # long format
-    long_df = df_log2[cols].melt(var_name="Sample", value_name="log2_value")
-
-    # Condition = first letter, Replicate = digits after it
+    long_df = df_log2.melt(var_name="Sample", value_name="log2_value")
     long_df["Condition"] = long_df["Sample"].str.extract(r"^([A-Z])")
     long_df["Replicate"] = long_df["Sample"].str.extract(r"^.*?(\d+)$")
+    long_df["CondRep"] = long_df["Condition"] + long_df["Replicate"]
 
-    # x-axis order: grouped by condition, then replicate number
     cond_order = long_df["Condition"].dropna().unique()
     x_order = []
     for cond in cond_order:
@@ -220,8 +215,6 @@ def create_all_conditions_replicate_violin(model: MSData) -> go.Figure:
         reps = sorted(reps, key=lambda r: int(r))
         x_order.extend([f"{cond}{r}" for r in reps])
 
-    long_df["CondRep"] = long_df["Condition"] + long_df["Replicate"]
-
     fig = px.violin(
         long_df,
         x="CondRep",
@@ -230,6 +223,7 @@ def create_all_conditions_replicate_violin(model: MSData) -> go.Figure:
         box=True,
         points="all",
         category_orders={"CondRep": x_order},
+        color_discrete_sequence=TF_CHART_COLORS,
     )
 
     fig.update_traces(width=0.7, scalemode="count", jitter=0.2)
@@ -240,13 +234,12 @@ def create_all_conditions_replicate_violin(model: MSData) -> go.Figure:
         violinmode="group",
         violingroupgap=0.15,
         violingap=0.05,
-        plot_bgcolor="white",
+        plot_bgcolor="#FFFFFF",
         paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Arial", color="#54585A"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
     return fig
-
 
 
 @st.cache_data
@@ -268,12 +261,11 @@ def create_pca_plot(df_json: str, numeric_cols: list[str]) -> go.Figure:
     pca_result, var_explained, cols = compute_pca(df_json, numeric_cols)
     sorted_cols = sort_columns_by_condition(cols)
     conditions = [c[0] if len(c) >= 1 and c[0].isalpha() else "X" for c in sorted_cols]
-    unique_conds = sorted(set(conditions))
-    colors = px.colors.qualitative.Set2
-    color_map = {cond: colors[i % len(colors)] for i, cond in enumerate(unique_conds)}
+    cond_order = sorted(set(conditions))
+    color_map = {cond: TF_CHART_COLORS[i % len(TF_CHART_COLORS)] for i, cond in enumerate(cond_order)}
 
     fig = go.Figure()
-    for cond in unique_conds:
+    for cond in cond_order:
         idx = [i for i, c in enumerate(conditions) if c == cond]
         fig.add_trace(
             go.Scatter(
@@ -293,7 +285,7 @@ def create_pca_plot(df_json: str, numeric_cols: list[str]) -> go.Figure:
         xaxis_title=f"PC1 ({var_explained[0]*100:.1f}% variance)",
         yaxis_title=f"PC2 ({var_explained[1]*100:.1f}% variance)" if len(var_explained) > 1 else "PC2",
         height=450,
-        plot_bgcolor="white",
+        plot_bgcolor="#FFFFFF",
         paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Arial", color="#54585A"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
@@ -370,9 +362,9 @@ def render_eda(model: MSData | None, index_col: str | None, label: str):
     numeric_cols = model.numeric_cols
     df_json = df_log2.to_json()
     mask = st.session_state.get(f"{label}_missing_mask")
-    mask_json = mask.to_json() if mask is not None else pd.DataFrame(
-        False, index=df_log2.index, columns=numeric_cols
-    ).to_json()
+    if mask is None:
+        mask = pd.DataFrame(False, index=df_log2.index, columns=numeric_cols)
+    mask_json = mask.to_json()
 
     st.caption(f"**{len(df_log2):,} {label}s** × **{len(numeric_cols)} samples**")
 
@@ -386,11 +378,13 @@ def render_eda(model: MSData | None, index_col: str | None, label: str):
         st.plotly_chart(fig_bar, use_container_width=True)
 
     st.markdown("---")
-    
+
+    # Violin: all conditions & replicates
     st.markdown("### Sample distributions (all conditions)")
-    fig_violin = create_all_conditions_replicate_violin(model)
+    fig_violin = create_all_conditions_replicate_violin(df_json, numeric_cols)
     st.plotly_chart(fig_violin, use_container_width=True)
 
+    st.markdown("---")
 
     # PCA + PERMANOVA
     st.markdown("### Variance analysis")
