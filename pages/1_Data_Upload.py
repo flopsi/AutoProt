@@ -50,12 +50,23 @@ def filter_by_species(df: pd.DataFrame, col: str, species_tags: list[str]) -> pd
 def build_msdata(processed_df: pd.DataFrame, numeric_cols_renamed: List[str]) -> MSData:
     original = processed_df.copy()
 
-    filled = processed_df.copy()
+    # 1) Quant columns → numeric; non-numeric (e.g. '#NUM!') → NaN
+    numeric_block = original[numeric_cols_renamed].apply(
+        pd.to_numeric, errors="coerce"
+    )
+    original[numeric_cols_renamed] = numeric_block
+
+    # 2) Filled: NaN, 0, 1 → 1
+    filled = original.copy()
     vals = filled[numeric_cols_renamed]
     vals = vals.fillna(1)
     vals = vals.where(~vals.isin([0, 1]), 1)
     filled[numeric_cols_renamed] = vals
 
+    # Count cells equal to 1 after filling/reformatting
+    ones_count = (filled[numeric_cols_renamed] == 1).sum().sum()
+
+    # 3) log2(filled)
     log2_filled = filled.copy()
     log2_filled[numeric_cols_renamed] = np.log2(log2_filled[numeric_cols_renamed])
 
@@ -64,8 +75,8 @@ def build_msdata(processed_df: pd.DataFrame, numeric_cols_renamed: List[str]) ->
         filled=filled,
         log2_filled=log2_filled,
         numeric_cols=numeric_cols_renamed,
+        ones_count=ones_count,
     )
-
 
 # ------------- session state -------------
 defaults = {
