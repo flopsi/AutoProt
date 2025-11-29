@@ -185,7 +185,7 @@ def create_condition_violin_plot(df_json: str, numeric_cols: list[str]) -> go.Fi
             meanline_visible=True,
             points="all",
             jitter=0.05,
-            hovertemplate=f"Condition {condition}<br>log2: %{values:.2f}<extra></extra>"
+            hovertemplate=f"Condition {condition}<br>log2: " + "%{y:.2f}<extra></extra>"
         ))
 
     fig.update_layout(
