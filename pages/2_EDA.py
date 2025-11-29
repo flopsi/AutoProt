@@ -221,7 +221,7 @@ def create_all_conditions_replicate_violin(model_json: str, numeric_cols: list[s
         y="log2_value",
         color="Condition",
         box=True,
-        points="outliers",
+        points=False,
         category_orders={"CondRep": x_order},
         color_discrete_sequence=TF_CHART_COLORS,
     )
