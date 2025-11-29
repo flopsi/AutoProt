@@ -114,30 +114,30 @@ if uploaded_file:
         raw_df = pd.read_csv(uploaded_file)
         st.session_state.raw_df = raw_df
 
-        # 1) All numeric candidates
-        numeric_all = [c for c in raw_df.columns if pd.api.types.is_numeric_dtype(raw_df[c])]
-        if not numeric_all:
-            st.error("No numeric columns detected. Please upload a matrix with numeric intensities.")
-            st.stop()
+    # 1) All numeric candidates
+    numeric_all = [c for c in raw_df.columns if pd.api.types.is_numeric_dtype(raw_df[c])]
+    if not numeric_all:
+        st.error("No numeric columns detected. Please upload a matrix with numeric intensities.")
+        st.stop()
 
-        # 2) Build quant groups by last 25 chars
-        group_map: dict[str, list[str]] = {}
-        for c in numeric_all:
-            key = quant_group_key(c, n=25)
-            group_map.setdefault(key, []).append(c)
+    # 2) Build quant groups by last 25 chars
+    group_map: dict[str, list[str]] = {}
+    for c in numeric_all:
+        key = quant_group_key(c, n=25)
+        group_map.setdefault(key, []).append(c)
 
-        st.session_state.all_numeric_candidates = numeric_all
-        st.session_state.quant_groups = group_map
+    st.session_state.all_numeric_candidates = numeric_all
+    st.session_state.quant_groups = group_map
 
-        # Default: all groups (all numeric columns)
-        st.session_state.original_numeric_cols = numeric_all
-        st.session_state.column_renames = auto_rename_columns(numeric_all)
+    # Default: all groups (all numeric columns)
+    st.session_state.original_numeric_cols = numeric_all
+    st.session_state.column_renames = auto_rename_columns(numeric_all)
 
-    raw_df = st.session_state.raw_df
-    numeric_all = st.session_state.all_numeric_candidates
-    group_map = st.session_state.quant_groups
+raw_df = st.session_state.raw_df
+numeric_all = st.session_state.all_numeric_candidates
+group_map = st.session_state.quant_groups
 
-    st.success(f"Loaded {len(raw_df):,} rows, {len(raw_df.columns)} columns")
+st.success(f"Loaded {len(raw_df):,} rows, {len(raw_df.columns)} columns")
 
     # --------------------------
     # Quant group selection
