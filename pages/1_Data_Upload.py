@@ -22,13 +22,23 @@ def get_msdata(df, quant_cols):
     return build_msdata(df, quant_cols)
 
 @dataclass
-class MSData:
-    original: pd.DataFrame
-    filled: pd.DataFrame
-    log2_filled: pd.DataFrame
-    numeric_cols: List[str]
-    ones_count: int
+class TransformsCache:
+    log2: pd.DataFrame
+    log10: pd.DataFrame
+    sqrt: pd.DataFrame
+    cbrt: pd.DataFrame  # cube root
+    yeo_johnson: pd.DataFrame
+    quantile: pd.DataFrame
+    condition_wise_cvs: pd.DataFrame  # CV per condition per protein/peptide
 
+
+@dataclass
+class MSData:
+    raw: pd.DataFrame  # untouched original data
+    raw_filled: pd.DataFrame  # NaN, 0, 1 → 1, count these as missing
+    missing_count: int  # count of cells that were 0, 1, or NaN
+    numeric_cols: List[str]
+    transforms: TransformsCache
 
 def auto_rename_columns(columns: List[str]) -> dict:
     rename_map = {}
@@ -51,36 +61,82 @@ def filter_by_species(df: pd.DataFrame, col: str, species_tags: list[str]) -> pd
     return df[df[col].astype(str).str.contains(pattern, case=False, na=False)]
 
 
-def build_msdata(processed_df: pd.DataFrame, numeric_cols_renamed: List[str]) -> MSData:
-    original = processed_df.copy()
+from scipy.stats import yeojohnson
 
-    # 1) Force all selected quant columns to numeric float64 BEFORE any operations
-    original[numeric_cols_renamed] = (
-        original[numeric_cols_renamed]
+def _compute_yeo_johnson(df: pd.DataFrame) -> pd.DataFrame:
+    """Apply Yeo-Johnson power transform (handles 0 and negative values)."""
+    result = df.copy()
+    for col in df.columns:
+        result[col], _ = yeojohnson(df[col].dropna())
+    return result
+
+def _compute_quantile_norm(df: pd.DataFrame) -> pd.DataFrame:
+    """Quantile normalization: each sample gets same distribution."""
+    # sort each column, replace with mean ranks across columns
+    quantiles = np.sort(df.values, axis=0)
+    quantiles_mean = quantiles.mean(axis=1)
+    ranks = df.rank(axis=0, method='average').values.astype(int)
+    return pd.DataFrame(
+        quantiles_mean[ranks - 1],
+        columns=df.columns,
+        index=df.index,
+    )
+
+def _compute_condition_cvs(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute CV per condition (inferred from column names: A1,A2,A3 → A; B1,B2,B3 → B)."""
+    cvs = {}
+    for col in df.columns:
+        condition = col[0] if col[0].isalpha() else col.rsplit("_", 1)[0]
+        if condition not in cvs:
+            cvs[condition] = []
+        cvs[condition].append(df[col])
+    
+    result = {}
+    for condition, cols_data in cvs.items():
+        stacked = pd.concat(cols_data, axis=1)
+        result[condition] = (stacked.std(axis=1) / stacked.mean(axis=1)) * 100  # CV%
+    
+    return pd.DataFrame(result)
+
+
+def build_msdata(processed_df: pd.DataFrame, numeric_cols_renamed: List[str]) -> MSData:
+    # 1) raw: untouched copy
+    raw = processed_df.copy()
+    
+    # Force numeric on selected columns
+    raw[numeric_cols_renamed] = (
+        raw[numeric_cols_renamed]
         .apply(pd.to_numeric, errors="coerce")
         .astype("float64")
     )
 
-    # 2) Filled: NaN, 0, 1 → 1
-    filled = original.copy()
-    vals = filled[numeric_cols_renamed]
+    # 2) raw_filled: NaN, 0, 1 → 1
+    raw_filled = raw.copy()
+    vals = raw_filled[numeric_cols_renamed]
     vals = vals.fillna(1.0)
     vals = vals.where(~vals.isin([0.0, 1.0]), 1.0)
-    filled[numeric_cols_renamed] = vals
+    raw_filled[numeric_cols_renamed] = vals
+    
+    # Count missing (cells that were NaN, 0, or 1)
+    missing_count = (raw_filled[numeric_cols_renamed] == 1.0).to_numpy().sum()
 
-    # Count cells == 1 after filling
-    ones_count = (filled[numeric_cols_renamed] == 1.0).to_numpy().sum()
-
-    # 3) log2(filled)
-    log2_filled = filled.copy()
-    log2_filled[numeric_cols_renamed] = np.log2(log2_filled[numeric_cols_renamed])
+    # 3) Compute all transformations at once
+    transforms = TransformsCache(
+        log2=np.log2(raw_filled[numeric_cols_renamed]).copy(),
+        log10=np.log10(raw_filled[numeric_cols_renamed]).copy(),
+        sqrt=np.sqrt(raw_filled[numeric_cols_renamed]).copy(),
+        cbrt=np.cbrt(raw_filled[numeric_cols_renamed]).copy(),
+        yeo_johnson=_compute_yeo_johnson(raw_filled[numeric_cols_renamed]),
+        quantile=_compute_quantile_norm(raw_filled[numeric_cols_renamed]),
+        condition_wise_cvs=_compute_condition_cvs(raw_filled[numeric_cols_renamed]),
+    )
 
     return MSData(
-        original=original,
-        filled=filled,
-        log2_filled=log2_filled,
+        raw=raw,
+        raw_filled=raw_filled,
+        missing_count=missing_count,
         numeric_cols=numeric_cols_renamed,
-        ones_count=ones_count,
+        transforms=transforms,
     )
 
 
