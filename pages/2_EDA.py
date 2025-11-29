@@ -106,53 +106,32 @@ def analyze_transformations(df_json: str, numeric_cols: list[str]) -> pd.DataFra
 
 
 @st.cache_data
-def create_condition_violin_plot(df_json: str, numeric_cols: list[str]) -> go.Figure:
-    """One violin per condition (A,B,...) pooling its 3 replicates."""
+def create_intensity_heatmap(df_json: str, index_col: str, numeric_cols: list[str]) -> go.Figure:
     df = pd.read_json(df_json)
-    groups = get_condition_groups(numeric_cols)  # e.g. {"A": ["A1","A2","A3"], ...}
-    color_map = get_condition_color_map(list(groups.keys()))
 
-    fig = go.Figure()
+    if index_col and index_col in df.columns:
+        labels = df[index_col].apply(parse_protein_group).tolist()
+    else:
+        labels = [f"Row {i}" for i in range(len(df))]
 
-    for condition in sorted(groups.keys()):
-        cols = sorted(groups[condition])
-        # pool all replicate values for this condition
-        values = np.log2(np.maximum(df[cols].values.flatten(), 1))
+    sorted_cols = sort_columns_by_condition(numeric_cols)
+    intensity_log2 = np.log2(np.maximum(df[sorted_cols].values, 1))
 
-        fig.add_trace(go.Violin(
-            x=[condition] * len(values),
-            y=values,
-            name=f"Condition {condition}",
-            legendgroup=condition,
-            scalegroup=condition,
-            line_color=color_map[condition],
-            fillcolor=color_map[condition],
-            opacity=0.7,
-            width=0.8,
-            spanmode="hard",
-            box_visible=True,
-            meanline_visible=True,
-            points="all",
-            jitter=0.05,
-            hovertemplate=f"Condition {condition}<br>log2: %{y:.2f}<extra></extra>"
-        ))
+    fig = go.Figure(data=go.Heatmap(
+        z=intensity_log2, x=sorted_cols, y=labels,
+        colorscale="Viridis", showscale=True,
+        colorbar=dict(title="log2"),
+        hovertemplate="Protein: %{y}<br>Sample: %{x}<br>log2: %{z:.2f}<extra></extra>"
+    ))
 
     fig.update_layout(
-        title="Sample intensity distributions by condition (log2)",
-        xaxis_title="Condition",
-        yaxis_title="log2(intensity)",
-        height=500,
-        violinmode="group",
-        violingap=0.2,
-        violingroupgap=0.25,
-        plot_bgcolor="white",
-        paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Arial", color="#54585A"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                    xanchor="right", x=1)
+        title="Intensity distribution (log2)",
+        xaxis_title="Samples", yaxis_title="",
+        height=500, yaxis=dict(tickfont=dict(size=8)),
+        xaxis=dict(tickangle=45), plot_bgcolor="white",
+        paper_bgcolor="rgba(0,0,0,0)", font=dict(family="Arial", color="#54585A")
     )
     return fig
-
 
 
 @st.cache_data
