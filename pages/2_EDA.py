@@ -6,6 +6,7 @@ from scipy import stats
 from sklearn.preprocessing import PowerTransformer, QuantileTransformer, StandardScaler
 from sklearn.decomposition import PCA
 from components import inject_custom_css, render_header, render_navigation, render_footer, COLORS
+import plotly.express as px
 
 st.set_page_config(
     page_title="EDA | Thermo Fisher Scientific",
@@ -156,50 +157,45 @@ def create_missing_distribution_chart(df_json: str, numeric_cols: list[str], lab
     return fig
 
 
+import plotly.express as px
+
 @st.cache_data
 def create_condition_violin_plot(df_json: str, numeric_cols: list[str]) -> go.Figure:
-    """One violin per replicate (A1,A2,A3,...) grouped by condition."""
-    df = pd.read_json(df_json)
+    """Violin plot with px.violin: y=log2, x=replicate, color=condition."""
+    df_wide = pd.read_json(df_json)
     groups = get_condition_groups(numeric_cols)  # {"A": ["A1","A2","A3"], ...}
-    color_map = get_condition_color_map(list(groups.keys()))
 
-    fig = go.Figure()
+    # Build long-form table
+    records = []
+    for condition, cols in groups.items():
+        cols = sorted(cols)
+        for rep_idx, col in enumerate(cols, start=1):
+            vals = np.log2(np.maximum(df_wide[col].values, 1))
+            for v in vals:
+                records.append(
+                    {"log2_value": v,
+                     "replicate": f"R{rep_idx}",
+                     "condition": condition,
+                     "sample": col}
+                )
 
-    for condition in sorted(groups.keys()):
-        cols = sorted(groups[condition])
-        for i, col in enumerate(cols):
-            values = np.log2(np.maximum(df[col].values, 1))
+    df_long = pd.DataFrame(records)
 
-            fig.add_trace(go.Violin(
-                x=[col] * len(values),          # replicate on x-axis (A1, A2, A3, ...)
-                y=values,
-                name=condition,                 # legend by condition
-                legendgroup=condition,
-                scalegroup=condition,
-                line_color=color_map[condition],
-                fillcolor=color_map[condition],
-                opacity=0.7,
-                width=0.7,
-                spanmode="hard",
-                box_visible=True,
-                meanline_visible=True,
-                points="all",
-                jitter=0.05,
-                hovertemplate=(
-                    f"Condition {condition} – {col}<br>"
-                    + "%{y:.2f}<extra></extra>"
-                ),
-                showlegend=(i == 0),            # one legend entry per condition
-            ))
+    fig = px.violin(
+        df_long,
+        y="log2_value",
+        x="replicate",
+        color="condition",
+        box=True,
+        points="all",
+        hover_data=["sample", "condition", "replicate"],
+    )
 
     fig.update_layout(
-        title="Sample intensity distributions by replicate (log2)",
-        xaxis_title="Sample (condition + replicate)",
+        title="Sample intensity distributions by replicate and condition (log2)",
+        xaxis_title="Replicate",
         yaxis_title="log2(intensity)",
         height=500,
-        violinmode="group",
-        violingap=0.15,
-        violingroupgap=0.3,
         plot_bgcolor="white",
         paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Arial", color="#54585A"),
