@@ -103,8 +103,8 @@ if uploaded_file:
         # Detect all numeric columns (candidates)
         numeric_all = [c for c in raw_df.columns if pd.api.types.is_numeric_dtype(raw_df[c])]
         if not numeric_all:
-        st.error("No numeric columns detected. Please upload a matrix with numeric intensities.")
-        st.stop()
+            st.error("No numeric columns detected. Please upload a matrix with numeric intensities.")
+            st.stop()
     
         st.session_state.original_numeric_cols = numeric_all
         st.session_state.column_renames = auto_rename_columns(numeric_all)
