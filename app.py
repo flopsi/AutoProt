@@ -31,17 +31,35 @@ def filter_by_species(df: pd.DataFrame, col: str, species_tags: list[str]) -> pd
     return df[df[col].astype(str).str.contains(pattern, case=False, na=False)]
 
 # --- Session State Initialization ---
-if "uploaded_df" not in st.session_state:
-    st.session_state.uploaded_df = None
-if "processed_df" not in st.session_state:
-    st.session_state.processed_df = None
-if "column_names" not in st.session_state:
-    st.session_state.column_names = {}
+defaults = {
+    "uploaded_df": None,
+    "processed_df": None,
+    "column_names": {},
+    "protein_data": None,
+    "peptide_data": None,
+    "upload_key": 0,  # For clearing file uploader
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 st.title("🧬 Proteomics Data Upload & Configuration")
 
+# --- Show cached data status ---
+col_status1, col_status2 = st.columns(2)
+with col_status1:
+    if st.session_state.protein_data is not None:
+        st.success(f"✅ Protein data cached: {len(st.session_state.protein_data)} rows")
+with col_status2:
+    if st.session_state.peptide_data is not None:
+        st.success(f"✅ Peptide data cached: {len(st.session_state.peptide_data)} rows")
+
 # --- File Upload ---
-uploaded_file = st.file_uploader("Upload proteomics CSV", type=["csv"])
+uploaded_file = st.file_uploader(
+    "Upload proteomics CSV", 
+    type=["csv"], 
+    key=f"uploader_{st.session_state.upload_key}"
+)
 
 if uploaded_file:
     raw_df = pd.read_csv(uploaded_file)
@@ -58,10 +76,11 @@ if uploaded_file:
     with st.expander("⚙️ Column Configuration", expanded=True):
         col1, col2 = st.columns(2)
         
-        # 1. Protein Group Column Selector (only one allowed)
+        non_numeric_cols = [c for c in renamed_df.columns if not pd.api.types.is_numeric_dtype(renamed_df[c])]
+        
+        # 1. Protein Group Column Selector
         with col1:
             st.subheader("Protein Group Column")
-            non_numeric_cols = [c for c in renamed_df.columns if not pd.api.types.is_numeric_dtype(renamed_df[c])]
             protein_group_col = st.selectbox(
                 "Select column containing Protein Group IDs",
                 options=["None"] + non_numeric_cols,
@@ -70,24 +89,41 @@ if uploaded_file:
             )
             protein_group_col = None if protein_group_col == "None" else protein_group_col
         
-        # 2. Species Tags
+        # 2. Sequence Column Selector (Peptide vs Protein level)
         with col2:
-            st.subheader("Species Filter Tags")
+            st.subheader("Sequence Column (Peptide Data)")
+            sequence_col = st.selectbox(
+                "Select column containing peptide sequences",
+                options=["None"] + non_numeric_cols,
+                index=0,  # Default None = protein level
+                help="If None → Protein-level data. If selected → Peptide-level data"
+            )
+            sequence_col = None if sequence_col == "None" else sequence_col
+            
+            # Display data level indicator
+            is_peptide_data = sequence_col is not None
+            if is_peptide_data:
+                st.warning("📋 **Peptide-level data**")
+            else:
+                st.info("🧬 **Protein-level data**")
+        
+        # 3. Species Tags
+        st.subheader("Species Filter Tags")
+        col_sp1, col_sp2 = st.columns([2, 1])
+        with col_sp1:
             available_species = ["_HUMAN", "_YEAST", "_ECOLI", "_MOUSE"]
             species_tags = st.multiselect(
-                "Select species to include (matches against Protein Names)",
+                "Select species to include",
                 options=available_species,
                 default=["_HUMAN"],
-                help="Filter rows by species identifier in protein names"
             )
-            # Custom species input
-            custom_species = st.text_input("Add custom species tag (e.g., _RAT)")
+        with col_sp2:
+            custom_species = st.text_input("Custom tag")
             if custom_species and custom_species not in species_tags:
                 species_tags.append(custom_species)
     
-    # 3. Column Name Editor
+    # 4. Column Name Editor
     with st.expander("✏️ Edit Column Names", expanded=False):
-        st.caption("Edit numeric column names (condition_replicate format)")
         numeric_cols = [c for c in renamed_df.columns if pd.api.types.is_numeric_dtype(renamed_df[c])]
         
         edited_names = {}
@@ -97,7 +133,7 @@ if uploaded_file:
             for j, col in enumerate(numeric_cols[i:i+cols_per_row]):
                 with row_cols[j]:
                     edited_names[col] = st.text_input(
-                        f"Original: `{col}`",
+                        f"`{col}`",
                         value=st.session_state.column_names.get(col, col),
                         key=f"edit_{col}"
                     )
@@ -107,11 +143,10 @@ if uploaded_file:
             st.rerun()
     
     # --- Apply Configurations ---
-    # Apply user-edited column names
     final_rename = {k: v for k, v in st.session_state.column_names.items() if k != v}
     processed_df = renamed_df.rename(columns=final_rename)
     
-    # Determine filter column (use Protein Names if available for species filtering)
+    # Determine filter column
     filter_col = None
     for potential in ["PG.ProteinNames", "ProteinNames", "Protein.Names"]:
         if potential in processed_df.columns:
@@ -121,59 +156,79 @@ if uploaded_file:
     # Apply species filter
     if species_tags and filter_col:
         processed_df = filter_by_species(processed_df, filter_col, species_tags)
-        st.info(f"Filtered to {len(processed_df)} rows matching species: {', '.join(species_tags)}")
+        st.info(f"Filtered to {len(processed_df)} rows matching: {', '.join(species_tags)}")
     
-    # Cache the processed dataframe
     st.session_state.processed_df = processed_df
     
     # --- Preview ---
     st.subheader("📊 Data Preview")
     
-    # Show column summary
     numeric_final = [c for c in processed_df.columns if pd.api.types.is_numeric_dtype(processed_df[c])]
     meta_cols = [c for c in processed_df.columns if c not in numeric_final]
     
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total Rows", len(processed_df))
     c2.metric("Numeric Columns", len(numeric_final))
     c3.metric("Metadata Columns", len(meta_cols))
+    c4.metric("Data Level", "Peptide" if is_peptide_data else "Protein")
     
-    if protein_group_col:
-        st.caption(f"**Protein Group Column:** `{protein_group_col}`")
+    st.dataframe(processed_df.head(100), use_container_width=True, height=300)
     
-    # Data editor for final review
-    st.dataframe(
-        processed_df.head(100),
-        use_container_width=True,
-        height=400,
-        column_config={
-            protein_group_col: st.column_config.TextColumn("Protein Groups", width="medium")
-        } if protein_group_col else None
-    )
-    
-    # --- Export Cached Data ---
+    # --- Confirm & Cache ---
     st.divider()
-    st.subheader("💾 Cached Data for Downstream")
+    data_type = "peptide" if is_peptide_data else "protein"
     
-    @st.cache_data
-    def get_numeric_matrix(df: pd.DataFrame, numeric_cols: list) -> pd.DataFrame:
-        return df[numeric_cols].copy()
+    # Check if this data type is already cached
+    existing_key = f"{data_type}_data"
+    if st.session_state[existing_key] is not None:
+        st.warning(f"⚠️ {data_type.capitalize()} data already cached. Confirming will overwrite.")
     
-    @st.cache_data  
-    def get_metadata(df: pd.DataFrame, meta_cols: list) -> pd.DataFrame:
-        return df[meta_cols].copy()
+    st.subheader(f"💾 Cache as {data_type.capitalize()} Data?")
     
-    # Store separate dataframes
-    numeric_matrix = get_numeric_matrix(processed_df, numeric_final)
-    metadata_df = get_metadata(processed_df, meta_cols)
+    col_btn1, col_btn2 = st.columns([1, 4])
+    with col_btn1:
+        if st.button(f"✅ Confirm & Cache", type="primary"):
+            st.session_state[existing_key] = processed_df.copy()
+            # Reset for next upload
+            st.session_state.uploaded_df = None
+            st.session_state.processed_df = None
+            st.session_state.column_names = {}
+            st.session_state.upload_key += 1  # Clear file uploader
+            st.success(f"{data_type.capitalize()} data cached!")
+            st.rerun()
     
-    tab1, tab2 = st.tabs(["Numeric Matrix", "Metadata"])
-    with tab1:
-        st.dataframe(numeric_matrix.head(50), use_container_width=True)
-        st.download_button("Download Numeric Matrix", numeric_matrix.to_csv(index=False), "numeric_matrix.csv")
-    with tab2:
-        st.dataframe(metadata_df.head(50), use_container_width=True)
-        st.download_button("Download Metadata", metadata_df.to_csv(index=False), "metadata.csv")
+    with col_btn2:
+        if st.button("❌ Cancel"):
+            st.session_state.uploaded_df = None
+            st.session_state.processed_df = None
+            st.session_state.column_names = {}
+            st.session_state.upload_key += 1
+            st.rerun()
 
 else:
     st.info("👆 Upload a CSV file to begin")
+
+# --- Display Cached Data (below uploader) ---
+if st.session_state.protein_data is not None or st.session_state.peptide_data is not None:
+    st.divider()
+    st.subheader("📦 Cached Datasets")
+    
+    tab1, tab2 = st.tabs(["Protein Data", "Peptide Data"])
+    
+    with tab1:
+        if st.session_state.protein_data is not None:
+            st.dataframe(st.session_state.protein_data.head(50), use_container_width=True)
+            if st.button("🗑️ Clear Protein Data"):
+                st.session_state.protein_data = None
+                st.rerun()
+        else:
+            st.caption("No protein data uploaded yet")
+    
+    with tab2:
+        if st.session_state.peptide_data is not None:
+            st.dataframe(st.session_state.peptide_data.head(50), use_container_width=True)
+            if st.button("🗑️ Clear Peptide Data"):
+                st.session_state.peptide_data = None
+                st.rerun()
+        else:
+            st.caption("No peptide data uploaded yet")
