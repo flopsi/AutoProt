@@ -411,6 +411,8 @@ def config_fragment():
             st.session_state[species_key] = species_col_to_use
             st.session_state[seq_key] = peptide_seq_col
             st.session_state[mask_key] = missing_mask
+            st.session_state[species_key] = "_extracted_species"  # Always use extracted
+
 
             reset_upload_state()
             
