@@ -235,4 +235,105 @@ def compute_permanova(df_json: str, numeric_cols: list[str], n_perm: int = 999) 
         R2 = ss_between / ss_total if ss_total > 0 else 0
         return F, R2
 
-    F_obs, R2
+    F_obs, R2 = f_stat(dist_matrix, conditions)
+    f_perms = [f_stat(dist_matrix, np.random.permutation(conditions))[0] for _ in range(n_perm)]
+    p_val = (np.sum(np.array(f_perms) >= F_obs) + 1) / (n_perm + 1)
+
+    return {"F": F_obs, "p": p_val, "R2": R2}
+
+
+# -----------------------
+# Page logic
+# -----------------------
+st.markdown("## Exploratory data analysis")
+
+protein_model = st.session_state.get("protein_model")
+peptide_model = st.session_state.get("peptide_model")
+protein_idx = st.session_state.get("protein_index_col")
+peptide_idx = st.session_state.get("peptide_index_col")
+
+if protein_model is None and peptide_model is None:
+    st.warning("No data cached. Please upload data on the Data Upload page first.")
+    render_navigation(back_page="pages/1_Data_Upload.py", next_page=None)
+    render_footer()
+    st.stop()
+
+tab_protein, tab_peptide = st.tabs(["Protein data", "Peptide data"])
+
+
+def render_eda(model: MSData | None, index_col: str | None, label: str):
+    if model is None:
+        st.info(f"No {label} data uploaded yet")
+        return
+
+    numeric_cols = model.numeric_cols
+    df_json = model.raw_filled[numeric_cols].to_json()
+    mask = st.session_state.get(f"{label}_missing_mask")
+    mask_json = (mask if mask is not None else pd.DataFrame(False, index=model.raw_filled.index, columns=numeric_cols)).to_json()
+
+    st.caption(f"**{len(model.raw_filled):,} {label}s** × **{len(numeric_cols)} samples** | **{model.missing_count:,} missing cells** (NaN/0/1)")
+
+    # Row 1: Heatmap + missing
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        fig_heat = create_intensity_heatmap(df_json, index_col, numeric_cols)
+        st.plotly_chart(fig_heat, width='stretch', key=f"heatmap_{label}")
+    with col2:
+        fig_bar = create_missing_distribution_chart(mask_json, label)
+        st.plotly_chart(fig_bar, width='stretch', key=f"missing_{label}")
+
+    st.markdown("---")
+
+    # Row 2: Violin
+    st.markdown("### Sample distributions (all conditions)")
+    fig_violin = create_violin_plot(df_json, numeric_cols)
+    st.plotly_chart(fig_violin, width='stretch', key=f"violin_{label}")
+
+    st.markdown("---")
+
+    # Row 3: PCA + PERMANOVA
+    st.markdown("### Variance analysis")
+    st.caption("PCA clustering and PERMANOVA test for biological variance (conditions = first letter of sample).")
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        fig_pca = create_pca_plot(df_json, numeric_cols)
+        st.plotly_chart(fig_pca, width='stretch', key=f"pca_{label}")
+    with col2:
+        st.markdown("#### PERMANOVA results")
+        permanova = compute_permanova(df_json, numeric_cols)
+        st.metric("Pseudo-F", f"{permanova['F']:.2f}" if not np.isnan(permanova['F']) else "N/A")
+        st.metric("R² (var explained)", f"{permanova['R2']*100:.1f}%" if not np.isnan(permanova['R2']) else "N/A")
+        st.metric("p-value", f"{permanova['p']:.4f}" if not np.isnan(permanova['p']) else "N/A")
+        if permanova['p'] < 0.05:
+            st.success("✓ Significant biological variance (p < 0.05)")
+        elif not np.isnan(permanova['p']):
+            st.warning("No significant biological variance detected")
+
+    st.markdown("---")
+
+    # Row 4: Normality
+    st.markdown("### Normality analysis")
+    st.caption("Testing which transformation best normalizes intensity distributions.")
+
+    stats_df = analyze_transformations(df_json, numeric_cols)
+    best_idx = stats_df["W"].idxmax()
+    best_transform = stats_df.loc[best_idx, "Transformation"]
+
+    styled_df = stats_df.style.apply(
+        lambda row: ["background-color: #B5BD00; color: white"] * len(row) if row["Transformation"] == best_transform else [""] * len(row),
+        axis=1
+    ).format({"Kurtosis": "{:.3f}", "Skewness": "{:.3f}", "W": "{:.4f}", "p": "{:.2e}"})
+
+    st.dataframe(styled_df, width='stretch', hide_index=True)
+    st.success(f"Recommended: **{best_transform}** (Shapiro W = {stats_df.loc[best_idx, 'W']:.4f})")
+
+
+with tab_protein:
+    render_eda(protein_model, protein_idx, "protein")
+
+with tab_peptide:
+    render_eda(peptide_model, peptide_idx, "peptide")
+
+render_navigation(back_page="pages/1_Data_Upload.py", next_page=None)
+render_footer()
