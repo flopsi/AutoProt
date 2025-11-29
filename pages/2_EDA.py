@@ -8,7 +8,7 @@ from sklearn.preprocessing import PowerTransformer, QuantileTransformer, Standar
 from sklearn.decomposition import PCA
 
 from components import inject_custom_css, render_header, render_navigation, render_footer, COLORS
-from pages_1_Data_Upload import MSData  # or wherever MSData is defined
+from 1_Data_Upload import MSData  # or wherever MSData is defined
 
 st.set_page_config(
     page_title="EDA | Thermo Fisher Scientific",
