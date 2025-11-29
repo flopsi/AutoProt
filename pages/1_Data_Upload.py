@@ -145,8 +145,8 @@ if uploaded_file:
         st.session_state.original_numeric_cols = selected_numeric
         st.session_state.column_renames = auto_rename_columns(selected_numeric)
     
-        original_numeric_cols = st.session_state.original_numeric_cols
-        non_numeric_cols = [c for c in raw_df.columns if c not in original_numeric_cols]
+    original_numeric_cols = st.session_state.original_numeric_cols
+    non_numeric_cols = [c for c in raw_df.columns if c not in original_numeric_cols]
 
 
     @st.fragment
