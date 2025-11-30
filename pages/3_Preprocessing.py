@@ -89,19 +89,14 @@ def create_peptides_per_protein_plot(ppp_df: pd.DataFrame) -> go.Figure:
     if ppp_df.empty:
         return None
     
-    # Get species in order
     all_species = ppp_df["Species"].unique()
     species_list = [s for s in SPECIES_ORDER if s in all_species]
-    
-    # Get unique samples
     samples = sorted(ppp_df["Sample"].unique())
     
     fig = go.Figure()
     
     for species in species_list:
         species_data = ppp_df[ppp_df["Species"] == species]
-        
-        # Create grouped data for each sample
         x_data = []
         y_data = []
         
@@ -110,29 +105,39 @@ def create_peptides_per_protein_plot(ppp_df: pd.DataFrame) -> go.Figure:
             x_data.extend([sample] * len(sample_data))
             y_data.extend(sample_data)
         
-        fig.add_trace(go.violin(
+        fig.add_trace(go.Box(
             y=y_data,
             x=x_data,
-            color=SPECIES_COLORS.get(species),
-            box=True, 
-            points=False,
+            name=species,
+            marker_color=SPECIES_COLORS.get(species, "#808080"),
+            boxmean='sd',
+            line=dict(width=2),
         ))
     
     fig.update_layout(
         title="Peptides per protein by species and sample",
         xaxis_title="Sample",
         yaxis_title="Peptides per protein",
-        height=450,
+        height=500,
         plot_bgcolor="#FFFFFF",
         paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Arial", color="#54585A"),
+        font=dict(family="Arial", size=12, color="#54585A"),
         boxmode='group',
-        boxgap=0.3,  # Gap between boxes in same position
-        boxgroupgap=0.1,  # Gap between groups
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        boxgap=0.2,
+        boxgroupgap=0.1,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            font=dict(size=11),
+        ),
+        margin=dict(l=60, r=40, t=80, b=60),
     )
     
     return fig
+
 
 
 
@@ -316,24 +321,30 @@ def render_preprocessing(model: MSData | None, species_col: str | None, label: s
                 box_visible=True,
                 meanline_visible=True,
                 fillcolor=TF_CHART_COLORS[i % len(TF_CHART_COLORS)],
-                opacity=0.6,
+                opacity=0.7,
+                line=dict(width=2),
+                points=False,
             ))
     
     fig.update_layout(
         title="CV% distribution per condition (capped at 100% for display)",
         yaxis_title="CV%",
         xaxis_title="Condition",
-        height=400,
+        height=500,
         plot_bgcolor="#FFFFFF",
         paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Arial", color="#54585A"),
+        font=dict(family="Arial", size=12, color="#54585A"),
         showlegend=False,
+        violingap=0.2,
+        violinmode='group',
+        margin=dict(l=60, r=40, t=80, b=60),
     )
     
-    fig.add_hline(y=20, line_dash="dash", line_color="orange", annotation_text="20% threshold")
-    fig.add_hline(y=15, line_dash="dash", line_color="green", annotation_text="15% threshold")
+    fig.add_hline(y=20, line_dash="dash", line_color="orange", line_width=2, annotation_text="20% threshold", annotation_position="right")
+    fig.add_hline(y=15, line_dash="dash", line_color="green", line_width=2, annotation_text="15% threshold", annotation_position="right")
     
     st.plotly_chart(fig, width="stretch", key=f"cv_violin_{label}")
+
     
     # Show count of proteins >100% CV
     total_proteins = cv_per_condition.notna().any(axis=1).sum()
