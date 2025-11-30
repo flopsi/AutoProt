@@ -406,11 +406,10 @@ def render_preprocessing(model: MSData | None, species_col: str | None, label: s
             species_col,
             numeric_cols
         )
-
         
         if not ppp_df.empty:
             # Summary stats
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
                 st.metric("Mean peptides/protein", f"{ppp_df['Peptide_Count'].mean():.1f}")
             with col2:
@@ -418,11 +417,89 @@ def render_preprocessing(model: MSData | None, species_col: str | None, label: s
             with col3:
                 single_peptide_pct = (ppp_df['Peptide_Count'] == 1).sum() / len(ppp_df) * 100
                 st.metric("Single-peptide proteins", f"{single_peptide_pct:.1f}%")
+            with col4:
+                above_15 = (ppp_df['Peptide_Count'] > 15).sum()
+                st.metric("Proteins >15 peptides", f"{above_15}")
             
-            # Box plot
-            fig_ppp = create_peptides_per_protein_plot(ppp_df)
-            if fig_ppp:
-                st.plotly_chart(fig_ppp, width="stretch", key=f"ppp_{label}")
+            # Box plot (capped at 15)
+            ppp_df_capped = ppp_df[ppp_df['Peptide_Count'] <= 15].copy()
+            
+            if not ppp_df_capped.empty:
+                fig_ppp = create_peptides_per_protein_plot(ppp_df_capped)
+                if fig_ppp:
+                    fig_ppp.update_layout(title="Peptides per protein by species and sample (capped at 15)")
+                    st.plotly_chart(fig_ppp, width="stretch", key=f"ppp_{label}")
+                
+                excluded_pct = (len(ppp_df) - len(ppp_df_capped)) / len(ppp_df) * 100
+                if excluded_pct > 0:
+                    st.caption(f"ℹ️ {excluded_pct:.1f}% of proteins have >15 peptides (excluded from plot)")
+            
+            st.markdown("---")
+            
+            # Species comparison analysis
+            st.markdown("#### Peptides per Protein: Species Comparison")
+            
+            species_stats = ppp_df.groupby('Species')['Peptide_Count'].agg([
+                ('Mean', 'mean'),
+                ('Median', 'median'),
+                ('Std', 'std'),
+                ('Min', 'min'),
+                ('Max', 'max'),
+                ('Count', 'count'),
+            ]).round(2)
+            
+            # Add percentage columns
+            total = species_stats['Count'].sum()
+            species_stats['% of Total'] = (species_stats['Count'] / total * 100).round(1)
+            
+            # Single peptide proteins per species
+            single_pep = ppp_df[ppp_df['Peptide_Count'] == 1].groupby('Species').size()
+            species_stats['Single-peptide %'] = (single_pep / species_stats['Count'] * 100).round(1).fillna(0)
+            
+            # Reorder columns
+            species_stats = species_stats[['Count', '% of Total', 'Mean', 'Median', 'Std', 'Min', 'Max', 'Single-peptide %']]
+            
+            # Sort by species order
+            species_stats = species_stats.reindex([s for s in SPECIES_ORDER if s in species_stats.index])
+            
+            st.dataframe(
+                species_stats.style.background_gradient(subset=['Mean', 'Median'], cmap='RdYlGn', vmin=1, vmax=10),
+                width="stretch"
+            )
+            
+            # Statistical comparison
+            st.markdown("#### Statistical Comparison (ANOVA)")
+            
+            if len(ppp_df['Species'].unique()) >= 2:
+                from scipy.stats import f_oneway, kruskal
+                
+                species_groups = [group['Peptide_Count'].values for name, group in ppp_df.groupby('Species')]
+                
+                # ANOVA (parametric)
+                f_stat, p_anova = f_oneway(*species_groups)
+                
+                # Kruskal-Wallis (non-parametric)
+                h_stat, p_kruskal = kruskal(*species_groups)
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("ANOVA F-statistic", f"{f_stat:.2f}")
+                    st.metric("ANOVA p-value", f"{p_anova:.4f}")
+                    if p_anova < 0.05:
+                        st.success("✓ Significant difference between species (p < 0.05)")
+                    else:
+                        st.info("No significant difference between species")
+                
+                with col2:
+                    st.metric("Kruskal-Wallis H", f"{h_stat:.2f}")
+                    st.metric("Kruskal p-value", f"{p_kruskal:.4f}")
+                    if p_kruskal < 0.05:
+                        st.success("✓ Significant difference (non-parametric test)")
+                    else:
+                        st.info("No significant difference (non-parametric test)")
+                
+                if p_anova < 0.05 or p_kruskal < 0.05:
+                    st.caption("💡 Significant differences suggest species-specific protein coverage or identification rates.")
         else:
             st.info("No peptide-to-protein mapping found. Check that protein IDs match between datasets.")
 
