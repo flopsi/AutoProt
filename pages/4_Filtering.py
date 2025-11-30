@@ -558,6 +558,8 @@ for row in range(n_rows):
 
 st.markdown("---")
 
+st.markdown("---")
+
 # CONTAINER 5: Updated Stats with Arrows
 st.markdown("### After Filtering")
 
@@ -575,51 +577,12 @@ if use_intensity:
 filter_str = "**Active filters:** " + " | ".join(active_filters) if active_filters else "**No filters active** (showing all proteins)"
 st.caption(filter_str)
 
-# Compute filtered stats
-filtered_stats = compute_stats(filtered_df, protein_model, numeric_cols, protein_species_col)
-
-# Display with arrows
-def get_arrow(before, after, higher_is_better=True):
-    if np.isnan(before) or np.isnan(after):
-        return "→"
-    change = after - before
-    if change > 0:
-        return "↑" if higher_is_better else "↓"
-    elif change < 0:
-        return "↓" if higher_is_better else "↑"
-    else:
-        return "→"
-
-col1, col2, col3, col4, col5, col6 = st.columns(6)
+# Only compute stats when button clicked
+col1, col2, col3 = st.columns([1, 1, 2])
 
 with col1:
-    arrow = get_arrow(initial_stats['n_proteins'], filtered_stats['n_proteins'], higher_is_better=True)
-    st.metric(f"Proteins {arrow}", f"{filtered_stats['n_proteins']:,}")
-
-with col2:
-    species_str = ", ".join([f"{s}:{filtered_stats['species_counts'].get(s, 0)}" for s in SPECIES_ORDER if s in filtered_stats['species_counts']])
-    st.metric("Species Count", species_str if species_str else "N/A")
-
-with col3:
-    arrow = get_arrow(initial_stats['cv_mean'], filtered_stats['cv_mean'], higher_is_better=False)
-    st.metric(f"Mean CV% {arrow}", f"{filtered_stats['cv_mean']:.1f}" if not np.isnan(filtered_stats['cv_mean']) else "N/A")
-
-with col4:
-    arrow = get_arrow(initial_stats['cv_median'], filtered_stats['cv_median'], higher_is_better=False)
-    st.metric(f"Median CV% {arrow}", f"{filtered_stats['cv_median']:.1f}" if not np.isnan(filtered_stats['cv_median']) else "N/A")
-
-with col5:
-    arrow = get_arrow(initial_stats['permanova_f'], filtered_stats['permanova_f'], higher_is_better=True)
-    st.metric(f"PERMANOVA F {arrow}", f"{filtered_stats['permanova_f']:.2f}" if not np.isnan(filtered_stats['permanova_f']) else "N/A")
-
-with col6:
-    arrow = get_arrow(initial_stats['shapiro_w'], filtered_stats['shapiro_w'], higher_is_better=True)
-    st.metric(f"Shapiro W {arrow}", f"{filtered_stats['shapiro_w']:.4f}" if not np.isnan(filtered_stats['shapiro_w']) else "N/A")
-
-col1, col2 = st.columns([2, 3])
-with col1:
-    if st.button("📊 Recalculate Stats", key="recalc_stats_btn"):
-        st.rerun()
+    if st.button("📊 Calculate Stats", type="primary", key="calc_stats_btn"):
+        st.session_state.compute_stats_now = True
 
 with col2:
     if st.button("💾 Export Filtered Data", key="export_btn"):
@@ -630,6 +593,53 @@ with col2:
             file_name="filtered_proteins.csv",
             mime="text/csv",
         )
+
+if "compute_stats_now" in st.session_state and st.session_state.compute_stats_now:
+    with st.spinner("Computing stats..."):
+        filtered_stats = compute_stats(filtered_df, protein_model, numeric_cols, protein_species_col)
+    
+    st.session_state.compute_stats_now = False
+    
+    # Display with arrows
+    def get_arrow(before, after, higher_is_better=True):
+        if np.isnan(before) or np.isnan(after):
+            return "→"
+        change = after - before
+        if change > 0:
+            return "↑" if higher_is_better else "↓"
+        elif change < 0:
+            return "↓" if higher_is_better else "↑"
+        else:
+            return "→"
+
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
+
+    with col1:
+        arrow = get_arrow(initial_stats['n_proteins'], filtered_stats['n_proteins'], higher_is_better=True)
+        st.metric(f"Proteins {arrow}", f"{filtered_stats['n_proteins']:,}")
+
+    with col2:
+        species_str = ", ".join([f"{s}:{filtered_stats['species_counts'].get(s, 0)}" for s in SPECIES_ORDER if s in filtered_stats['species_counts']])
+        st.metric("Species Count", species_str if species_str else "N/A")
+
+    with col3:
+        arrow = get_arrow(initial_stats['cv_mean'], filtered_stats['cv_mean'], higher_is_better=False)
+        st.metric(f"Mean CV% {arrow}", f"{filtered_stats['cv_mean']:.1f}" if not np.isnan(filtered_stats['cv_mean']) else "N/A")
+
+    with col4:
+        arrow = get_arrow(initial_stats['cv_median'], filtered_stats['cv_median'], higher_is_better=False)
+        st.metric(f"Median CV% {arrow}", f"{filtered_stats['cv_median']:.1f}" if not np.isnan(filtered_stats['cv_median']) else "N/A")
+
+    with col5:
+        arrow = get_arrow(initial_stats['permanova_f'], filtered_stats['permanova_f'], higher_is_better=True)
+        st.metric(f"PERMANOVA F {arrow}", f"{filtered_stats['permanova_f']:.2f}" if not np.isnan(filtered_stats['permanova_f']) else "N/A")
+
+    with col6:
+        arrow = get_arrow(initial_stats['shapiro_w'], filtered_stats['shapiro_w'], higher_is_better=True)
+        st.metric(f"Shapiro W {arrow}", f"{filtered_stats['shapiro_w']:.4f}" if not np.isnan(filtered_stats['shapiro_w']) else "N/A")
+else:
+    st.info("Click 'Calculate Stats' to compute quality metrics for filtered data.")
+
 
 render_navigation(back_page="pages/3_Preprocessing.py", next_page=None)
 render_footer()
