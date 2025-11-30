@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from dataclasses import dataclass
 from typing import List
-import re  # ADD THIS LINE
+from scipy.stats import f_oneway, kruskal
 
 from components import inject_custom_css, render_header, render_navigation, render_footer, COLORS
 
@@ -43,9 +43,9 @@ class MSData:
 TF_CHART_COLORS = ["#262262", "#A6192E", "#EA7600", "#F1B434", "#B5BD00", "#9BD3DD"]
 
 SPECIES_COLORS = {
-    "HUMAN": "#199d76",  # Sky blue
-    "ECOLI": "#7570b2",  # Teal
-    "YEAST": "#d85f02",  # Orange
+    "HUMAN": "#87CEEB",  # Sky blue
+    "ECOLI": "#008B8B",  # Teal
+    "YEAST": "#FF8C00",  # Orange
     "MOUSE": "#9370DB",  # Purple
     "UNKNOWN": "#808080",  # Gray
 }
@@ -81,6 +81,126 @@ def compute_cv_per_condition(df: pd.DataFrame, numeric_cols: list[str]) -> pd.Da
             cv_results[f"CV_{cond}"] = (std_vals / mean_vals * 100).replace([np.inf, -np.inf], np.nan)
     
     return pd.DataFrame(cv_results, index=df.index)
+
+
+def compute_species_cv_per_condition(df: pd.DataFrame, numeric_cols: list[str], species_col: str) -> pd.DataFrame:
+    """Compute CV per condition for each species separately (within replicates only)."""
+    if species_col not in df.columns:
+        return pd.DataFrame()
+    
+    condition_map = extract_conditions(numeric_cols)
+    conditions = {}
+    for col in numeric_cols:
+        cond = condition_map[col]
+        conditions.setdefault(cond, []).append(col)
+    
+    species_list = df[species_col].dropna().unique()
+    
+    results = []
+    for species in species_list:
+        species_df = df[df[species_col] == species]
+        for cond, cols in conditions.items():
+            if len(cols) >= 2:
+                mean_vals = species_df[cols].mean(axis=1)
+                std_vals = species_df[cols].std(axis=1)
+                cvs = (std_vals / mean_vals * 100).replace([np.inf, -np.inf], np.nan)
+                valid_cvs = cvs.dropna()
+                if len(valid_cvs) > 0:
+                    results.append({
+                        "Species": species,
+                        "Condition": cond,
+                        "Mean_CV": valid_cvs.mean(),
+                        "Median_CV": valid_cvs.median(),
+                        "Count": len(valid_cvs),
+                    })
+    
+    return pd.DataFrame(results)
+
+
+@st.cache_data
+def create_stacked_species_barplot(df: pd.DataFrame, numeric_cols: list[str], species_col: str) -> go.Figure:
+    """Create stacked bar plot showing protein count per species for each sample."""
+    if species_col not in df.columns:
+        return None
+    
+    all_species = df[species_col].dropna().unique()
+    species_list = [s for s in SPECIES_ORDER if s in all_species]
+    
+    data = []
+    for species in species_list:
+        counts = []
+        species_df = df[df[species_col] == species]
+        for col in numeric_cols:
+            non_missing = species_df[col].notna() & (species_df[col] > 1.0)
+            counts.append(non_missing.sum())
+        
+        data.append(go.Bar(
+            name=species,
+            x=numeric_cols,
+            y=counts,
+            marker_color=SPECIES_COLORS.get(species, "#808080"),
+        ))
+    
+    fig = go.Figure(data=data)
+    fig.update_layout(
+        barmode='stack',
+        title="Protein count per species across samples",
+        xaxis_title="Sample",
+        yaxis_title="Protein count",
+        height=500,
+        plot_bgcolor="#FFFFFF",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Arial", size=12, color="#54585A"),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            font=dict(size=11),
+        ),
+        margin=dict(l=60, r=40, t=80, b=60),
+    )
+    
+    return fig
+
+
+@st.cache_data
+def compute_peptides_per_protein(
+    protein_df: pd.DataFrame,
+    peptide_df: pd.DataFrame,
+    protein_idx: str,
+    peptide_idx: str,
+    protein_species_col: str,
+    numeric_cols: list[str]
+) -> pd.DataFrame:
+    """Count peptides per protein using protein group counts."""
+    if protein_idx not in protein_df.columns or peptide_idx not in peptide_df.columns:
+        return pd.DataFrame()
+    
+    if protein_species_col not in protein_df.columns:
+        return pd.DataFrame()
+    
+    results = []
+    
+    for sample in numeric_cols:
+        if sample not in peptide_df.columns:
+            continue
+        
+        detected_peptides = peptide_df[peptide_df[sample] > 1.0]
+        peptide_counts = detected_peptides[peptide_idx].value_counts()
+        
+        for protein_id, count in peptide_counts.items():
+            protein_match = protein_df[protein_df[protein_idx] == protein_id]
+            if len(protein_match) > 0:
+                species = protein_match[protein_species_col].iloc[0]
+                results.append({
+                    "Sample": sample,
+                    "Species": species,
+                    "Peptide_Count": count,
+                })
+    
+    return pd.DataFrame(results)
 
 
 @st.cache_data
@@ -134,134 +254,6 @@ def create_peptides_per_protein_plot(ppp_df: pd.DataFrame) -> go.Figure:
             font=dict(size=11),
         ),
         margin=dict(l=60, r=40, t=80, b=60),
-    )
-    
-    return fig
-
-
-
-
-@st.cache_data
-def create_stacked_species_barplot(df: pd.DataFrame, numeric_cols: list[str], species_col: str) -> go.Figure:
-    """Create stacked bar plot showing protein count per species for each sample."""
-    if species_col not in df.columns:
-        return None
-    
-    # Get species in desired order
-    all_species = df[species_col].dropna().unique()
-    species_list = [s for s in SPECIES_ORDER if s in all_species]
-    
-    data = []
-    for species in species_list:
-        counts = []
-        species_df = df[df[species_col] == species]
-        for col in numeric_cols:
-            non_missing = species_df[col].notna() & (species_df[col] > 1.0)
-            counts.append(non_missing.sum())
-        
-        data.append(go.Bar(
-            name=species,
-            x=numeric_cols,
-            y=counts,
-            marker_color=SPECIES_COLORS.get(species, "#808080"),
-        ))
-    
-    fig = go.Figure(data=data)
-    fig.update_layout(
-        barmode='stack',
-        title="Protein count per species across samples",
-        xaxis_title="Sample",
-        yaxis_title="Protein count",
-        height=400,
-        plot_bgcolor="#FFFFFF",
-        paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Arial", color="#54585A"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    )
-    
-    return fig
-
-
-@st.cache_data
-def compute_peptides_per_protein(
-    protein_df: pd.DataFrame,
-    peptide_df: pd.DataFrame,
-    protein_idx: str,
-    peptide_idx: str,
-    protein_species_col: str,
-    numeric_cols: list[str]
-) -> pd.DataFrame:
-    """Count peptides per protein using protein group counts."""
-    if protein_idx not in protein_df.columns or peptide_idx not in peptide_df.columns:
-        return pd.DataFrame()
-    
-    if protein_species_col not in protein_df.columns:
-        return pd.DataFrame()
-    
-    results = []
-    
-    for sample in numeric_cols:
-        if sample not in peptide_df.columns:
-            continue
-        
-        # Get detected peptides in this sample
-        detected_peptides = peptide_df[peptide_df[sample] > 1.0]
-        
-        # Count peptides per protein group
-        peptide_counts = detected_peptides[peptide_idx].value_counts()
-        
-        # Match with protein species
-        for protein_id, count in peptide_counts.items():
-            # Find species for this protein
-            protein_match = protein_df[protein_df[protein_idx] == protein_id]
-            if len(protein_match) > 0:
-                species = protein_match[protein_species_col].iloc[0]
-                results.append({
-                    "Sample": sample,
-                    "Species": species,
-                    "Peptide_Count": count,
-                })
-    
-    return pd.DataFrame(results)
-
-
-@st.cache_data
-def create_peptides_per_protein_plot(ppp_df: pd.DataFrame) -> go.Figure:
-    """Create box plot of peptides per protein by species and sample."""
-    if ppp_df.empty:
-        return None
-    
-    # Get species in order
-    all_species = ppp_df["Species"].unique()
-    species_list = [s for s in SPECIES_ORDER if s in all_species]
-    
-    fig = go.Figure()
-    
-    for species in species_list:
-        species_data = ppp_df[ppp_df["Species"] == species]
-        
-        for sample in sorted(species_data["Sample"].unique()):
-            sample_data = species_data[species_data["Sample"] == sample]
-            
-            fig.add_trace(go.Box(
-                y=sample_data["Peptide_Count"],
-                name=f"{species}",
-                x=[sample] * len(sample_data),
-                marker_color=SPECIES_COLORS.get(species, "#808080"),
-                legendgroup=species,
-                showlegend=(sample == sorted(species_data["Sample"].unique())[0]),
-            ))
-    
-    fig.update_layout(
-        title="Peptides per protein by species and sample",
-        xaxis_title="Sample",
-        yaxis_title="Peptides per protein",
-        height=400,
-        plot_bgcolor="#FFFFFF",
-        paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Arial", color="#54585A"),
-        boxmode='group',
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
     
     return fig
@@ -344,7 +336,6 @@ def render_preprocessing(model: MSData | None, species_col: str | None, label: s
     fig.add_hline(y=15, line_dash="dash", line_color="green", line_width=2, annotation_text="15% threshold", annotation_position="right")
     
     st.plotly_chart(fig, width="stretch", key=f"cv_violin_{label}")
-
     
     # Show count of proteins >100% CV
     total_proteins = cv_per_condition.notna().any(axis=1).sum()
@@ -501,8 +492,6 @@ def render_preprocessing(model: MSData | None, species_col: str | None, label: s
             st.markdown("#### Statistical Comparison (ANOVA)")
             
             if len(ppp_df['Species'].unique()) >= 2:
-                from scipy.stats import f_oneway, kruskal
-                
                 species_groups = [group['Peptide_Count'].values for name, group in ppp_df.groupby('Species')]
                 
                 # ANOVA (parametric)
@@ -532,7 +521,6 @@ def render_preprocessing(model: MSData | None, species_col: str | None, label: s
                     st.caption("💡 Significant differences suggest species-specific protein coverage or identification rates.")
         else:
             st.info("No peptide-to-protein mapping found. Check that protein IDs match between datasets.")
-
 
 
 with tab_protein:
