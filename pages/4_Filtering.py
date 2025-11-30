@@ -133,10 +133,18 @@ def apply_filters(
     if "Peptide_Count" in filtered.columns:
         filtered = filtered[filtered["Peptide_Count"] >= min_peptides]
     
-    # Filter 3: CV cutoff
-    cv_data = compute_cv_per_condition(filtered[numeric_cols], numeric_cols)
-    cv_mask = cv_data.min(axis=1) <= cv_cutoff
-    filtered = filtered[cv_mask]
+    # CONTAINER 3: Filters with Toggle Switches
+    st.markdown("### Filter Settings")
+    
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    
+    with col1:
+        use_peptides = st.checkbox("Min peptides/protein", value=True, key="use_peptides_cb")
+        if use_peptides:
+            st.session_state.filter_min_peptides = st.slider(
+                "Peptides",
+                min_value=1
+
     
     # Filter 4: Max missing per condition
     condition_map = extract_conditions(numeric_cols)
