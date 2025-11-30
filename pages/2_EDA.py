@@ -477,5 +477,5 @@ with tab_protein:
 with tab_peptide:
     render_eda(peptide_model, peptide_idx, peptide_species_col, "peptide")
 
-render_navigation(back_page="pages/1_Data_Upload.py", next_page=None)
+render_navigation(back_page="pages/1_Data_Upload.py", next_page="pages/3_Preprocessing.py")
 render_footer()
