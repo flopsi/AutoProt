@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from dataclasses import dataclass
 from typing import List
+import re  # ADD THIS LINE
 
 from components import inject_custom_css, render_header, render_navigation, render_footer, COLORS
 
