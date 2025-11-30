@@ -110,12 +110,12 @@ def create_peptides_per_protein_plot(ppp_df: pd.DataFrame) -> go.Figure:
             x_data.extend([sample] * len(sample_data))
             y_data.extend(sample_data)
         
-        fig.add_trace(go.Box(
+        fig.add_trace(go.violin(
             y=y_data,
             x=x_data,
-            name=species,
-            marker_color=SPECIES_COLORS.get(species),
-            boxmean='sd',
+            color=SPECIES_COLORS.get(species),
+            box=True, 
+            points=False,
         ))
     
     fig.update_layout(
