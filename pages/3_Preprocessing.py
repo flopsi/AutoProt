@@ -529,5 +529,5 @@ with tab_protein:
 with tab_peptide:
     render_preprocessing(peptide_model, peptide_species_col, "peptide")
 
-render_navigation(back_page="pages/2_EDA.py", next_page=None)
+render_navigation(back_page="pages/2_EDA.py", next_page="pages/4_Filtering.py)
 render_footer()
