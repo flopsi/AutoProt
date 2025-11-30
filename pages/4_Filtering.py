@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import plotly.express as px
 from dataclasses import dataclass
 from typing import List
-from scipy.stats import f_oneway, kruskal, shapiro
+from scipy.stats import shapiro
+from scipy.spatial.distance import pdist, squareform
 
 from components import inject_custom_css, render_header, render_navigation, render_footer, COLORS
 
@@ -39,8 +39,6 @@ class MSData:
     numeric_cols: List[str]
     transforms: TransformsCache
 
-
-TF_CHART_COLORS = ["#262262", "#A6192E", "#EA7600", "#F1B434", "#B5BD00", "#9BD3DD"]
 
 SPECIES_COLORS = {
     "HUMAN": "#87CEEB",
@@ -126,53 +124,47 @@ def apply_filters(
     
     # Filter 1: Species
     if species_col and species_col in model.raw.columns and selected_species:
-        species_mask = model.raw[species_col].isin(selected_species)
+        species_mask = model.raw.loc[filtered.index, species_col].isin(selected_species)
         filtered = filtered[species_mask]
     
     # Filter 2: Min peptides (if column exists)
     if "Peptide_Count" in filtered.columns:
         filtered = filtered[filtered["Peptide_Count"] >= min_peptides]
     
-    # CONTAINER 3: Filters with Toggle Switches
-    st.markdown("### Filter Settings")
-    
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
-    
-    with col1:
-        use_peptides = st.checkbox("Min peptides/protein", value=True, key="use_peptides_cb")
-        if use_peptides:
-            st.session_state.filter_min_peptides = st.slider(
-                "Peptides",
-                min_value=1
-
+    # Filter 3: CV cutoff
+    if len(filtered) > 0:
+        cv_data = compute_cv_per_condition(filtered[numeric_cols], numeric_cols)
+        if not cv_data.empty:
+            cv_mask = cv_data.min(axis=1) <= cv_cutoff
+            filtered = filtered[cv_mask]
     
     # Filter 4: Max missing per condition
-    condition_map = extract_conditions(numeric_cols)
-    conditions = {}
-    for col in numeric_cols:
-        cond = condition_map[col]
-        conditions.setdefault(cond, []).append(col)
-    
-    # Count max missing in any condition
-    max_missing_allowed = {}
-    for cond, cols in conditions.items():
-        max_missing_allowed[cond] = int(np.ceil(len(cols) * max_missing_ratio))
-    
-    valid_rows = []
-    for idx, row in filtered.iterrows():
-        keep = True
+    if len(filtered) > 0:
+        condition_map = extract_conditions(numeric_cols)
+        conditions = {}
+        for col in numeric_cols:
+            cond = condition_map[col]
+            conditions.setdefault(cond, []).append(col)
+        
+        max_missing_allowed = {}
         for cond, cols in conditions.items():
-            missing_count = (row[cols].isna() | (row[cols] <= 1.0)).sum()
-            if missing_count > max_missing_allowed[cond]:
-                keep = False
-                break
-        if keep:
-            valid_rows.append(idx)
-    
-    filtered = filtered.loc[valid_rows]
+            max_missing_allowed[cond] = int(np.ceil(len(cols) * max_missing_ratio))
+        
+        valid_rows = []
+        for idx, row in filtered.iterrows():
+            keep = True
+            for cond, cols in conditions.items():
+                missing_count = (row[cols].isna() | (row[cols] <= 1.0)).sum()
+                if missing_count > max_missing_allowed[cond]:
+                    keep = False
+                    break
+            if keep:
+                valid_rows.append(idx)
+        
+        filtered = filtered.loc[valid_rows] if valid_rows else pd.DataFrame()
     
     # Filter 5: Intensity range (on transformed data)
-    if intensity_range and intensity_range[0] < intensity_range[1]:
+    if len(filtered) > 0 and intensity_range and intensity_range[0] < intensity_range[1]:
         transform_df = get_transform_data(model, transform_key)
         transform_df = transform_df.loc[filtered.index, numeric_cols]
         
@@ -197,7 +189,6 @@ def compute_stats(df: pd.DataFrame, model: MSData, numeric_cols: list[str], spec
             "shapiro_p": np.nan,
         }
     
-    # Basic stats
     n_proteins = len(df)
     
     species_counts = {}
@@ -206,71 +197,73 @@ def compute_stats(df: pd.DataFrame, model: MSData, numeric_cols: list[str], spec
     
     # CV stats
     cv_data = compute_cv_per_condition(df[numeric_cols], numeric_cols)
-    cv_flat = cv_data.values.flatten()
-    cv_clean = cv_flat[~np.isnan(cv_flat)]
-    cv_mean = cv_clean.mean() if len(cv_clean) > 0 else np.nan
-    cv_median = np.median(cv_clean) if len(cv_clean) > 0 else np.nan
+    if not cv_data.empty:
+        cv_flat = cv_data.values.flatten()
+        cv_clean = cv_flat[~np.isnan(cv_flat)]
+        cv_mean = cv_clean.mean() if len(cv_clean) > 0 else np.nan
+        cv_median = np.median(cv_clean) if len(cv_clean) > 0 else np.nan
+    else:
+        cv_mean = np.nan
+        cv_median = np.nan
     
     # PERMANOVA
     condition_map = extract_conditions(numeric_cols)
     conditions = np.array([condition_map[c] for c in numeric_cols])
     
-    if len(np.unique(conditions)) >= 2:
-        data = df[numeric_cols].T.values
-        from scipy.spatial.distance import pdist, squareform
-        
-        dist_matrix = squareform(pdist(data, metric="euclidean"))
-        n = len(conditions)
-        
-        ss_total = np.sum(dist_matrix**2) / (2 * n)
-        ss_within = 0
-        for g in np.unique(conditions):
-            mask = conditions == g
-            if np.sum(mask) > 1:
-                ss_within += np.sum(dist_matrix[np.ix_(mask, mask)]**2) / (2 * np.sum(mask))
-        
-        ss_between = ss_total - ss_within
-        df_between = len(np.unique(conditions)) - 1
-        df_within = n - len(np.unique(conditions))
-        
-        if df_within > 0 and ss_within > 0:
-            F = (ss_between / df_between) / (ss_within / df_within)
-            f_perms = []
-            for _ in range(999):
-                perm_cond = np.random.permutation(conditions)
-                ss_within_perm = 0
-                for g in np.unique(perm_cond):
-                    mask = perm_cond == g
-                    if np.sum(mask) > 1:
-                        ss_within_perm += np.sum(dist_matrix[np.ix_(mask, mask)]**2) / (2 * np.sum(mask))
-                ss_between_perm = ss_total - ss_within_perm
-                F_perm = (ss_between_perm / df_between) / (ss_within_perm / df_within) if ss_within_perm > 0 else np.nan
-                f_perms.append(F_perm)
-            
-            p_val = (np.sum(np.array(f_perms) >= F) + 1) / (999 + 1)
-            permanova_f = F
-            permanova_p = p_val
-        else:
-            permanova_f = np.nan
-            permanova_p = np.nan
-    else:
-        permanova_f = np.nan
-        permanova_p = np.nan
+    permanova_f = np.nan
+    permanova_p = np.nan
     
-    # Shapiro-Wilk (on mean intensities)
-    mean_vals = df[numeric_cols].mean(axis=1)
-    if len(mean_vals) >= 3:
+    if len(np.unique(conditions)) >= 2 and len(df) >= 3:
         try:
-            sample = np.random.choice(mean_vals.dropna(), min(5000, len(mean_vals)), replace=False)
+            data = df[numeric_cols].T.values
+            dist_matrix = squareform(pdist(data, metric="euclidean"))
+            n = len(conditions)
+            
+            ss_total = np.sum(dist_matrix**2) / (2 * n)
+            ss_within = 0
+            for g in np.unique(conditions):
+                mask = conditions == g
+                if np.sum(mask) > 1:
+                    ss_within += np.sum(dist_matrix[np.ix_(mask, mask)]**2) / (2 * np.sum(mask))
+            
+            ss_between = ss_total - ss_within
+            df_between = len(np.unique(conditions)) - 1
+            df_within = n - len(np.unique(conditions))
+            
+            if df_within > 0 and ss_within > 0:
+                F = (ss_between / df_between) / (ss_within / df_within)
+                f_perms = []
+                for _ in range(999):
+                    perm_cond = np.random.permutation(conditions)
+                    ss_within_perm = 0
+                    for g in np.unique(perm_cond):
+                        mask = perm_cond == g
+                        if np.sum(mask) > 1:
+                            ss_within_perm += np.sum(dist_matrix[np.ix_(mask, mask)]**2) / (2 * np.sum(mask))
+                    ss_between_perm = ss_total - ss_within_perm
+                    if ss_within_perm > 0:
+                        F_perm = (ss_between_perm / df_between) / (ss_within_perm / df_within)
+                        f_perms.append(F_perm)
+                
+                p_val = (np.sum(np.array(f_perms) >= F) + 1) / (999 + 1) if len(f_perms) > 0 else np.nan
+                permanova_f = F
+                permanova_p = p_val
+        except Exception:
+            pass
+    
+    # Shapiro-Wilk
+    shapiro_w = np.nan
+    shapiro_p = np.nan
+    
+    try:
+        mean_vals = df[numeric_cols].mean(axis=1).dropna()
+        if len(mean_vals) >= 3:
+            sample = np.random.choice(mean_vals, min(5000, len(mean_vals)), replace=False)
             W, p = shapiro(sample)
             shapiro_w = W
             shapiro_p = p
-        except Exception:
-            shapiro_w = np.nan
-            shapiro_p = np.nan
-    else:
-        shapiro_w = np.nan
-        shapiro_p = np.nan
+    except Exception:
+        pass
     
     return {
         "n_proteins": n_proteins,
@@ -297,7 +290,7 @@ if protein_model is None:
     st.stop()
 
 numeric_cols = protein_model.numeric_cols
-df_raw = protein_model.raw_filled[numeric_cols]
+df_raw = protein_model.raw_filled[numeric_cols].copy()
 
 # Initialize session state for filters
 if "filter_min_peptides" not in st.session_state:
@@ -325,7 +318,7 @@ with col1:
 
 with col2:
     species_str = ", ".join([f"{s}:{initial_stats['species_counts'].get(s, 0)}" for s in SPECIES_ORDER if s in initial_stats['species_counts']])
-    st.metric("Species Count", species_str)
+    st.metric("Species Count", species_str if species_str else "N/A")
 
 with col3:
     st.metric("Mean CV%", f"{initial_stats['cv_mean']:.1f}" if not np.isnan(initial_stats['cv_mean']) else "N/A")
@@ -350,73 +343,81 @@ with col1:
         st.session_state.filter_species = ["HUMAN", "ECOLI", "YEAST", "MOUSE"]
 
 with col2:
-    if st.checkbox("HUMAN", value="HUMAN" in st.session_state.filter_species, key="human_cb"):
-        if "HUMAN" not in st.session_state.filter_species:
-            st.session_state.filter_species.append("HUMAN")
-    else:
-        if "HUMAN" in st.session_state.filter_species:
-            st.session_state.filter_species.remove("HUMAN")
+    human_cb = st.checkbox("HUMAN", value="HUMAN" in st.session_state.filter_species, key="human_cb")
+    if human_cb and "HUMAN" not in st.session_state.filter_species:
+        st.session_state.filter_species.append("HUMAN")
+    elif not human_cb and "HUMAN" in st.session_state.filter_species:
+        st.session_state.filter_species.remove("HUMAN")
 
 with col3:
-    if st.checkbox("YEAST", value="YEAST" in st.session_state.filter_species, key="yeast_cb"):
-        if "YEAST" not in st.session_state.filter_species:
-            st.session_state.filter_species.append("YEAST")
-    else:
-        if "YEAST" in st.session_state.filter_species:
-            st.session_state.filter_species.remove("YEAST")
+    yeast_cb = st.checkbox("YEAST", value="YEAST" in st.session_state.filter_species, key="yeast_cb")
+    if yeast_cb and "YEAST" not in st.session_state.filter_species:
+        st.session_state.filter_species.append("YEAST")
+    elif not yeast_cb and "YEAST" in st.session_state.filter_species:
+        st.session_state.filter_species.remove("YEAST")
 
 with col4:
-    if st.checkbox("ECOLI", value="ECOLI" in st.session_state.filter_species, key="ecoli_cb"):
-        if "ECOLI" not in st.session_state.filter_species:
-            st.session_state.filter_species.append("ECOLI")
-    else:
-        if "ECOLI" in st.session_state.filter_species:
-            st.session_state.filter_species.remove("ECOLI")
+    ecoli_cb = st.checkbox("ECOLI", value="ECOLI" in st.session_state.filter_species, key="ecoli_cb")
+    if ecoli_cb and "ECOLI" not in st.session_state.filter_species:
+        st.session_state.filter_species.append("ECOLI")
+    elif not ecoli_cb and "ECOLI" in st.session_state.filter_species:
+        st.session_state.filter_species.remove("ECOLI")
 
 with col5:
-    if st.checkbox("MOUSE", value="MOUSE" in st.session_state.filter_species, key="mouse_cb"):
-        if "MOUSE" not in st.session_state.filter_species:
-            st.session_state.filter_species.append("MOUSE")
-    else:
-        if "MOUSE" in st.session_state.filter_species:
-            st.session_state.filter_species.remove("MOUSE")
+    mouse_cb = st.checkbox("MOUSE", value="MOUSE" in st.session_state.filter_species, key="mouse_cb")
+    if mouse_cb and "MOUSE" not in st.session_state.filter_species:
+        st.session_state.filter_species.append("MOUSE")
+    elif not mouse_cb and "MOUSE" in st.session_state.filter_species:
+        st.session_state.filter_species.remove("MOUSE")
 
 st.markdown("---")
 
-# CONTAINER 3: Filters
+# CONTAINER 3: Filters with Toggle Switches
 st.markdown("### Filter Settings")
 
-col1, col2, col3, col4, col5 = st.columns(5)
+col1, col2, col3, col4, col5, col6 = st.columns(6)
 
 with col1:
-    st.session_state.filter_min_peptides = st.slider(
-        "Min peptides/protein",
-        min_value=1,
-        max_value=10,
-        value=st.session_state.filter_min_peptides,
-        key="min_pep_slider"
-    )
+    use_peptides = st.checkbox("Min peptides/protein", value=True, key="use_peptides_cb")
+    if use_peptides:
+        st.session_state.filter_min_peptides = st.slider(
+            "Peptides",
+            min_value=1,
+            max_value=10,
+            value=st.session_state.filter_min_peptides,
+            key="min_pep_slider"
+        )
+    else:
+        st.session_state.filter_min_peptides = 1
 
 with col2:
-    st.session_state.filter_cv_cutoff = st.slider(
-        "CV% cutoff",
-        min_value=5.0,
-        max_value=100.0,
-        value=st.session_state.filter_cv_cutoff,
-        step=5.0,
-        key="cv_slider"
-    )
+    use_cv = st.checkbox("CV% cutoff", value=True, key="use_cv_cb")
+    if use_cv:
+        st.session_state.filter_cv_cutoff = st.slider(
+            "CV%",
+            min_value=5.0,
+            max_value=100.0,
+            value=st.session_state.filter_cv_cutoff,
+            step=5.0,
+            key="cv_slider"
+        )
+    else:
+        st.session_state.filter_cv_cutoff = 1000.0
 
 with col3:
-    ratio_pct = st.slider(
-        "Max missing per condition (%)",
-        min_value=0,
-        max_value=100,
-        value=int(st.session_state.filter_max_missing_ratio * 100),
-        step=10,
-        key="missing_slider"
-    )
-    st.session_state.filter_max_missing_ratio = ratio_pct / 100.0
+    use_missing = st.checkbox("Max missing %", value=True, key="use_missing_cb")
+    if use_missing:
+        ratio_pct = st.slider(
+            "Missing %",
+            min_value=0,
+            max_value=100,
+            value=int(st.session_state.filter_max_missing_ratio * 100),
+            step=10,
+            key="missing_slider"
+        )
+        st.session_state.filter_max_missing_ratio = ratio_pct / 100.0
+    else:
+        st.session_state.filter_max_missing_ratio = 1.0
 
 with col4:
     st.session_state.filter_transform = st.selectbox(
@@ -428,191 +429,55 @@ with col4:
     )
 
 with col5:
-    st.write("")  # Spacer
+    use_intensity = st.checkbox("Intensity range", value=False, key="use_intensity_cb")
+
+with col6:
     st.write("")
-    if st.button("Apply Filters", type="primary", key="apply_filters_btn"):
-        st.session_state.apply_filters = True
 
 st.markdown("---")
 
 # CONTAINER 4: Intensity Histograms
 st.markdown("### Intensity Distribution by Sample")
 
-if "apply_filters" in st.session_state and st.session_state.apply_filters:
-    # Apply filters
-    filtered_df = apply_filters(
-        df_raw,
-        protein_model,
-        numeric_cols,
-        protein_species_col,
-        st.session_state.filter_species,
-        st.session_state.filter_min_peptides,
-        st.session_state.filter_cv_cutoff,
-        st.session_state.filter_max_missing_ratio,
-        None,  # Will set intensity range after viewing initial histograms
-        st.session_state.filter_transform,
-    )
-    
-    # Get transformed data
-    transform_data = get_transform_data(protein_model, st.session_state.filter_transform)
-    
-    # Set intensity range slider
-    col1, col2 = st.columns([4, 1])
-    with col2:
-        min_intensity = transform_data[numeric_cols].min().min()
-        max_intensity = transform_data[numeric_cols].max().max()
-        
-        st.session_state.filter_intensity_range = st.slider(
-            "Intensity range",
-            min_value=float(min_intensity),
-            max_value=float(max_intensity),
-            value=(float(min_intensity), float(max_intensity)),
-            key="intensity_slider"
-        )
-    
-    # Reapply filters with intensity range
-    filtered_df = apply_filters(
-        df_raw,
-        protein_model,
-        numeric_cols,
-        protein_species_col,
-        st.session_state.filter_species,
-        st.session_state.filter_min_peptides,
-        st.session_state.filter_cv_cutoff,
-        st.session_state.filter_max_missing_ratio,
-        st.session_state.filter_intensity_range,
-        st.session_state.filter_transform,
-    )
-    
-    # Get species for selected data
-    selected_species = [s for s in st.session_state.filter_species if s in protein_model.raw[protein_species_col].values]
-    
-    # Create histograms
-    transform_data_filtered = get_transform_data(protein_model, st.session_state.filter_transform).loc[filtered_df.index]
-    
-    # One plot per sample
-    cols = st.columns(len(numeric_cols))
-    
-    for i, sample in enumerate(numeric_cols):
-        with cols[i]:
-            fig = go.Figure()
-            
-            sample_data = transform_data_filtered[sample].dropna()
-            
-            if len(sample_data) > 0:
-                mean_val = sample_data.mean()
-                std_val = sample_data.std()
-                
-                # Histogram
-                fig.add_trace(go.Histogram(
-                    x=sample_data,
-                    name="Distribution",
-                    nbinsx=50,
-                    marker_color="rgba(135, 206, 235, 0.7)",
-                    showlegend=False,
-                ))
-                
-                # Mean line
-                fig.add_vline(
-                    x=mean_val,
-                    line_dash="solid",
-                    line_color="red",
-                    line_width=2,
-                    annotation_text=f"μ={mean_val:.1f}",
-                    annotation_position="top",
-                )
-                
-                # Std dev shade
-                fig.add_vrect(
-                    x0=mean_val - std_val,
-                    x1=mean_val + std_val,
-                    fillcolor="red",
-                    opacity=0.1,
-                    layer="below",
-                    line_width=0,
-                )
-                
-                fig.update_layout(
-                    title=f"{sample} (n={len(sample_data)})",
-                    xaxis_title=f"{TRANSFORMS[st.session_state.filter_transform]}",
-                    yaxis_title="Count",
-                    height=350,
-                    plot_bgcolor="#FFFFFF",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    font=dict(family="Arial", size=10, color="#54585A"),
-                    showlegend=False,
-                    margin=dict(l=40, r=40, t=60, b=40),
-                )
-                
-                st.plotly_chart(fig, use_container_width=True, key=f"hist_{sample}")
-    
-    st.markdown("---")
-    
-    # CONTAINER 5: Updated Stats with Arrows
-    st.markdown("### After Filtering")
-    
-    # Show active filters
-    filter_str = f"**Active filters:** Min peptides: {st.session_state.filter_min_peptides} | CV <{st.session_state.filter_cv_cutoff:.0f}% | Max missing: {ratio_pct}% | Transform: {TRANSFORMS[st.session_state.filter_transform]}"
-    st.caption(filter_str)
-    
-    # Compute filtered stats
-    filtered_stats = compute_stats(filtered_df, protein_model, numeric_cols, protein_species_col)
-    
-    # Display with arrows
-    def get_arrow(before, after, higher_is_better=True):
-        if np.isnan(before) or np.isnan(after):
-            return "→"
-        change = after - before
-        if change > 0:
-            return "↑" if higher_is_better else "↓"
-        elif change < 0:
-            return "↓" if higher_is_better else "↑"
-        else:
-            return "→"
-    
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
-    
-    with col1:
-        arrow = get_arrow(initial_stats['n_proteins'], filtered_stats['n_proteins'], higher_is_better=True)
-        st.metric(f"Proteins {arrow}", f"{filtered_stats['n_proteins']:,}")
-    
-    with col2:
-        species_str = ", ".join([f"{s}:{filtered_stats['species_counts'].get(s, 0)}" for s in SPECIES_ORDER if s in filtered_stats['species_counts']])
-        st.metric("Species Count", species_str)
-    
-    with col3:
-        arrow = get_arrow(initial_stats['cv_mean'], filtered_stats['cv_mean'], higher_is_better=False)
-        st.metric(f"Mean CV% {arrow}", f"{filtered_stats['cv_mean']:.1f}" if not np.isnan(filtered_stats['cv_mean']) else "N/A")
-    
-    with col4:
-        arrow = get_arrow(initial_stats['cv_median'], filtered_stats['cv_median'], higher_is_better=False)
-        st.metric(f"Median CV% {arrow}", f"{filtered_stats['cv_median']:.1f}" if not np.isnan(filtered_stats['cv_median']) else "N/A")
-    
-    with col5:
-        arrow = get_arrow(initial_stats['permanova_f'], filtered_stats['permanova_f'], higher_is_better=True)
-        st.metric(f"PERMANOVA F {arrow}", f"{filtered_stats['permanova_f']:.2f}" if not np.isnan(filtered_stats['permanova_f']) else "N/A")
-    
-    with col6:
-        arrow = get_arrow(initial_stats['shapiro_w'], filtered_stats['shapiro_w'], higher_is_better=True)
-        st.metric(f"Shapiro W {arrow}", f"{filtered_stats['shapiro_w']:.4f}" if not np.isnan(filtered_stats['shapiro_w']) else "N/A")
-    
-    col1, col2 = st.columns([2, 3])
-    with col1:
-        if st.button("📊 Recalculate Stats", key="recalc_stats_btn"):
-            st.rerun()
-    
-    with col2:
-        if st.button("💾 Export Filtered Data", key="export_btn"):
-            csv = filtered_df.to_csv(index=False)
-            st.download_button(
-                label="Download CSV",
-                data=csv,
-                file_name="filtered_proteins.csv",
-                mime="text/csv",
-            )
+# Get transformed data
+transform_data = get_transform_data(protein_model, st.session_state.filter_transform)
 
+# Set intensity range slider (only if toggled on)
+if use_intensity:
+    min_intensity = transform_data[numeric_cols].min().min()
+    max_intensity = transform_data[numeric_cols].max().max()
+    
+    st.session_state.filter_intensity_range = st.slider(
+        "Select intensity range",
+        min_value=float(min_intensity),
+        max_value=float(max_intensity),
+        value=(float(min_intensity), float(max_intensity)) if st.session_state.filter_intensity_range is None else st.session_state.filter_intensity_range,
+        key="intensity_slider"
+    )
 else:
-    st.info("Click 'Apply Filters' to start filtering proteins.")
+    st.session_state.filter_intensity_range = None
 
-render_navigation(back_page="pages/3_Preprocessing.py", next_page=None)
-render_footer()
+# Apply filters based on toggles
+filtered_df = apply_filters(
+    df_raw,
+    protein_model,
+    numeric_cols,
+    protein_species_col,
+    st.session_state.filter_species,
+    st.session_state.filter_min_peptides if use_peptides else 1,
+    st.session_state.filter_cv_cutoff if use_cv else 1000.0,
+    st.session_state.filter_max_missing_ratio if use_missing else 1.0,
+    st.session_state.filter_intensity_range if use_intensity else None,
+    st.session_state.filter_transform,
+)
+
+# Get transformed data for filtered
+if not filtered_df.empty:
+    transform_data_filtered = get_transform_data(protein_model, st.session_state.filter_transform).loc[filtered_df.index, numeric_cols]
+else:
+    transform_data_filtered = pd.DataFrame()
+
+# Create histograms (one per sample)
+cols = st.columns(len(numeric_cols))
+
+for i, sample in enumerate(numeric
