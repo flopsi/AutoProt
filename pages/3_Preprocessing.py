@@ -54,7 +54,7 @@ def extract_conditions(cols: list[str]) -> dict:
 
 
 def compute_cv_per_condition(df: pd.DataFrame, numeric_cols: list[str]) -> pd.DataFrame:
-    """Compute CV% for each protein within each condition."""
+    """Compute CV% for each protein within each condition (using replicates only)."""
     condition_map = extract_conditions(numeric_cols)
     
     # Group columns by condition
@@ -63,10 +63,10 @@ def compute_cv_per_condition(df: pd.DataFrame, numeric_cols: list[str]) -> pd.Da
         cond = condition_map[col]
         conditions.setdefault(cond, []).append(col)
     
-    # Compute CV for each condition
+    # Compute CV for each condition (requires at least 2 replicates)
     cv_results = {}
     for cond, cols in conditions.items():
-        if len(cols) > 1:
+        if len(cols) >= 2:  # Need at least 2 replicates
             mean_vals = df[cols].mean(axis=1)
             std_vals = df[cols].std(axis=1)
             cv_results[f"CV_{cond}"] = (std_vals / mean_vals * 100).replace([np.inf, -np.inf], np.nan)
@@ -74,12 +74,42 @@ def compute_cv_per_condition(df: pd.DataFrame, numeric_cols: list[str]) -> pd.Da
     return pd.DataFrame(cv_results, index=df.index)
 
 
-def compute_overall_cv(df: pd.DataFrame, numeric_cols: list[str]) -> pd.Series:
-    """Compute CV% across all samples for each protein."""
-    mean_vals = df[numeric_cols].mean(axis=1)
-    std_vals = df[numeric_cols].std(axis=1)
-    cv = (std_vals / mean_vals * 100).replace([np.inf, -np.inf], np.nan)
-    return cv
+def compute_species_cv_per_condition(df: pd.DataFrame, numeric_cols: list[str], species_col: str) -> pd.DataFrame:
+    """Compute CV per condition for each species separately (within replicates only)."""
+    if species_col not in df.columns:
+        return pd.DataFrame()
+    
+    condition_map = extract_conditions(numeric_cols)
+    conditions = {}
+    for col in numeric_cols:
+        cond = condition_map[col]
+        conditions.setdefault(cond, []).append(col)
+    
+    species_list = df[species_col].dropna().unique()
+    
+    results = []
+    for species in species_list:
+        species_df = df[df[species_col] == species]
+        for cond, cols in conditions.items():
+            if len(cols) >= 2:  # Need at least 2 replicates
+                mean_vals = species_df[cols].mean(axis=1)
+                std_vals = species_df[cols].std(axis=1)
+                cvs = (std_vals / mean_vals * 100).replace([np.inf, -np.inf], np.nan)
+                valid_cvs = cvs.dropna()
+                if len(valid_cvs) > 0:
+                    results.append({
+                        "Species": species,
+                        "Condition": cond,
+                        "Mean_CV": valid_cvs.mean(),
+                        "Median_CV": valid_cvs.median(),
+                        "Count": len(valid_cvs),
+                    })
+    
+    return pd.DataFrame(results)
+
+
+
+
 
 
 def compute_species_cv_per_condition(df: pd.DataFrame, numeric_cols: list[str], species_col: str) -> pd.DataFrame:
@@ -215,60 +245,81 @@ def render_preprocessing(model: MSData | None, species_col: str | None, label: s
     st.markdown("### Coefficient of Variation (CV%) Analysis")
     st.caption("CV thresholds: <15% excellent, <20% acceptable, >20% review recommended [web:129][web:167]")
     
-    overall_cv = compute_overall_cv(df_raw, numeric_cols)
+    # Section 1: CV per Condition Analysis
+    st.markdown("### Coefficient of Variation (CV%) per Condition")
+    st.caption("CV within biological replicates only. Thresholds: <15% excellent, <20% acceptable [web:129][web:167]")
+    
     cv_per_condition = compute_cv_per_condition(df_raw, numeric_cols)
     
-    col1, col2 = st.columns([1, 2])
+    if cv_per_condition.empty:
+        st.warning("No conditions with ≥2 replicates found. Cannot compute CV.")
+        return
     
-    with col1:
-        # Overall CV stats
-        st.markdown("#### Overall CV Statistics")
-        clean_cvs = overall_cv.dropna()
-        if len(clean_cvs) > 0:
-            st.metric("Mean CV%", f"{clean_cvs.mean():.1f}%")
-            st.metric("Median CV%", f"{clean_cvs.median():.1f}%")
-            
-            below_15 = (clean_cvs < 15).sum() / len(clean_cvs) * 100
-            below_20 = (clean_cvs < 20).sum() / len(clean_cvs) * 100
-            above_20 = (clean_cvs >= 20).sum() / len(clean_cvs) * 100
-            
-            st.metric("Proteins <15% CV", f"{below_15:.1f}%")
-            st.metric("Proteins <20% CV", f"{below_20:.1f}%")
-            st.metric("Proteins ≥20% CV", f"{above_20:.1f}%")
-            
-            if above_20 > 20:
-                st.warning("⚠️ >20% of proteins have CV ≥20%. Consider preprocessing.")
-            else:
-                st.success("✓ Good technical reproducibility")
+    # Violin plot for each condition
+    st.markdown("#### CV Distribution by Condition")
     
-    with col2:
-        # Violin plot
-        fig_violin = create_cv_violin_plot(overall_cv)
-        st.plotly_chart(fig_violin, width="stretch", key=f"cv_violin_{label}")
+    # Prepare data for violin plot
+    cv_long = cv_per_condition.melt(var_name="Condition", value_name="CV%")
+    cv_long = cv_long.dropna()
     
-    st.markdown("---")
+    fig = go.Figure()
+    for i, cond in enumerate(cv_per_condition.columns):
+        cond_data = cv_per_condition[cond].dropna()
+        fig.add_trace(go.Violin(
+            y=cond_data,
+            name=cond.replace("CV_", ""),
+            box_visible=True,
+            meanline_visible=True,
+            fillcolor=TF_CHART_COLORS[i % len(TF_CHART_COLORS)],
+            opacity=0.6,
+        ))
     
-    # Section 2: CV per condition
-    st.markdown("### CV% per Condition")
-    st.caption("Replicate reproducibility within each experimental condition")
+    fig.update_layout(
+        title="CV% distribution per condition",
+        yaxis_title="CV%",
+        xaxis_title="Condition",
+        height=400,
+        plot_bgcolor="#FFFFFF",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Arial", color="#54585A"),
+        showlegend=False,
+    )
     
-    if not cv_per_condition.empty:
-        # Summary table
-        cv_summary = {}
-        for col in cv_per_condition.columns:
-            clean = cv_per_condition[col].dropna()
-            if len(clean) > 0:
-                cv_summary[col] = {
-                    "Mean CV%": f"{clean.mean():.1f}",
-                    "Median CV%": f"{clean.median():.1f}",
-                    "% <15%": f"{(clean < 15).sum() / len(clean) * 100:.1f}",
-                    "% <20%": f"{(clean < 20).sum() / len(clean) * 100:.1f}",
-                }
-        
-        summary_df = pd.DataFrame(cv_summary).T
-        st.dataframe(summary_df, width="stretch")
+    fig.add_hline(y=20, line_dash="dash", line_color="orange", annotation_text="20% threshold")
+    fig.add_hline(y=15, line_dash="dash", line_color="green", annotation_text="15% threshold")
+    
+    st.plotly_chart(fig, width="stretch", key=f"cv_violin_{label}")
     
     st.markdown("---")
+    
+    # Section 2: CV Summary Table
+    st.markdown("### CV Summary per Condition")
+    
+    cv_summary = {}
+    for col in cv_per_condition.columns:
+        clean = cv_per_condition[col].dropna()
+        if len(clean) > 0:
+            cv_summary[col.replace("CV_", "Condition ")] = {
+                "Mean CV%": f"{clean.mean():.1f}",
+                "Median CV%": f"{clean.median():.1f}",
+                "% <15%": f"{(clean < 15).sum() / len(clean) * 100:.1f}",
+                "% <20%": f"{(clean < 20).sum() / len(clean) * 100:.1f}",
+                "N proteins": len(clean),
+            }
+    
+    summary_df = pd.DataFrame(cv_summary).T
+    st.dataframe(summary_df, width="stretch")
+    
+    # Quality assessment
+    all_cvs = cv_per_condition.values.flatten()
+    all_cvs_clean = all_cvs[~np.isnan(all_cvs)]
+    above_20_pct = (all_cvs_clean >= 20).sum() / len(all_cvs_clean) * 100
+    
+    if above_20_pct > 20:
+        st.warning(f"⚠️ {above_20_pct:.1f}% of proteins have CV ≥20% within conditions. Consider preprocessing.")
+    else:
+        st.success(f"✓ Good technical reproducibility: {100-above_20_pct:.1f}% of proteins <20% CV")
+
     
     # Section 3: Species-specific CV (if species column available)
     if species_col and species_col in model.raw.columns:
