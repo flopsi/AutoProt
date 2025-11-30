@@ -114,7 +114,7 @@ def create_peptides_per_protein_plot(ppp_df: pd.DataFrame) -> go.Figure:
             y=y_data,
             x=x_data,
             name=species,
-            marker_color=SPECIES_COLORS.get(species, "#808080"),
+            marker_color=SPECIES_COLORS.get(species),
             boxmean='sd',
         ))
     
