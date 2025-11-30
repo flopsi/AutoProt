@@ -605,6 +605,175 @@ with col2:
             label="Download CSV",
             data=csv,
             file_name="filtered_proteins.csv",
+            mime="text/csv")
+
+
+# CONTAINER 4: Intensity Histograms
+st.markdown("### Intensity Distribution by Sample")
+
+# Get transformed data
+transform_data = get_transform_data(protein_model, st.session_state.filter_transform)
+
+# Set intensity range slider (only if toggled on)
+if use_intensity:
+    min_intensity = transform_data[numeric_cols].min().min()
+    max_intensity = transform_data[numeric_cols].max().max()
+    
+    st.session_state.filter_intensity_range = st.slider(
+        "Select intensity range",
+        min_value=float(min_intensity),
+        max_value=float(max_intensity),
+        value=(float(min_intensity), float(max_intensity)) if st.session_state.filter_intensity_range is None else st.session_state.filter_intensity_range,
+        key="intensity_slider"
+    )
+else:
+    st.session_state.filter_intensity_range = None
+
+# Apply filters based on toggles
+filtered_df = apply_filters(
+    df_raw,
+    protein_model,
+    numeric_cols,
+    protein_species_col,
+    st.session_state.filter_species,
+    st.session_state.filter_min_peptides if use_peptides else 1,
+    st.session_state.filter_cv_cutoff if use_cv else 1000.0,
+    st.session_state.filter_max_missing_ratio if use_missing else 1.0,
+    st.session_state.filter_intensity_range if use_intensity else None,
+    st.session_state.filter_transform,
+)
+
+# Get transformed data for filtered
+transform_data_filtered = get_transform_data(protein_model, st.session_state.filter_transform).loc[filtered_df.index, numeric_cols]
+
+# Create histograms (one per sample)
+cols = st.columns(len(numeric_cols))
+
+for i, sample in enumerate(numeric_cols):
+    with cols[i]:
+        fig = go.Figure()
+        
+        sample_data = transform_data_filtered[sample].dropna()
+        
+        if len(sample_data) > 0:
+            mean_val = sample_data.mean()
+            std_val = sample_data.std()
+            
+            # Histogram
+            fig.add_trace(go.Histogram(
+                x=sample_data,
+                name="Distribution",
+                nbinsx=50,
+                marker_color="rgba(135, 206, 235, 0.7)",
+                showlegend=False,
+            ))
+            
+            # Mean line
+            fig.add_vline(
+                x=mean_val,
+                line_dash="solid",
+                line_color="red",
+                line_width=2,
+                annotation_text=f"μ={mean_val:.1f}",
+                annotation_position="top",
+            )
+            
+            # Std dev shade
+            fig.add_vrect(
+                x0=mean_val - std_val,
+                x1=mean_val + std_val,
+                fillcolor="red",
+                opacity=0.1,
+                layer="below",
+                line_width=0,
+            )
+            
+            fig.update_layout(
+                title=f"{sample} (n={len(sample_data)})",
+                xaxis_title=f"{TRANSFORMS[st.session_state.filter_transform]}",
+                yaxis_title="Count",
+                height=350,
+                plot_bgcolor="#FFFFFF",
+                paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(family="Arial", size=10, color="#54585A"),
+                showlegend=False,
+                margin=dict(l=40, r=40, t=60, b=40),
+            )
+            
+            st.plotly_chart(fig, use_container_width=True, key=f"hist_{sample}")
+
+st.markdown("---")
+
+# CONTAINER 5: Updated Stats with Arrows
+st.markdown("### After Filtering")
+
+# Show active filters
+active_filters = []
+if use_peptides:
+    active_filters.append(f"Min peptides: {st.session_state.filter_min_peptides}")
+if use_cv:
+    active_filters.append(f"CV <{st.session_state.filter_cv_cutoff:.0f}%")
+if use_missing:
+    active_filters.append(f"Max missing: {int(st.session_state.filter_max_missing_ratio * 100)}%")
+if use_intensity:
+    active_filters.append(f"Intensity range: {st.session_state.filter_intensity_range[0]:.1f}-{st.session_state.filter_intensity_range[1]:.1f}")
+
+filter_str = "**Active filters:** " + " | ".join(active_filters) if active_filters else "**No filters active** (showing all proteins)"
+st.caption(filter_str)
+
+# Compute filtered stats
+filtered_stats = compute_stats(filtered_df, protein_model, numeric_cols, protein_species_col)
+
+# Display with arrows
+def get_arrow(before, after, higher_is_better=True):
+    if np.isnan(before) or np.isnan(after):
+        return "→"
+    change = after - before
+    if change > 0:
+        return "↑" if higher_is_better else "↓"
+    elif change < 0:
+        return "↓" if higher_is_better else "↑"
+    else:
+        return "→"
+
+col1, col2, col3, col4, col5, col6 = st.columns(6)
+
+with col1:
+    arrow = get_arrow(initial_stats['n_proteins'], filtered_stats['n_proteins'], higher_is_better=True)
+    st.metric(f"Proteins {arrow}", f"{filtered_stats['n_proteins']:,}")
+
+with col2:
+    species_str = ", ".join([f"{s}:{filtered_stats['species_counts'].get(s, 0)}" for s in SPECIES_ORDER if s in filtered_stats['species_counts']])
+    st.metric("Species Count", species_str)
+
+with col3:
+    arrow = get_arrow(initial_stats['cv_mean'], filtered_stats['cv_mean'], higher_is_better=False)
+    st.metric(f"Mean CV% {arrow}", f"{filtered_stats['cv_mean']:.1f}" if not np.isnan(filtered_stats['cv_mean']) else "N/A")
+
+with col4:
+    arrow = get_arrow(initial_stats['cv_median'], filtered_stats['cv_median'], higher_is_better=False)
+    st.metric(f"Median CV% {arrow}", f"{filtered_stats['cv_median']:.1f}" if not np.isnan(filtered_stats['cv_median']) else "N/A")
+
+with col5:
+    arrow = get_arrow(initial_stats['permanova_f'], filtered_stats['permanova_f'], higher_is_better=True)
+    st.metric(f"PERMANOVA F {arrow}", f"{filtered_stats['permanova_f']:.2f}" if not np.isnan(filtered_stats['permanova_f']) else "N/A")
+
+with col6:
+    arrow = get_arrow(initial_stats['shapiro_w'], filtered_stats['shapiro_w'], higher_is_better=True)
+    st.metric(f"Shapiro W {arrow}", f"{filtered_stats['shapiro_w']:.4f}" if not np.isnan(filtered_stats['shapiro_w']) else "N/A")
+
+col1, col2 = st.columns([2, 3])
+with col1:
+    if st.button("📊 Recalculate Stats", key="recalc_stats_btn"):
+        st.rerun()
+
+with col2:
+    if st.button("💾 Export Filtered Data", key="export_btn"):
+        csv = filtered_df.to_csv(index=False)
+        st.download_button(
+            label="Download CSV",
+            data=csv,
+            file_name="filtered_proteins.csv",
             mime="text/csv",
         )
 
