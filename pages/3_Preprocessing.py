@@ -157,57 +157,60 @@ def create_stacked_species_barplot(df: pd.DataFrame, numeric_cols: list[str], sp
     return fig
 
 
+@st.cache_data
 def compute_peptides_per_protein(
-    protein_model: MSData,
-    peptide_model: MSData,
+    protein_df: pd.DataFrame,
+    peptide_df: pd.DataFrame,
     protein_idx: str,
     peptide_idx: str,
     peptide_seq_col: str,
     protein_species_col: str,
     numeric_cols: list[str]
 ) -> pd.DataFrame:
-    """Compute peptides per protein for each species and sample."""
-    if not all([protein_model, peptide_model, protein_idx, peptide_idx, peptide_seq_col]):
+    """Compute peptides per protein for each species and sample (optimized)."""
+    if not all([protein_idx, peptide_idx, peptide_seq_col]):
         return pd.DataFrame()
-    
-    protein_df = protein_model.raw_filled
-    peptide_df = peptide_model.raw_filled
     
     if protein_idx not in protein_df.columns or peptide_idx not in peptide_df.columns:
         return pd.DataFrame()
     
-    if peptide_seq_col not in peptide_df.columns:
+    if peptide_seq_col not in peptide_df.columns or protein_species_col not in protein_df.columns:
         return pd.DataFrame()
+    
+    # Pre-filter: only proteins and peptides with valid data
+    protein_data = protein_df[[protein_idx, protein_species_col] + numeric_cols].copy()
+    peptide_data = peptide_df[[peptide_idx, peptide_seq_col] + numeric_cols].copy()
     
     results = []
     
-    for sample in numeric_cols:
-        if sample not in protein_df.columns or sample not in peptide_df.columns:
-            continue
+    # Group by species first to reduce iterations
+    for species in protein_data[protein_species_col].dropna().unique():
+        species_proteins = protein_data[protein_data[protein_species_col] == species]
         
-        # Get proteins detected in this sample
-        detected_proteins = protein_df[protein_df[sample] > 1.0]
-        
-        for species in detected_proteins[protein_species_col].dropna().unique():
-            species_proteins = detected_proteins[detected_proteins[protein_species_col] == species]
+        for sample in numeric_cols:
+            # Get detected proteins in this sample
+            detected_proteins = species_proteins[species_proteins[sample] > 1.0][protein_idx].unique()
             
-            for protein_id in species_proteins[protein_idx]:
-                # Find matching peptides
-                matching_peptides = peptide_df[peptide_df[peptide_idx].str.contains(str(protein_id), na=False)]
-                detected_peptides = matching_peptides[matching_peptides[sample] > 1.0]
-                
-                peptide_count = len(detected_peptides)
+            if len(detected_proteins) == 0:
+                continue
+            
+            # Vectorized: find peptides matching any of these proteins
+            peptide_mask = peptide_data[peptide_idx].str.contains('|'.join(map(re.escape, detected_proteins)), na=False, regex=True)
+            matching_peptides = peptide_data[peptide_mask & (peptide_data[sample] > 1.0)]
+            
+            # Count peptides per protein
+            for protein_id in detected_proteins:
+                protein_peptides = matching_peptides[matching_peptides[peptide_idx].str.contains(re.escape(str(protein_id)), na=False)]
+                peptide_count = len(protein_peptides)
                 
                 if peptide_count > 0:
                     results.append({
                         "Sample": sample,
                         "Species": species,
-                        "Protein": protein_id,
                         "Peptide_Count": peptide_count,
                     })
     
     return pd.DataFrame(results)
-
 
 @st.cache_data
 def create_peptides_per_protein_plot(ppp_df: pd.DataFrame) -> go.Figure:
@@ -406,16 +409,15 @@ def render_preprocessing(model: MSData | None, species_col: str | None, label: s
         st.markdown("### Peptides per Protein Analysis")
         st.caption("Number of peptides detected per protein across samples and species")
         
-        with st.spinner("Computing peptides per protein..."):
-            ppp_df = compute_peptides_per_protein(
-                model,
-                peptide_model,
-                protein_idx,
-                peptide_idx,
-                peptide_seq_col,
-                species_col,
-                numeric_cols
-            )
+        ppp_df = compute_peptides_per_protein(
+            model.raw_filled,
+            peptide_model.raw_filled,
+            protein_idx,
+            peptide_idx,
+            peptide_seq_col,
+            species_col,
+            numeric_cols
+        )
         
         if not ppp_df.empty:
             # Summary stats
@@ -434,6 +436,7 @@ def render_preprocessing(model: MSData | None, species_col: str | None, label: s
                 st.plotly_chart(fig_ppp, width="stretch", key=f"ppp_{label}")
         else:
             st.info("No peptide-to-protein mapping found. Check that protein IDs match between datasets.")
+
 
 
 with tab_protein:
