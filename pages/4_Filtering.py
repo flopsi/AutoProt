@@ -478,71 +478,83 @@ else:
     transform_data_filtered = pd.DataFrame()
 
 # Create histograms (one per sample)
-cols = st.columns(len(numeric_cols))
+# Create histograms in 3x2 grid
+n_cols = 3
+n_rows = (len(numeric_cols) + n_cols - 1) // n_cols
 
-for i, sample in enumerate(numeric_cols):
-    with cols[i]:
-        fig = go.Figure()
+for row in range(n_rows):
+    cols = st.columns(n_cols)
+    for col_idx in range(n_cols):
+        sample_idx = row * n_cols + col_idx
         
-        if not transform_data_filtered.empty:
-            sample_data = transform_data_filtered[sample].dropna()
-        else:
-            sample_data = pd.Series(dtype=float)
+        if sample_idx >= len(numeric_cols):
+            break
         
-        if len(sample_data) > 0:
-            mean_val = sample_data.mean()
-            std_val = sample_data.std()
-            
-            # Histogram
-            fig.add_trace(go.Histogram(
-                x=sample_data,
-                name="Distribution",
-                nbinsx=50,
-                marker_color="rgba(135, 206, 235, 0.7)",
-                showlegend=False,
-            ))
-            
-            # Mean line
-            fig.add_vline(
-                x=mean_val,
-                line_dash="solid",
-                line_color="red",
-                line_width=2,
-                annotation_text=f"μ={mean_val:.1f}",
-                annotation_position="top",
-            )
-            
-            # Std dev shade
-            fig.add_vrect(
-                x0=mean_val - std_val,
-                x1=mean_val + std_val,
-                fillcolor="red",
-                opacity=0.1,
-                layer="below",
-                line_width=0,
-            )
-            
-            fig.update_layout(
-                title=f"{sample} (n={len(sample_data)})",
-                xaxis_title=f"{TRANSFORMS[st.session_state.filter_transform]}",
-                yaxis_title="Count",
-                height=350,
-                plot_bgcolor="#FFFFFF",
-                paper_bgcolor="rgba(0,0,0,0)",
-                font=dict(family="Arial", size=10, color="#54585A"),
-                showlegend=False,
-                margin=dict(l=40, r=40, t=60, b=40),
-            )
-        else:
-            fig.add_annotation(text="No data after filtering", showarrow=False)
-            fig.update_layout(
-                height=350,
-                plot_bgcolor="#FFFFFF",
-                paper_bgcolor="rgba(0,0,0,0)",
-                font=dict(family="Arial", size=10, color="#54585A"),
-            )
+        sample = numeric_cols[sample_idx]
         
-        st.plotly_chart(fig, use_container_width=True, key=f"hist_{sample}_{i}")
+        with cols[col_idx]:
+            fig = go.Figure()
+            
+            if not transform_data_filtered.empty:
+                sample_data = transform_data_filtered[sample].dropna()
+            else:
+                sample_data = pd.Series(dtype=float)
+            
+            if len(sample_data) > 0:
+                mean_val = sample_data.mean()
+                std_val = sample_data.std()
+                
+                # Histogram
+                fig.add_trace(go.Histogram(
+                    x=sample_data,
+                    name="Distribution",
+                    nbinsx=50,
+                    marker_color="rgba(135, 206, 235, 0.7)",
+                    showlegend=False,
+                ))
+                
+                # Mean line
+                fig.add_vline(
+                    x=mean_val,
+                    line_dash="solid",
+                    line_color="red",
+                    line_width=2,
+                    annotation_text=f"μ={mean_val:.1f}",
+                    annotation_position="top",
+                )
+                
+                # Std dev shade
+                fig.add_vrect(
+                    x0=mean_val - std_val,
+                    x1=mean_val + std_val,
+                    fillcolor="red",
+                    opacity=0.1,
+                    layer="below",
+                    line_width=0,
+                )
+                
+                fig.update_layout(
+                    title=f"{sample} (n={len(sample_data)})",
+                    xaxis_title=f"{TRANSFORMS[st.session_state.filter_transform]}",
+                    yaxis_title="Count",
+                    height=350,
+                    plot_bgcolor="#FFFFFF",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(family="Arial", size=10, color="#54585A"),
+                    showlegend=False,
+                    margin=dict(l=40, r=40, t=60, b=40),
+                )
+            else:
+                fig.add_annotation(text="No data after filtering", showarrow=False)
+                fig.update_layout(
+                    height=350,
+                    plot_bgcolor="#FFFFFF",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(family="Arial", size=10, color="#54585A"),
+                )
+            
+            st.plotly_chart(fig, use_container_width=True, key=f"hist_{sample}_{sample_idx}")
+
 
 st.markdown("---")
 
