@@ -43,9 +43,9 @@ class MSData:
 TF_CHART_COLORS = ["#262262", "#A6192E", "#EA7600", "#F1B434", "#B5BD00", "#9BD3DD"]
 
 SPECIES_COLORS = {
-    "HUMAN": "#87CEEB",  # Sky blue
-    "ECOLI": "#008B8B",  # Teal
-    "YEAST": "#FF8C00",  # Orange
+    "HUMAN": "#199d76",  # Sky blue
+    "ECOLI": "#7570b2",  # Teal
+    "YEAST": "#d85f02",  # Orange
     "MOUSE": "#9370DB",  # Purple
     "UNKNOWN": "#808080",  # Gray
 }
@@ -83,38 +83,57 @@ def compute_cv_per_condition(df: pd.DataFrame, numeric_cols: list[str]) -> pd.Da
     return pd.DataFrame(cv_results, index=df.index)
 
 
-def compute_species_cv_per_condition(df: pd.DataFrame, numeric_cols: list[str], species_col: str) -> pd.DataFrame:
-    """Compute CV per condition for each species separately (within replicates only)."""
-    if species_col not in df.columns:
-        return pd.DataFrame()
+@st.cache_data
+def create_peptides_per_protein_plot(ppp_df: pd.DataFrame) -> go.Figure:
+    """Create box plot of peptides per protein by species and sample."""
+    if ppp_df.empty:
+        return None
     
-    condition_map = extract_conditions(numeric_cols)
-    conditions = {}
-    for col in numeric_cols:
-        cond = condition_map[col]
-        conditions.setdefault(cond, []).append(col)
+    # Get species in order
+    all_species = ppp_df["Species"].unique()
+    species_list = [s for s in SPECIES_ORDER if s in all_species]
     
-    species_list = df[species_col].dropna().unique()
+    # Get unique samples
+    samples = sorted(ppp_df["Sample"].unique())
     
-    results = []
+    fig = go.Figure()
+    
     for species in species_list:
-        species_df = df[df[species_col] == species]
-        for cond, cols in conditions.items():
-            if len(cols) >= 2:
-                mean_vals = species_df[cols].mean(axis=1)
-                std_vals = species_df[cols].std(axis=1)
-                cvs = (std_vals / mean_vals * 100).replace([np.inf, -np.inf], np.nan)
-                valid_cvs = cvs.dropna()
-                if len(valid_cvs) > 0:
-                    results.append({
-                        "Species": species,
-                        "Condition": cond,
-                        "Mean_CV": valid_cvs.mean(),
-                        "Median_CV": valid_cvs.median(),
-                        "Count": len(valid_cvs),
-                    })
+        species_data = ppp_df[ppp_df["Species"] == species]
+        
+        # Create grouped data for each sample
+        x_data = []
+        y_data = []
+        
+        for sample in samples:
+            sample_data = species_data[species_data["Sample"] == sample]["Peptide_Count"]
+            x_data.extend([sample] * len(sample_data))
+            y_data.extend(sample_data)
+        
+        fig.add_trace(go.Box(
+            y=y_data,
+            x=x_data,
+            name=species,
+            marker_color=SPECIES_COLORS.get(species, "#808080"),
+            boxmean='sd',
+        ))
     
-    return pd.DataFrame(results)
+    fig.update_layout(
+        title="Peptides per protein by species and sample",
+        xaxis_title="Sample",
+        yaxis_title="Peptides per protein",
+        height=450,
+        plot_bgcolor="#FFFFFF",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Arial", color="#54585A"),
+        boxmode='group',
+        boxgap=0.3,  # Gap between boxes in same position
+        boxgroupgap=0.1,  # Gap between groups
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    
+    return fig
+
 
 
 @st.cache_data
