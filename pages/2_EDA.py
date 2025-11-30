@@ -383,7 +383,7 @@ def render_eda(model: MSData | None, index_col: str | None, species_col: str | N
             f"Species detected: {', '.join(species_dist['species'])}. "
             "Showing PCA for: all | dominant | others"
         )
-        col1, col2, col3 = st.columns(3,[1,1,1], vertical_alignment="bottom")
+        col1, col2, col3 = st.columns(3,[1,1,1], vertical_alignment="top",border=True,width="stretch")
 
         # Plot 1: All
         with col1:
