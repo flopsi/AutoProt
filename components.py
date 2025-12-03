@@ -98,7 +98,6 @@ def render_header():
     </div>
     """, unsafe_allow_html=True)
 
-
 def render_navigation(back_page=None, next_page=None):
     """Render bottom navigation with Back, Home, Restart, Next buttons."""
     st.markdown("---")
@@ -119,7 +118,8 @@ def render_navigation(back_page=None, next_page=None):
     with col3:
         if st.button("🔄 Restart", use_container_width=True, key="nav_restart"):
             _clear_session_state()
-            st.cache_data.clear()
+            st.cache_data.clear()  # Clear all cached data
+            st.cache_resource.clear()  # Clear any cached resources too
             st.switch_page("app.py")
 
     with col4:
@@ -128,7 +128,6 @@ def render_navigation(back_page=None, next_page=None):
                 st.switch_page(next_page)
         else:
             st.button("Next →", use_container_width=True, disabled=True, key="nav_next_disabled")
-
 
 def _clear_session_state():
     """Clear all cached data for restart."""
