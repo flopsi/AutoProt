@@ -604,7 +604,7 @@ if st.session_state.get("compute_stats_now", False):
             return "↓" if higher_is_better else "↑"
         return "→"
 
-    m1, m2, m3, m4, m5, m6 = st.columns(5)
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
 
     with m1:
         arrow = get_arrow(initial_stats["n_proteins"], filtered_stats["n_proteins"], True)
