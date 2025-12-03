@@ -397,7 +397,7 @@ with col2:
             "CV%",
             min_value=0,
             max_value=100,
-            value=int(st.session_state.filter_cv_cutoff*100),
+            value=int(st.session_state.filter_cv_cutoff),
             step=5,
             key="cv_slider"
         )
