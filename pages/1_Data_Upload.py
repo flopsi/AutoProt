@@ -64,13 +64,13 @@ def extract_species_from_protein_id(protein_id: str) -> str:
         return protein_str
     
     # Otherwise, extract from protein ID format
-    if "_HUMAN" in protein_str or "HUMAN_" in protein_str or "HUMAN" in protein_str:
+    if "_HUMAN" in protein_str or "HUMAN_" in protein_str:
         return "HUMAN"
-    elif "_YEAST" in protein_str or "YEAST_" in protein_str or "YEAST" in protein_str:
+    elif "_YEAST" in protein_str or "YEAST_" in protein_str:
         return "YEAST"
-    elif "_ECOLI" in protein_str or "ECOLI_" in protein_str or "ECOLI" in protein_str:
+    elif "_ECOLI" in protein_str or "ECOLI_" in protein_str:
         return "ECOLI"
-    elif "_MOUSE" in protein_str or "MOUSE_" in protein_str or "MOUSE" in protein_str:
+    elif "_MOUSE" in protein_str or "MOUSE_" in protein_str:
         return "MOUSE"
     else:
         return "UNKNOWN"
@@ -254,18 +254,23 @@ with col3:
     )
     peptide_seq_col = None if peptide_seq_col == "None" else peptide_seq_col
 
-other_metadata = st.multiselect(
-    "Additional metadata columns (optional)",
+# NEW: Drop columns selector
+drop_cols = st.multiselect(
+    "⚠️ Drop columns (these will be permanently removed)",
     options=[c for c in all_cols if c not in {pg_col, species_col, peptide_seq_col} if c is not None],
-    key="other_metadata",
+    default=[],
+    key="drop_columns",
+    help="Select columns to remove from the dataset. Useful for cleaning up unwanted metadata."
 )
 
-meta_cols = [c for c in [pg_col, species_col, peptide_seq_col, *other_metadata] if c is not None]
+# Keep only essential metadata
+meta_cols = [c for c in [pg_col, species_col, peptide_seq_col] if c is not None]
 
-candidate_quant = [c for c in all_cols if c not in meta_cols]
+# Candidate quant columns = everything except metadata and dropped columns
+candidate_quant = [c for c in all_cols if c not in meta_cols and c not in drop_cols]
 
 if not candidate_quant:
-    st.error("No candidate quant columns left after metadata selection.")
+    st.error("No candidate quant columns left after metadata selection and drops.")
     st.stop()
 
 st.markdown("### Select quantitative columns (in groups of 3)")
@@ -330,8 +335,14 @@ def config_fragment():
                 st.session_state.column_renames.update(edited)
                 st.rerun(scope="fragment")
 
+    # Apply column renames
     rename_map = {k: v for k, v in st.session_state.column_renames.items() if k in raw_df.columns}
     working_df = raw_df.rename(columns=rename_map)
+    
+    # DROP SELECTED COLUMNS - NEW
+    if drop_cols:
+        working_df = working_df.drop(columns=drop_cols)
+        st.info(f"🗑️ Dropped {len(drop_cols)} columns: {', '.join(drop_cols[:3])}{'...' if len(drop_cols) > 3 else ''}")
 
     numeric_cols_renamed = [st.session_state.column_renames.get(c, c) for c in numeric_cols_orig]
     working_df[numeric_cols_renamed] = (
@@ -356,23 +367,12 @@ def config_fragment():
             sample_values = processed_df[species_col_to_use].dropna().astype(str).str.upper().str.strip().head(20)
             is_plain_species = sample_values.isin(["HUMAN", "YEAST", "ECOLI", "MOUSE", "UNKNOWN"]).mean() > 0.8
             
-            # Debug output
-            st.write(f"**Debug - First 5 values in {species_col_to_use}:**")
-            st.write(processed_df[species_col_to_use].head().tolist())
-            st.write(f"**Is plain species format:** {is_plain_species}")
-            
             if is_plain_species:
                 # Column already has species names, use directly
                 processed_df["_extracted_species"] = processed_df[species_col_to_use].astype(str).str.upper().str.strip()
-                st.write("**Using direct species values (no extraction)**")
             else:
                 # Extract from protein ID format
                 processed_df["_extracted_species"] = processed_df[species_col_to_use].apply(extract_species_from_protein_id)
-                st.write("**Extracting species from protein IDs**")
-            
-            # Show what we extracted
-            st.write(f"**Extracted species counts:**")
-            st.write(processed_df["_extracted_species"].value_counts().to_dict())
             
             # Filter by species
             before_count = len(processed_df)
@@ -405,16 +405,20 @@ def config_fragment():
     col_b1, col_b2, _ = st.columns([1, 1, 3])
     with col_b1:
         if st.button("Confirm & cache", type="primary"):
-            model = build_msdata(processed_df, numeric_cols_renamed)
+            # Build model with species subgroups cached
+            model = build_msdata(processed_df, numeric_cols_renamed, species_col="_extracted_species")
             missing_mask = processed_df[numeric_cols_renamed].isna() | (processed_df[numeric_cols_renamed] <= 1.0)
 
             st.session_state[existing_key] = model
             st.session_state[index_key] = pg_col
-            st.session_state[species_key] = "_extracted_species"  # Always use extracted
+            st.session_state[species_key] = "_extracted_species"
             st.session_state[seq_key] = peptide_seq_col
             st.session_state[mask_key] = missing_mask
 
             reset_upload_state()
+            
+            # Show cache summary
+            st.success(f"✅ Cached {data_type} data")
             
             # Auto-redirect only if both loaded
             if st.session_state.get("protein_model") and st.session_state.get("peptide_model"):
