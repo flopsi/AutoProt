@@ -250,89 +250,76 @@ def compute_stats(
     else:
         cv_mean = cv_median = np.nan
 
-    # PERMANOVA - CORRECTED VERSION
-    condition_map = extract_conditions(numeric_cols)
-    conditions = np.array([condition_map[c] for c in numeric_cols])
+# PERMANOVA - CORRECTED VERSION WITH PROTEIN-WISE FILTERING
+condition_map = extract_conditions(numeric_cols)
+conditions = np.array([condition_map[c] for c in numeric_cols])
 
-    permanova_f = np.nan
-    permanova_p = np.nan
+permanova_f = np.nan
+permanova_p = np.nan
 
-    unique_conds = np.unique(conditions)
-    if unique_conds.size >= 2 and len(df) >= 3:
-        try:
-            # Transpose: samples as rows, proteins as columns
-            data = df[numeric_cols].T.values
+unique_conds = np.unique(conditions)
+if unique_conds.size >= 2 and len(df) >= 3:
+    try:
+        # Transpose: samples as rows, proteins as columns
+        data = df[numeric_cols].T.values
+        
+        # Remove proteins (columns) that have NaN in ANY sample
+        # This ensures all samples have the same set of proteins
+        valid_proteins = ~np.isnan(data).any(axis=0)
+        data_clean = data[:, valid_proteins]
+        
+        # Now all samples should have complete data
+        if data_clean.shape[1] >= 3 and data_clean.shape[0] >= 3:
+            # Calculate distance matrix
+            dist_matrix = squareform(pdist(data_clean, metric="euclidean"))
+            n = len(conditions)
+
+            # Total sum of squares
+            ss_total = np.sum(dist_matrix**2) / (2 * n)
             
-            # Remove any rows with NaN
-            valid_mask = ~np.isnan(data).any(axis=1)
-            data_clean = data[valid_mask]
-            conditions_clean = conditions[valid_mask]
+            # Within-group sum of squares
+            ss_within = 0.0
+            for g in unique_conds:
+                mask = conditions == g
+                n_g = mask.sum()
+                if n_g > 1:
+                    ss_within += np.sum(dist_matrix[np.ix_(mask, mask)]**2) / (2 * n_g)
+
+            # Between-group sum of squares
+            ss_between = ss_total - ss_within
             
-            if len(data_clean) >= 3 and len(np.unique(conditions_clean)) >= 2:
-                # Calculate distance matrix
-                dist_matrix = squareform(pdist(data_clean, metric="euclidean"))
-                n = len(conditions_clean)
+            # Degrees of freedom
+            df_between = len(unique_conds) - 1
+            df_within = n - len(unique_conds)
 
-                # Total sum of squares
-                ss_total = np.sum(dist_matrix**2) / (2 * n)
+            # F-statistic
+            if df_within > 0 and ss_within > 0:
+                F = (ss_between / df_between) / (ss_within / df_within)
                 
-                # Within-group sum of squares
-                ss_within = 0.0
-                for g in np.unique(conditions_clean):
-                    mask = conditions_clean == g
-                    n_g = mask.sum()
-                    if n_g > 1:
-                        ss_within += np.sum(dist_matrix[np.ix_(mask, mask)]**2) / (2 * n_g)
+                # Permutation test for p-value
+                f_perms = []
+                for _ in range(999):
+                    perm_cond = np.random.permutation(conditions)
+                    ss_within_perm = 0.0
+                    for g in unique_conds:
+                        mask = perm_cond == g
+                        n_g = mask.sum()
+                        if n_g > 1:
+                            ss_within_perm += (
+                                np.sum(dist_matrix[np.ix_(mask, mask)]**2) / (2 * n_g)
+                            )
+                    ss_between_perm = ss_total - ss_within_perm
+                    if ss_within_perm > 0:
+                        F_perm = (ss_between_perm / df_between) / (ss_within_perm / df_within)
+                        f_perms.append(F_perm)
 
-                # Between-group sum of squares
-                ss_between = ss_total - ss_within
+                f_perms = np.array(f_perms)
+                p_val = (np.sum(f_perms >= F) + 1) / (len(f_perms) + 1) if len(f_perms) > 0 else np.nan
                 
-                # Degrees of freedom
-                df_between = len(np.unique(conditions_clean)) - 1
-                df_within = n - len(np.unique(conditions_clean))
-
-                # F-statistic (should always be positive)
-                if df_within > 0 and ss_within > 0:
-                    F = (ss_between / df_between) / (ss_within / df_within)
-                    
-                    # ==================== DEBUG START ====================
-                    st.write("### PERMANOVA Debug Info")
-                    st.write(f"**ss_total:** {ss_total:.2f}")
-                    st.write(f"**ss_between:** {ss_between:.2f}")
-                    st.write(f"**ss_within:** {ss_within:.2f}")
-                    st.write(f"**F-statistic:** {F:.2f}")
-                    st.write(f"**df_between:** {df_between}, **df_within:** {df_within}")
-                    st.write(f"**n samples:** {n}, **n conditions:** {len(np.unique(conditions_clean))}")
-                    st.write(f"**Conditions:** {np.unique(conditions_clean)}")
-                    # ==================== DEBUG END ====================
-                    
-                    # Permutation test for p-value
-                    f_perms = []
-                    for _ in range(999):
-                        perm_cond = np.random.permutation(conditions_clean)
-                        ss_within_perm = 0.0
-                        for g in np.unique(perm_cond):
-                            mask = perm_cond == g
-                            n_g = mask.sum()
-                            if n_g > 1:
-                                ss_within_perm += (
-                                    np.sum(dist_matrix[np.ix_(mask, mask)]**2) / (2 * n_g)
-                                )
-                        ss_between_perm = ss_total - ss_within_perm
-                        if ss_within_perm > 0:
-                            F_perm = (ss_between_perm / df_between) / (ss_within_perm / df_within)
-                            f_perms.append(F_perm)
-
-                    f_perms = np.array(f_perms)
-                    p_val = (np.sum(f_perms >= F) + 1) / (len(f_perms) + 1) if len(f_perms) > 0 else np.nan
-                    
-                    permanova_f = F
-                    permanova_p = p_val
-        except Exception as e:
-            # ==================== DEBUG START ====================
-            st.error(f"PERMANOVA calculation failed: {str(e)}")
-            # ==================== DEBUG END ====================
-            pass
+                permanova_f = F
+                permanova_p = p_val
+    except Exception:
+        pass
 
     # Shapiro-Wilk
     shapiro_w = np.nan
