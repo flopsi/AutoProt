@@ -15,9 +15,8 @@ def inject_custom_css():
     """Inject global CSS for consistent styling."""
     st.markdown("""
     <style>
-        [data-testid="stSidebar"] { display: none; }
-        [data-testid="collapsedControl"] { display: none; }
-
+        /* Don't hide sidebar on this page */
+        
         body, .stMarkdown, .stText {
             font-family: Arial, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         }
@@ -75,6 +74,7 @@ def inject_custom_css():
             font-size: 12px;
             padding: 20px 0;
             margin-top: 20px;
+            border-top: 1px solid #E2E3E4;
         }
     </style>
     """, unsafe_allow_html=True)
@@ -82,7 +82,6 @@ def inject_custom_css():
 
 def render_header():
     """Render header with protein/peptide status indicators."""
-    # Consistent with other pages
     protein_loaded = st.session_state.get("protein_model") is not None
     peptide_loaded = st.session_state.get("peptide_model") is not None
 
@@ -104,30 +103,31 @@ def render_navigation(back_page=None, next_page=None):
     """Render bottom navigation with Back, Home, Restart, Next buttons."""
     st.markdown("---")
     
-    col1, col2, col3, col4 = st.columns(4, gap="medium")
+    col1, col2, col3, col4 = st.columns(4)
 
     with col1:
         if back_page:
-            if st.button("← Back", use_container_width=True, type="secondary"):
+            if st.button("← Back", use_container_width=True, key="nav_back"):
                 st.switch_page(back_page)
         else:
-            st.button("← Back", use_container_width=True, disabled=True)
+            st.button("← Back", use_container_width=True, disabled=True, key="nav_back_disabled")
 
     with col2:
-        if st.button("🏠 Home", use_container_width=True, type="secondary"):
+        if st.button("🏠 Home", use_container_width=True, key="nav_home"):
             st.switch_page("app.py")
 
     with col3:
-        if st.button("🔄 Restart", use_container_width=True, type="secondary"):
+        if st.button("🔄 Restart", use_container_width=True, key="nav_restart"):
             _clear_session_state()
+            st.cache_data.clear()
             st.switch_page("app.py")
 
     with col4:
         if next_page:
-            if st.button("Next →", use_container_width=True, type="primary"):
+            if st.button("Next →", use_container_width=True, key="nav_next"):
                 st.switch_page(next_page)
         else:
-            st.button("Next →", use_container_width=True, disabled=True)
+            st.button("Next →", use_container_width=True, disabled=True, key="nav_next_disabled")
 
 
 def _clear_session_state():
@@ -139,10 +139,10 @@ def _clear_session_state():
         "peptide_seq_col",
         "protein_missing_mask", "peptide_missing_mask",
         "upload_key", "raw_df", "column_renames", "selected_quant_cols",
+        "filter_state_df", "compute_stats_now",
     ]
     for key in keys_to_clear:
         st.session_state.pop(key, None)
-    st.cache_data.clear()
 
 
 def render_footer():
