@@ -70,7 +70,7 @@ class MSData:
     missing_count: int
     numeric_cols: List[str]
     transforms: TransformsCache
-    species_subgroups: FilteredSubgroups
+    species_subgroups: 'FilteredSubgroups'  # Add this line
     species_col: str
 
 
