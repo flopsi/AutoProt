@@ -437,12 +437,234 @@ with st.sidebar:
     else:
         st.caption("No filters active")
 
-# ========== MAIN: Stats and Visualizations ==========
+# ========== SPECIES-SPECIFIC OPTIMIZATION MODE ==========
+st.markdown("## 🎯 Species-Specific Optimization")
+
+col_mode1, col_mode2 = st.columns([2, 1])
+
+with col_mode1:
+    optimization_mode = st.radio(
+        "Filtering mode",
+        options=["Global filters (same for all species)", "Species-specific optimization (build sequentially)"],
+        index=0,
+        key="optimization_mode",
+        help="Global: Apply same filters to all species. Species-specific: Optimize filters independently for each species."
+    )
+
+use_species_optimization = optimization_mode == "Species-specific optimization (build sequentially)"
+
+if use_species_optimization:
+    st.info("📋 **Sequential Selection**: Configure and add each species separately with optimized filters. The final dataset combines all selections.")
+    
+    # Initialize species-specific state - store indices instead of DataFrames
+    if "optimized_species_indices" not in st.session_state:
+        st.session_state.optimized_species_indices = {}
+    
+    # Species selection for optimization
+    available_species = ["HUMAN", "ECOLI", "YEAST", "MOUSE"]
+    already_added = list(st.session_state.optimized_species_indices.keys())
+    remaining_species = [sp for sp in available_species if sp not in already_added]
+    
+    if remaining_species:
+        st.markdown("### Configure Next Species")
+        
+        col_sp1, col_sp2, col_sp3 = st.columns([2, 2, 1])
+        
+        with col_sp1:
+            current_species = st.selectbox(
+                "Select species to optimize",
+                options=remaining_species,
+                key="current_species_select"
+            )
+        
+        with col_sp2:
+            st.metric("Species count", len(already_added))
+            st.caption(f"Added: {', '.join(already_added) if already_added else 'None'}")
+        
+        # Species-specific filter overrides
+        st.markdown(f"#### Filters for {current_species}")
+        
+        col_f1, col_f2, col_f3 = st.columns(3)
+        
+        with col_f1:
+            sp_use_peptides = st.checkbox(
+                "Min peptides",
+                value=use_min_peptides,
+                key=f"sp_peptides_{current_species}"
+            )
+            sp_min_peptides = st.slider(
+                "Count",
+                min_value=1,
+                max_value=10,
+                value=min_peptides,
+                disabled=not sp_use_peptides,
+                key=f"sp_min_pep_val_{current_species}"
+            )
+        
+        with col_f2:
+            sp_use_cv = st.checkbox(
+                "CV% cutoff",
+                value=use_cv,
+                key=f"sp_cv_{current_species}"
+            )
+            sp_cv_cutoff = st.slider(
+                "Max CV%",
+                min_value=0,
+                max_value=100,
+                value=cv_cutoff,
+                step=5,
+                disabled=not sp_use_cv,
+                key=f"sp_cv_val_{current_species}"
+            )
+        
+        with col_f3:
+            sp_use_missing = st.checkbox(
+                "Max missing",
+                value=use_missing,
+                key=f"sp_missing_{current_species}"
+            )
+            sp_missing_pct = st.slider(
+                "Max %",
+                min_value=0,
+                max_value=100,
+                value=max_missing_pct,
+                step=10,
+                disabled=not sp_use_missing,
+                key=f"sp_missing_val_{current_species}"
+            )
+        
+        # Preview stats for this species
+        sp_min_pep = sp_min_peptides if sp_use_peptides else 1
+        sp_cv = sp_cv_cutoff if sp_use_cv else 1000.0
+        sp_missing_ratio = sp_missing_pct / 100.0 if sp_use_missing else 1.0
+        
+        # Get species subset
+        species_subset = protein_model.species_subgroups.get([current_species])
+        
+        if not species_subset.empty:
+            # Apply filters to preview
+            preview_filtered = apply_filters(
+                species_subset[numeric_cols],
+                protein_model,
+                numeric_cols,
+                [current_species],
+                sp_min_pep,
+                sp_cv,
+                sp_missing_ratio,
+                None,
+                transform_key,
+            )
+            
+            preview_stats = compute_stats(preview_filtered, protein_model, numeric_cols, protein_species_col)
+            
+            col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+            col_p1.metric("Before", f"{len(species_subset):,}")
+            col_p2.metric("After", f"{preview_stats['n_proteins']:,}")
+            col_p3.metric("Kept", f"{preview_stats['n_proteins'] / len(species_subset) * 100:.1f}%")
+            col_p4.metric("Mean CV%", f"{preview_stats['cv_mean']:.1f}" if not np.isnan(preview_stats['cv_mean']) else "N/A")
+            
+            col_add1, col_add2, _ = st.columns([1, 1, 2])
+            
+            with col_add1:
+                if st.button(f"➕ Add {current_species} with these filters", type="primary", key=f"add_{current_species}"):
+                    # Store only indices and filter settings - NOT DataFrames
+                    st.session_state.optimized_species_indices[current_species] = {
+                        "indices": preview_filtered.index.tolist(),  # Store as list
+                        "filters": {
+                            "min_peptides": sp_min_pep,
+                            "cv_cutoff": sp_cv,
+                            "missing_ratio": sp_missing_ratio,
+                        },
+                        "n_proteins": preview_stats['n_proteins']
+                    }
+                    st.rerun()
+            
+            with col_add2:
+                if st.button("⏭️ Skip this species", key=f"skip_{current_species}"):
+                    st.session_state.optimized_species_indices[current_species] = {
+                        "indices": [],
+                        "filters": {"skipped": True},
+                        "n_proteins": 0
+                    }
+                    st.rerun()
+        else:
+            st.warning(f"No {current_species} proteins found in dataset")
+    
+    else:
+        st.success("✅ All species configured!")
+    
+    # Show summary of added species
+    if already_added:
+        st.markdown("### Current Selection Summary")
+        
+        summary_data = []
+        for sp in already_added:
+            sp_info = st.session_state.optimized_species_indices[sp]
+            if sp_info["filters"].get("skipped"):
+                summary_data.append({
+                    "Species": sp,
+                    "Proteins": 0,
+                    "Status": "Skipped",
+                    "Min Peptides": "—",
+                    "Max CV%": "—",
+                    "Max Missing%": "—"
+                })
+            else:
+                filters = sp_info["filters"]
+                summary_data.append({
+                    "Species": sp,
+                    "Proteins": sp_info["n_proteins"],
+                    "Status": "Added",
+                    "Min Peptides": filters["min_peptides"],
+                    "Max CV%": f"{filters['cv_cutoff']:.0f}" if filters['cv_cutoff'] < 1000 else "None",
+                    "Max Missing%": f"{filters['missing_ratio']*100:.0f}"
+                })
+        
+        summary_df = pd.DataFrame(summary_data)
+        st.dataframe(summary_df, hide_index=True, use_container_width=True)
+        
+        col_action1, col_action2, col_action3 = st.columns([1, 1, 2])
+        
+        with col_action1:
+            if st.button("🔄 Reset Selection", key="reset_optimization"):
+                st.session_state.optimized_species_indices = {}
+                st.session_state.pop("optimization_finalized", None)
+                st.rerun()
+        
+        with col_action2:
+            if len(already_added) == len(available_species):
+                if st.button("✅ Finalize & Continue", type="primary", key="finalize_optimization"):
+                    st.session_state.optimization_finalized = True
+                    st.rerun()
+        
+        # Show combined stats if finalized
+        if st.session_state.get("optimization_finalized"):
+            # Reconstruct combined dataframe from stored indices
+            all_indices = []
+            for sp_info in st.session_state.optimized_species_indices.values():
+                if not sp_info["filters"].get("skipped") and sp_info["indices"]:
+                    all_indices.extend(sp_info["indices"])
+            
+            if all_indices:
+                filtered_df = protein_model.raw_filled.loc[all_indices, numeric_cols]
+                
+                st.markdown("### Combined Dataset Statistics")
+                combined_stats = compute_stats(filtered_df, protein_model, numeric_cols, protein_species_col)
+                
+                col_c1, col_c2, col_c3, col_c4 = st.columns(4)
+                col_c1.metric("Total Proteins", f"{combined_stats['n_proteins']:,}")
+                col_c2.metric("Mean CV%", f"{combined_stats['cv_mean']:.1f}" if not np.isnan(combined_stats['cv_mean']) else "N/A")
+                col_c3.metric("PERMANOVA F", f"{combined_stats['permanova_f']:.2f}" if not np.isnan(combined_stats['permanova_f']) else "N/A")
+                col_c4.metric("Shapiro W", f"{combined_stats['shapiro_w']:.4f}" if not np.isnan(combined_stats['shapiro_w']) else "N/A")
+
+st.markdown("---")
+
+# ========== MAIN FILTERING ==========
 
 # Initial stats (unfiltered)
 initial_stats = compute_stats(df_raw, protein_model, numeric_cols, protein_species_col)
 
-# CONTAINER 1: Summary Stats (Before Filtering)
+# CONTAINER 1: Summary Stats
 st.markdown("### Summary Statistics")
 
 c1, c2, c3, c4 = st.columns(4)
@@ -470,78 +692,17 @@ with c4:
 
 st.markdown("---")
 
-# CONTAINER 2: Intensity Distribution
-st.markdown("### Intensity Distribution by Sample")
-
-# Replace the intensity distribution section with this:
-
-# CONTAINER 2: Intensity Distribution
-st.markdown("### Intensity Distribution by Sample")
-
-# Get transformed data
-transform_data = get_transform_data(protein_model, transform_key)
-
-# Standard deviation filter
-st.markdown("#### Standard Deviation Filter")
-col_sd1, col_sd2 = st.columns([3, 1])
-
-with col_sd1:
-    sd_range = st.slider(
-        "Filter by standard deviations from mean (per sample)",
-        min_value=0.5,
-        max_value=5.0,
-        value=(0.5, 3.0),
-        step=0.5,
-        key="sd_range_slider",
-        help="Values outside this range will be highlighted. Only filtered when checkbox is enabled."
-    )
-
-with col_sd2:
-    apply_sd_filter = st.checkbox(
-        "Apply filter",
-        value=False,
-        key="apply_sd_filter",
-        help="When enabled, actually filters the data. Otherwise just shows what would be filtered."
-    )
-
-# Apply filters (including SD filter if enabled)
-if apply_sd_filter:
-    # First apply other filters
-    filtered_df_temp = apply_filters(
-        df_raw,
-        protein_model,
-        numeric_cols,
-        selected_species,
-        min_peptides_val,
-        cv_cutoff_val,
-        max_missing_ratio,
-        None,  # No intensity range yet
-        transform_key,
-    )
+# Determine which filtered_df to use
+if use_species_optimization and st.session_state.get("optimization_finalized"):
+    # Use optimized combined dataset
+    all_indices = []
+    for sp_info in st.session_state.optimized_species_indices.values():
+        if not sp_info["filters"].get("skipped") and sp_info["indices"]:
+            all_indices.extend(sp_info["indices"])
     
-    # Then apply SD filter on transformed data
-    if not filtered_df_temp.empty:
-        transform_temp = get_transform_data(protein_model, transform_key).loc[filtered_df_temp.index, numeric_cols]
-        
-        # Filter each sample independently
-        sd_mask = pd.Series(True, index=filtered_df_temp.index)
-        for col in numeric_cols:
-            col_data = transform_temp[col].dropna()
-            if len(col_data) > 0:
-                mean_val = col_data.mean()
-                std_val = col_data.std()
-                lower_bound = mean_val - (sd_range[0] * std_val)
-                upper_bound = mean_val + (sd_range[1] * std_val)
-                
-                # Mark rows outside range
-                col_mask = (transform_temp[col] >= lower_bound) & (transform_temp[col] <= upper_bound)
-                sd_mask &= col_mask
-        
-        filtered_df = filtered_df_temp[sd_mask]
-    else:
-        filtered_df = filtered_df_temp
+    filtered_df = protein_model.raw_filled.loc[all_indices, numeric_cols] if all_indices else pd.DataFrame()
 else:
-    # Just apply other filters, not SD filter
+    # Use global filters
     filtered_df = apply_filters(
         df_raw,
         protein_model,
@@ -560,7 +721,10 @@ if not filtered_df.empty:
 else:
     transform_data_filtered = pd.DataFrame()
 
-# Create Vega-Lite histograms in 3-column grid
+# CONTAINER 2: Intensity Distribution
+st.markdown("### Intensity Distribution by Sample")
+
+# Create histograms in 3-column grid
 n_cols = 3
 n_rows = (len(numeric_cols) + n_cols - 1) // n_cols
 
@@ -575,6 +739,8 @@ for row_idx in range(n_rows):
         sample = numeric_cols[sample_idx]
         
         with cols[col_idx]:
+            fig = go.Figure()
+            
             sample_data = (
                 transform_data_filtered[sample].dropna()
                 if not transform_data_filtered.empty
@@ -585,110 +751,55 @@ for row_idx in range(n_rows):
                 mean_val = sample_data.mean()
                 std_val = sample_data.std()
                 
-                # Calculate SD bounds
-                lower_bound = mean_val - (sd_range[0] * std_val)
-                upper_bound = mean_val + (sd_range[1] * std_val)
+                fig.add_trace(go.Histogram(
+                    x=sample_data,
+                    name="Distribution",
+                    nbinsx=50,
+                    marker_color="rgba(135, 206, 235, 0.7)",
+                    showlegend=False,
+                ))
                 
-                # Count filtered vs kept
-                in_range = ((sample_data >= lower_bound) & (sample_data <= upper_bound)).sum()
-                out_range = len(sample_data) - in_range
+                fig.add_vline(
+                    x=mean_val,
+                    line_dash="solid",
+                    line_color="red",
+                    line_width=2,
+                    annotation_text=f"μ={mean_val:.1f}",
+                    annotation_position="top",
+                )
                 
-                # Prepare data for Vega-Lite
-                chart_data = pd.DataFrame({
-                    'value': sample_data.values,
-                    'in_range': (sample_data >= lower_bound) & (sample_data <= upper_bound)
-                })
+                fig.add_vrect(
+                    x0=mean_val - std_val,
+                    x1=mean_val + std_val,
+                    fillcolor="red",
+                    opacity=0.1,
+                    layer="below",
+                    line_width=0,
+                )
                 
-                # Vega-Lite specification
-                spec = {
-                    "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
-                    "width": "container",
-                    "height": 300,
-                    "title": {
-                        "text": f"{sample} (n={len(sample_data)})",
-                        "fontSize": 14
-                    },
-                    "data": {"values": chart_data.to_dict('records')},
-                    "layer": [
-                        {
-                            "mark": {
-                                "type": "bar",
-                                "binSpacing": 1,
-                                "stroke": "white",
-                                "strokeWidth": 0.5
-                            },
-                            "encoding": {
-                                "x": {
-                                    "bin": {"maxbins": 50},
-                                    "field": "value",
-                                    "title": TRANSFORMS[transform_key],
-                                    "axis": {"labelFontSize": 10, "titleFontSize": 11}
-                                },
-                                "y": {
-                                    "aggregate": "count",
-                                    "title": "Count",
-                                    "axis": {"labelFontSize": 10, "titleFontSize": 11}
-                                },
-                                "color": {
-                                    "field": "in_range",
-                                    "scale": {
-                                        "domain": [False, True],
-                                        "range": ["#ff6b6b", "#87CEEB"]
-                                    },
-                                    "legend": None
-                                },
-                                "tooltip": [
-                                    {"aggregate": "count", "title": "Count"}
-                                ]
-                            }
-                        },
-                        {
-                            "mark": {"type": "rule", "color": "red", "strokeWidth": 2},
-                            "encoding": {
-                                "x": {"datum": mean_val}
-                            }
-                        },
-                        {
-                            "mark": {
-                                "type": "rect",
-                                "opacity": 0.15,
-                                "color": "red"
-                            },
-                            "encoding": {
-                                "x": {"datum": mean_val - std_val},
-                                "x2": {"datum": mean_val + std_val}
-                            }
-                        },
-                        {
-                            "mark": {"type": "rule", "color": "orange", "strokeWidth": 2, "strokeDash": [5, 5]},
-                            "encoding": {
-                                "x": {"datum": lower_bound}
-                            }
-                        },
-                        {
-                            "mark": {"type": "rule", "color": "orange", "strokeWidth": 2, "strokeDash": [5, 5]},
-                            "encoding": {
-                                "x": {"datum": upper_bound}
-                            }
-                        }
-                    ],
-                    "config": {
-                        "view": {"stroke": None},
-                        "axis": {"grid": False}
-                    }
-                }
-                
-                st.vega_lite_chart(spec, use_container_width=True)
-                
-                # Show filter stats
-                if apply_sd_filter:
-                    st.caption(f"✅ **Kept:** {in_range} | ❌ **Filtered:** {out_range}")
-                else:
-                    st.caption(f"📊 **In range:** {in_range} | 🔍 **Would filter:** {out_range}")
-                
-                st.caption(f"μ={mean_val:.1f}, σ={std_val:.1f} | Range: [{lower_bound:.1f}, {upper_bound:.1f}]")
+                fig.update_layout(
+                    title=f"{sample} (n={len(sample_data)})",
+                    xaxis_title=TRANSFORMS[transform_key],
+                    yaxis_title="Count",
+                    height=350,
+                    plot_bgcolor="#FFFFFF",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(family="Arial", size=10, color="#54585A"),
+                    showlegend=False,
+                    margin=dict(l=40, r=40, t=60, b=40),
+                )
             else:
-                st.info("No data after filtering")
+                fig.add_annotation(text="No data after filtering", showarrow=False)
+                fig.update_layout(
+                    height=350,
+                    plot_bgcolor="#FFFFFF",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(family="Arial", size=10, color="#54585A"),
+                )
+            
+            st.plotly_chart(fig, use_container_width=True, key=f"hist_{sample}_{sample_idx}")
+
+st.markdown("---")
 
 # CONTAINER 3: Action Buttons
 col1, col2, col3 = st.columns([1, 1, 2])
@@ -709,32 +820,25 @@ with col2:
 
 st.markdown("---")
 
-# CONTAINER 4: Before/After Comparison Tables at Bottom
+# CONTAINER 4: Before/After Comparison Tables
 if st.session_state.get("compute_stats_now", False):
     with st.spinner("Computing stats..."):
         filtered_stats = compute_stats(filtered_df, protein_model, numeric_cols, protein_species_col)
     
     st.session_state.compute_stats_now = False
     
-    st.markdown("### Before vs After Filtering")
-    
-    col_before, col_after = st.columns(2)
-    
-    # Helper function to style dataframe with conditional formatting
-    def style_metrics_table(data_dict, is_after=False):
+    # Helper function to style dataframe
+    def style_metrics_table(data_dict):
         df = pd.DataFrame(data_dict)
         
         def highlight_permanova(row):
             if row['Metric'] == 'PERMANOVA F':
                 try:
                     val = float(row['Value'])
-                    # Good: F > 5 (strong group separation)
                     if val > 5:
                         return ['background-color: #c6efce; color: #006100'] * len(row)
-                    # Moderate: F > 2
                     elif val > 2:
                         return ['background-color: #ffeb9c; color: #9c6500'] * len(row)
-                    # Poor: F < 2
                     else:
                         return ['background-color: #ffc7ce; color: #9c0006'] * len(row)
                 except:
@@ -743,13 +847,10 @@ if st.session_state.get("compute_stats_now", False):
             elif row['Metric'] == 'Shapiro W':
                 try:
                     val = float(row['Value'])
-                    # Good: W > 0.98 (normal distribution)
                     if val > 0.98:
                         return ['background-color: #c6efce; color: #006100'] * len(row)
-                    # Moderate: W > 0.95
                     elif val > 0.95:
                         return ['background-color: #ffeb9c; color: #9c6500'] * len(row)
-                    # Poor: W < 0.95 (non-normal)
                     else:
                         return ['background-color: #ffc7ce; color: #9c0006'] * len(row)
                 except:
@@ -759,6 +860,10 @@ if st.session_state.get("compute_stats_now", False):
         
         styled_df = df.style.apply(highlight_permanova, axis=1)
         return styled_df
+    
+    st.markdown("### Before vs After Filtering")
+    
+    col_before, col_after = st.columns(2)
     
     # Before table
     with col_before:
@@ -787,7 +892,7 @@ if st.session_state.get("compute_stats_now", False):
                     before_data["Metric"].append(f"{sp}")
                     before_data["Value"].append(f"{initial_stats['species_counts'][sp]:,}")
         
-        styled_before = style_metrics_table(before_data, is_after=False)
+        styled_before = style_metrics_table(before_data)
         st.dataframe(styled_before, hide_index=True, use_container_width=True, height=400)
     
     # After table
@@ -827,7 +932,7 @@ if st.session_state.get("compute_stats_now", False):
                     after_data["Value"].append(f"{after_val:,}")
                     after_data["Change"].append(f"{after_val - before_val:+,}")
         
-        styled_after = style_metrics_table(after_data, is_after=True)
+        styled_after = style_metrics_table(after_data)
         st.dataframe(styled_after, hide_index=True, use_container_width=True, height=400)
     
     # Legend
@@ -846,4 +951,3 @@ else:
 
 render_navigation(back_page="pages/3_Preprocessing.py", next_page=None)
 render_footer()
-
