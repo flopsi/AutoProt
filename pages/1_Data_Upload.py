@@ -340,16 +340,6 @@ def config_fragment():
         .astype("float64")
     )
 
-    rename_map = {k: v for k, v in st.session_state.column_renames.items() if k in raw_df.columns}
-    working_df = raw_df.rename(columns=rename_map)
-
-    numeric_cols_renamed = [st.session_state.column_renames.get(c, c) for c in numeric_cols_orig]
-    working_df[numeric_cols_renamed] = (
-        working_df[numeric_cols_renamed]
-        .apply(pd.to_numeric, errors="coerce")
-        .astype("float64")
-    )
-
     # Clean metadata columns: remove text after semicolon
     for meta_col in meta_cols:
         if meta_col in working_df.columns:
@@ -361,12 +351,35 @@ def config_fragment():
     # Filter by species
     processed_df = working_df.copy()
     if species_col_to_use and species_tags:
-        # Extract species tag from the column value (e.g., "sp|P12345|PROT_HUMAN" -> "HUMAN")
         if species_col_to_use in processed_df.columns:
-            processed_df["_extracted_species"] = processed_df[species_col_to_use].apply(extract_species_from_protein_id)
+            # Check if column already contains plain species names
+            sample_values = processed_df[species_col_to_use].dropna().astype(str).str.upper().str.strip().head(20)
+            is_plain_species = sample_values.isin(["HUMAN", "YEAST", "ECOLI", "MOUSE", "UNKNOWN"]).mean() > 0.8
+            
+            # Debug output
+            st.write(f"**Debug - First 5 values in {species_col_to_use}:**")
+            st.write(processed_df[species_col_to_use].head().tolist())
+            st.write(f"**Is plain species format:** {is_plain_species}")
+            
+            if is_plain_species:
+                # Column already has species names, use directly
+                processed_df["_extracted_species"] = processed_df[species_col_to_use].astype(str).str.upper().str.strip()
+                st.write("**Using direct species values (no extraction)**")
+            else:
+                # Extract from protein ID format
+                processed_df["_extracted_species"] = processed_df[species_col_to_use].apply(extract_species_from_protein_id)
+                st.write("**Extracting species from protein IDs**")
+            
+            # Show what we extracted
+            st.write(f"**Extracted species counts:**")
+            st.write(processed_df["_extracted_species"].value_counts().to_dict())
+            
+            # Filter by species
+            before_count = len(processed_df)
             processed_df = filter_by_species(processed_df, "_extracted_species", species_tags)
-            st.info(f"Filtered to {len(processed_df):,} rows matching: {', '.join(species_tags)}")
-
+            after_count = len(processed_df)
+            
+            st.info(f"Filtered from {before_count:,} to {after_count:,} rows matching: {', '.join(species_tags)}")
 
     st.markdown("### Data preview")
     st.dataframe(processed_df.head(10), width="stretch", height=300)
@@ -397,11 +410,9 @@ def config_fragment():
 
             st.session_state[existing_key] = model
             st.session_state[index_key] = pg_col
-            st.session_state[species_key] = species_col_to_use
+            st.session_state[species_key] = "_extracted_species"  # Always use extracted
             st.session_state[seq_key] = peptide_seq_col
             st.session_state[mask_key] = missing_mask
-            st.session_state[species_key] = "_extracted_species"  # Always use extracted
-
 
             reset_upload_state()
             
@@ -415,6 +426,7 @@ def config_fragment():
         if st.button("Cancel"):
             reset_upload_state()
             st.rerun()
+
 
 config_fragment()
 
