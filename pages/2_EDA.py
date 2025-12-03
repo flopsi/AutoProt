@@ -281,7 +281,7 @@ def create_pca_plot(
 
 
 def compute_permanova(df_log2: pd.DataFrame, numeric_cols: List[str]) -> Dict[str, float]:
-    """Compute PERMANOVA (permutational MANOVA) statistics."""
+    """Compute PERMANOVA (permutational MANOVA) statistics - CORRECTED VERSION."""
     if len(df_log2) < 3:
         return {"F": np.nan, "p": np.nan, "R2": np.nan}
     
@@ -296,7 +296,7 @@ def compute_permanova(df_log2: pd.DataFrame, numeric_cols: List[str]) -> Dict[st
     if len(unique_conds) < 2:
         return {"F": np.nan, "p": np.nan, "R2": np.nan}
 
-    # ============ KEY FIX: Remove proteins with NaN in ANY sample ============
+    # ============ CRITICAL FIX: Remove proteins with NaN in ANY sample ============
     # This ensures all samples have the same set of proteins
     valid_proteins = ~np.isnan(data).any(axis=0)
     data_clean = data[:, valid_proteins]
@@ -304,7 +304,7 @@ def compute_permanova(df_log2: pd.DataFrame, numeric_cols: List[str]) -> Dict[st
     # Ensure we have enough data
     if data_clean.shape[1] < 3 or data_clean.shape[0] < 3:
         return {"F": np.nan, "p": np.nan, "R2": np.nan}
-    # =========================================================================
+    # ==============================================================================
 
     # Calculate distance matrix on cleaned data
     dist_matrix = squareform(pdist(data_clean, metric="euclidean"))
@@ -336,6 +336,7 @@ def compute_permanova(df_log2: pd.DataFrame, numeric_cols: List[str]) -> Dict[st
         return {"F": F_obs, "p": np.nan, "R2": R2}
     
     # Permutation test
+    np.random.seed(42)  # Make deterministic
     f_perms = [
         calc_f_statistic(dist_matrix, np.random.permutation(conditions))[0]
         for _ in range(999)
@@ -365,6 +366,7 @@ def analyze_transformations(
     for name, vals in transforms_dict.items():
         clean = vals[np.isfinite(vals)]
         if len(clean) >= 20:
+            np.random.seed(42)  # Make deterministic
             sample = np.random.choice(clean, min(5000, len(clean)), replace=False)
             try:
                 W, p = stats.shapiro(sample)
@@ -391,8 +393,15 @@ def render_pca_with_stats(
         st.plotly_chart(fig_pca, use_container_width=True, key=f"pca_{key_suffix}_{label}")
     
     perm = compute_permanova(df, numeric_cols)
-    st.metric("F-stat", f"{perm['F']:.2f}" if not np.isnan(perm["F"]) else "N/A")
-    st.metric("p-value", f"{perm['p']:.4f}" if not np.isnan(perm["p"]) else "N/A")
+    
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        st.metric("F-stat", f"{perm['F']:.2f}" if not np.isnan(perm["F"]) else "N/A")
+    with col_m2:
+        st.metric("p-value", f"{perm['p']:.4f}" if not np.isnan(perm["p"]) else "N/A")
+    
+    if not np.isnan(perm["R2"]):
+        st.caption(f"R² = {perm['R2']:.3f}")
     
     return perm
 
@@ -411,6 +420,12 @@ if protein_model is None and peptide_model is None:
     render_navigation(back_page="pages/1_Data_Upload.py", next_page=None)
     render_footer()
     st.stop()
+
+# Info box about workflow
+st.info(
+    "📊 **EDA Workflow**: This page provides qualitative overview and initial statistics. "
+    "Use **Preprocessing** page for transformations and **Filtering** page for detailed quality control with interactive filters."
+)
 
 tab_protein, tab_peptide = st.tabs(["Protein data", "Peptide data"])
 
@@ -436,6 +451,7 @@ def render_eda(
     )
 
     # Row 1: Heatmap + Missing distribution
+    st.markdown("### Data Quality Overview")
     col1, col2 = st.columns([2, 1])
     with col1:
         fig_heat = create_intensity_heatmap(df_log2, index_col, numeric_cols)
@@ -447,14 +463,14 @@ def render_eda(
     st.markdown("---")
 
     # Row 2: Violin plot
-    st.markdown("### Sample distributions (all conditions)")
+    st.markdown("### Sample Distributions")
     fig_violin = create_violin_plot(df_log2, numeric_cols)
     st.plotly_chart(fig_violin, use_container_width=True, key=f"violin_{label}")
 
     st.markdown("---")
 
     # Row 3: Variance analysis with species-stratified PCA
-    st.markdown("### Variance Analysis")
+    st.markdown("### Variance Analysis & Group Separation")
 
     species_dist = None
     if species_col and species_col in model.raw.columns:
@@ -468,15 +484,15 @@ def render_eda(
 
     if species_dist:
         st.caption(
-            f"Species detected: {', '.join(species_dist['species'])}. "
-            "Showing PCA for: all | dominant | others"
+            f"**Species detected:** {', '.join(species_dist['species'])}. "
+            "Showing PCA for: All | Dominant | Others"
         )
         
         col1, col2, col3 = st.columns(3, vertical_alignment="top", border=True)
 
         # All species
         with col1:
-            st.subheader("All", divider=True)
+            st.subheader("All Species", divider=True)
             perm_all = render_pca_with_stats(df_log2, numeric_cols, "all species", label, "all")
 
         # Dominant species only
@@ -498,25 +514,35 @@ def render_eda(
         st.markdown("---")
 
         # Interpretation
+        st.markdown("#### 🔍 Interpretation")
+        
         ps = [perm_all["p"], perm_dom["p"], perm_oth["p"]]
         ps_clean = [p for p in ps if not np.isnan(p)]
 
         if ps_clean and all(p >= 0.05 for p in ps_clean):
             st.error(
-                "🔴 **STRONG: Preprocessing REQUIRED**\n\n"
-                "All tests non-significant. Start with Phase 1-2 preprocessing."
+                "🔴 **STRONG: Filtering REQUIRED**\n\n"
+                "All PERMANOVA tests non-significant (p ≥ 0.05). No separation between conditions detected. "
+                "**Action**: Apply filters on Filtering page to remove noisy proteins/peptides."
             )
         elif (not np.isnan(perm_oth["p"]) and perm_oth["p"] < 0.05 
               and (np.isnan(perm_all["p"]) or perm_all["p"] >= 0.05)):
             st.warning(
-                "🟡 **MEDIUM: Preprocessing SUGGESTED**\n\n"
-                "Signal in non-dominant species masked in combined analysis."
+                "🟡 **MEDIUM: Filtering SUGGESTED**\n\n"
+                "Signal detected in non-dominant species (p < 0.05) but masked in combined analysis. "
+                "**Action**: Consider species-specific filtering or separate analysis."
+            )
+        elif ps_clean and any(p < 0.05 for p in ps_clean):
+            st.success(
+                "🟢 **Signal Detected**\n\n"
+                f"Condition separation detected (PERMANOVA p < 0.05). "
+                "**Optional**: Use Filtering page to further improve signal quality."
             )
         else:
-            st.info("🟢 **Signal detected. Optional: Phase 1 filtering.**")
+            st.info("ℹ️ Insufficient data for statistical testing.")
 
     else:
-        st.caption("Single-species dataset.")
+        st.caption("Single-species dataset or species column not available.")
         col1, col2 = st.columns([2, 1])
         with col1:
             fig_pca = create_pca_plot(df_log2, numeric_cols)
@@ -526,11 +552,15 @@ def render_eda(
             perm = compute_permanova(df_log2, numeric_cols)
             st.metric("Pseudo-F", f"{perm['F']:.2f}" if not np.isnan(perm["F"]) else "N/A")
             st.metric("p-value", f"{perm['p']:.4f}" if not np.isnan(perm["p"]) else "N/A")
+            if not np.isnan(perm["R2"]):
+                st.caption(f"R² = {perm['R2']:.3f}")
 
     st.markdown("---")
 
     # Row 4: Normality analysis
-    st.markdown("### Normality Analysis")
+    st.markdown("### Normality Analysis & Transformation Comparison")
+    st.caption("Comparing different transformations. Best transformation highlighted in yellow.")
+    
     stats_df = analyze_transformations(df_log2, numeric_cols, model.transforms)
     
     if not stats_df.empty:
@@ -553,6 +583,10 @@ def render_eda(
         
         st.dataframe(styled_df, use_container_width=True, hide_index=True)
         st.success(f"✓ Recommended transformation: **{best_transform}**")
+        st.caption(
+            "**Shapiro-Wilk test**: W closer to 1.0 indicates better normality. "
+            "Select transformation on Preprocessing page."
+        )
 
 
 with tab_protein:
