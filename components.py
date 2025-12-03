@@ -79,6 +79,24 @@ def inject_custom_css():
     </style>
     """, unsafe_allow_html=True)
 
+def _clear_session_state():
+    """Clear all cached data for restart."""
+    keys_to_clear = [
+        "protein_model", "peptide_model",
+        "protein_index_col", "peptide_index_col", 
+        "protein_species_col", "peptide_species_col",
+        "peptide_seq_col",
+        "protein_missing_mask", "peptide_missing_mask",
+        "upload_key", "raw_df", "column_renames", "selected_quant_cols",
+        "filter_state_df", "compute_stats_now",
+    ]
+    for key in keys_to_clear:
+        st.session_state.pop(key, None)
+    
+    # Re-initialize essential defaults
+    st.session_state.upload_key = 0
+    st.session_state.column_renames = {}
+    st.session_state.selected_quant_cols = []
 
 def render_header():
     """Render header with protein/peptide status indicators."""
