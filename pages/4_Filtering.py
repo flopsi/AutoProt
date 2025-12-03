@@ -715,19 +715,156 @@ for row_idx in range(n_rows):
                 st.info("No data after filtering")
 
 st.markdown("---")
+# Add this after the histogram plots section and before the Export section
 
-# ========== 4. EXPORT ==========
-col1, col2 = st.columns([1, 3])
+st.markdown("---")
+
+# ========== CALCULATE STATS & COMPARISON ==========
+col1, col2, col3 = st.columns([1, 1, 2])
 
 with col1:
-    if st.button("💾 Export Filtered Data", type="primary", key="export_btn"):
-        csv = filtered_df.to_csv(index=False)
-        st.download_button(
-            label="Download CSV",
-            data=csv,
-            file_name="filtered_proteins.csv",
-            mime="text/csv",
-        )
+    if st.button("📊 Calculate Stats", type="primary", key="calc_stats_btn"):
+        st.session_state.compute_stats_now = True
 
-render_navigation(back_page="pages/3_Preprocessing.py", next_page=None)
-render_footer()
+with col2:
+    if st.button("🔄 Reset Stats", key="reset_stats_btn"):
+        st.session_state.compute_stats_now = False
+        st.rerun()
+
+st.markdown("---")
+
+# CONTAINER: Before/After Comparison Tables
+if st.session_state.get("compute_stats_now", False):
+    with st.spinner("Computing stats..."):
+        filtered_stats = compute_stats(filtered_df, protein_model, numeric_cols, protein_species_col)
+    
+    # Helper function to style dataframe
+    def style_metrics_table(data_dict):
+        df = pd.DataFrame(data_dict)
+        
+        def highlight_permanova(row):
+            if row['Metric'] == 'PERMANOVA F':
+                try:
+                    val = float(row['Value'])
+                    if val > 5:
+                        return ['background-color: #c6efce; color: #006100'] * len(row)
+                    elif val > 2:
+                        return ['background-color: #ffeb9c; color: #9c6500'] * len(row)
+                    else:
+                        return ['background-color: #ffc7ce; color: #9c0006'] * len(row)
+                except:
+                    pass
+            
+            elif row['Metric'] == 'Shapiro W':
+                try:
+                    val = float(row['Value'])
+                    if val > 0.98:
+                        return ['background-color: #c6efce; color: #006100'] * len(row)
+                    elif val > 0.95:
+                        return ['background-color: #ffeb9c; color: #9c6500'] * len(row)
+                    else:
+                        return ['background-color: #ffc7ce; color: #9c0006'] * len(row)
+                except:
+                    pass
+            
+            return [''] * len(row)
+        
+        styled_df = df.style.apply(highlight_permanova, axis=1)
+        return styled_df
+    
+    st.markdown("### Before vs After Filtering")
+    
+    col_before, col_after = st.columns(2)
+    
+    # Before table
+    with col_before:
+        st.markdown("#### Before Filtering")
+        
+        before_data = {
+            "Metric": [
+                "Total Proteins",
+                "Mean CV%",
+                "Median CV%",
+                "PERMANOVA F",
+                "PERMANOVA p",
+                "Shapiro W"
+            ],
+            "Value": [
+                f"{initial_stats['n_proteins']:,}",
+                f"{initial_stats['cv_mean']:.1f}" if not np.isnan(initial_stats['cv_mean']) else "N/A",
+                f"{initial_stats['cv_median']:.1f}" if not np.isnan(initial_stats['cv_median']) else "N/A",
+                f"{initial_stats['permanova_f']:.2f}" if not np.isnan(initial_stats['permanova_f']) else "N/A",
+                f"{initial_stats['permanova_p']:.4f}" if not np.isnan(initial_stats['permanova_p']) else "N/A",
+                f"{initial_stats['shapiro_w']:.4f}" if not np.isnan(initial_stats['shapiro_w']) else "N/A",
+            ]
+        }
+        
+        if initial_stats['species_counts']:
+            for sp in SPECIES_ORDER:
+                if sp in initial_stats['species_counts']:
+                    before_data["Metric"].append(f"{sp}")
+                    before_data["Value"].append(f"{initial_stats['species_counts'][sp]:,}")
+        
+        styled_before = style_metrics_table(before_data)
+        st.dataframe(styled_before, hide_index=True, use_container_width=True, height=400)
+    
+    # After table
+    with col_after:
+        st.markdown("#### After Filtering")
+        
+        after_data = {
+            "Metric": [
+                "Total Proteins",
+                "Mean CV%",
+                "Median CV%",
+                "PERMANOVA F",
+                "PERMANOVA p",
+                "Shapiro W"
+            ],
+            "Value": [
+                f"{filtered_stats['n_proteins']:,}",
+                f"{filtered_stats['cv_mean']:.1f}" if not np.isnan(filtered_stats['cv_mean']) else "N/A",
+                f"{filtered_stats['cv_median']:.1f}" if not np.isnan(filtered_stats['cv_median']) else "N/A",
+                f"{filtered_stats['permanova_f']:.2f}" if not np.isnan(filtered_stats['permanova_f']) else "N/A",
+                f"{filtered_stats['permanova_p']:.4f}" if not np.isnan(filtered_stats['permanova_p']) else "N/A",
+                f"{filtered_stats['shapiro_w']:.4f}" if not np.isnan(filtered_stats['shapiro_w']) else "N/A",
+            ],
+            "Change": [
+                f"{filtered_stats['n_proteins'] - initial_stats['n_proteins']:+,}",
+                f"{filtered_stats['cv_mean'] - initial_stats['cv_mean']:+.1f}" if not (np.isnan(filtered_stats['cv_mean']) or np.isnan(initial_stats['cv_mean'])) else "—",
+                f"{filtered_stats['cv_median'] - initial_stats['cv_median']:+.1f}" if not (np.isnan(filtered_stats['cv_median']) or np.isnan(initial_stats['cv_median'])) else "—",
+                f"{filtered_stats['permanova_f'] - initial_stats['permanova_f']:+.2f}" if not (np.isnan(filtered_stats['permanova_f']) or np.isnan(initial_stats['permanova_f'])) else "—",
+                f"{filtered_stats['permanova_p'] - initial_stats['permanova_p']:+.4f}" if not (np.isnan(filtered_stats['permanova_p']) or np.isnan(initial_stats['permanova_p'])) else "—",
+                f"{filtered_stats['shapiro_w'] - initial_stats['shapiro_w']:+.4f}" if not (np.isnan(filtered_stats['shapiro_w']) or np.isnan(initial_stats['shapiro_w'])) else "—",
+            ]
+        }
+        
+        if filtered_stats['species_counts']:
+            for sp in SPECIES_ORDER:
+                if sp in filtered_stats['species_counts'] or sp in initial_stats['species_counts']:
+                    after_data["Metric"].append(f"{sp}")
+                    after_val = filtered_stats['species_counts'].get(sp, 0)
+                    before_val = initial_stats['species_counts'].get(sp, 0)
+                    after_data["Value"].append(f"{after_val:,}")
+                    after_data["Change"].append(f"{after_val - before_val:+,}")
+        
+        styled_after = style_metrics_table(after_data)
+        st.dataframe(styled_after, hide_index=True, use_container_width=True, height=400)
+    
+    # Legend
+    st.markdown("---")
+    st.markdown("**Statistical Quality Indicators:**")
+    leg_col1, leg_col2, leg_col3 = st.columns(3)
+    with leg_col1:
+        st.markdown("🟢 **Good** - PERMANOVA F > 5, Shapiro W > 0.98")
+    with leg_col2:
+        st.markdown("🟡 **Moderate** - PERMANOVA F > 2, Shapiro W > 0.95")
+    with leg_col3:
+        st.markdown("🔴 **Poor** - PERMANOVA F < 2, Shapiro W < 0.95")
+
+else:
+    st.info("👆 Click 'Calculate Stats' to see before/after comparison tables")
+
+st.markdown("---")
+
+# ========== EXPORT ==========
