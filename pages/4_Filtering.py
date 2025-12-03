@@ -1073,14 +1073,12 @@ st.markdown("### Before Filtering")
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 
 with c1:
-    st.metric("Total Proteins", f"{initial_stats['n_proteins']:,}")
+    st.header("Total Proteins")
+    st.markdown( f"{initial_stats['n_proteins']:,}")
 
 with c2:
-    species_str = ", ".join(
-        f"{s}:{initial_stats['species_counts'].get(s, 0)}"
-        for s in SPECIES_ORDER
-        if s in initial_stats["species_counts"]
-    )
+    if "HUMAN" in initial_stats["species_counts"
+    st.header("HUMAN")
     st.metric("Species Count", species_str or "N/A")
 
 with c3:
