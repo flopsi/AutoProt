@@ -285,7 +285,10 @@ def compute_permanova(df_log2: pd.DataFrame, numeric_cols: List[str]) -> Dict[st
     if len(df_log2) < 3:
         return {"F": np.nan, "p": np.nan, "R2": np.nan}
     
+    # Transpose: samples as rows, proteins as columns
     data = df_log2[numeric_cols].T.values
+    
+    # Get conditions from column names
     sorted_cols = sort_columns_by_condition(numeric_cols)
     conditions = np.array([c[0] if c and c[0].isalpha() else "X" for c in sorted_cols])
 
@@ -293,7 +296,18 @@ def compute_permanova(df_log2: pd.DataFrame, numeric_cols: List[str]) -> Dict[st
     if len(unique_conds) < 2:
         return {"F": np.nan, "p": np.nan, "R2": np.nan}
 
-    dist_matrix = squareform(pdist(data, metric="euclidean"))
+    # ============ KEY FIX: Remove proteins with NaN in ANY sample ============
+    # This ensures all samples have the same set of proteins
+    valid_proteins = ~np.isnan(data).any(axis=0)
+    data_clean = data[:, valid_proteins]
+    
+    # Ensure we have enough data
+    if data_clean.shape[1] < 3 or data_clean.shape[0] < 3:
+        return {"F": np.nan, "p": np.nan, "R2": np.nan}
+    # =========================================================================
+
+    # Calculate distance matrix on cleaned data
+    dist_matrix = squareform(pdist(data_clean, metric="euclidean"))
     n = len(conditions)
 
     def calc_f_statistic(dist_mat, groups):
