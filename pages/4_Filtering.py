@@ -866,5 +866,18 @@ else:
     st.info("👆 Click 'Calculate Stats' to see before/after comparison tables")
 
 st.markdown("---")
+# ========== 4. EXPORT ==========
+col1, col2 = st.columns([1, 3])
 
-# ========== EXPORT ==========
+with col1:
+    if st.button("💾 Export Filtered Data", type="primary", key="export_btn"):
+        csv = filtered_df.to_csv(index=False)
+        st.download_button(
+            label="Download CSV",
+            data=csv,
+            file_name="filtered_proteins.csv",
+            mime="text/csv",
+        )
+
+render_navigation(back_page="pages/3_Preprocessing.py", next_page=None)
+render_footer()
