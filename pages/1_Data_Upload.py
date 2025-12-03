@@ -70,7 +70,7 @@ def extract_species_from_protein_id(protein_id: str) -> str:
         return "YEAST"
     elif "_ECOLI" in protein_str or "ECOLI_" in protein_str or "ECOLI" in protein_str:
         return "ECOLI"
-    elif "_MOUSE" in protein_str or "MOUSE_" or "MOUSE" in protein_str:
+    elif "_MOUSE" in protein_str or "MOUSE_" in protein_str or "MOUSE" in protein_str:
         return "MOUSE"
     else:
         return "UNKNOWN"
