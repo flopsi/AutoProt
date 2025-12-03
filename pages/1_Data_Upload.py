@@ -19,7 +19,6 @@ st.set_page_config(
 inject_custom_css()
 render_header()
 
-
 @dataclass
 class TransformsCache:
     log2: pd.DataFrame
@@ -29,6 +28,7 @@ class TransformsCache:
     yeo_johnson: pd.DataFrame
     quantile: pd.DataFrame
     condition_wise_cvs: pd.DataFrame
+
 
 @dataclass
 class FilteredSubgroups:
@@ -70,8 +70,8 @@ class MSData:
     missing_count: int
     numeric_cols: List[str]
     transforms: TransformsCache
-    species_subgroups: 'FilteredSubgroups'  # Add this line
-    species_col: str
+    species_subgroups: FilteredSubgroups  # NEW
+    species_col: str  # NEW
 
 
 def build_species_subgroups(df: pd.DataFrame, species_col: str, numeric_cols: List[str]) -> FilteredSubgroups:
@@ -94,6 +94,43 @@ def build_species_subgroups(df: pd.DataFrame, species_col: str, numeric_cols: Li
         mouse=df[species_series == "MOUSE"].copy(),
         all_species=df.copy(),
     )
+
+
+def build_msdata(
+    processed_df: pd.DataFrame, 
+    numeric_cols_renamed: List[str], 
+    species_col: str = "_extracted_species"
+) -> MSData:
+    """Build MSData with pre-cached species subgroups."""
+    raw = processed_df.copy()
+
+    raw[numeric_cols_renamed] = (
+        raw[numeric_cols_renamed]
+        .apply(pd.to_numeric, errors="coerce")
+        .astype("float64")
+    )
+
+    raw_filled = raw.copy()
+    vals = raw_filled[numeric_cols_renamed]
+    vals = vals.fillna(1.0)
+    vals = vals.where(~vals.isin([0.0, 1.0]), 1.0)
+    raw_filled[numeric_cols_renamed] = vals
+
+    missing_count = (raw_filled[numeric_cols_renamed] == 1.0).to_numpy().sum()
+
+    transforms = compute_transforms(raw_filled, numeric_cols_renamed)
+    species_subgroups = build_species_subgroups(raw_filled, species_col, numeric_cols_renamed)
+
+    return MSData(
+        raw=raw,
+        raw_filled=raw_filled,
+        missing_count=missing_count,
+        numeric_cols=numeric_cols_renamed,
+        transforms=transforms,
+        species_subgroups=species_subgroups,
+        species_col=species_col,
+    )
+
 
 
 @dataclass
