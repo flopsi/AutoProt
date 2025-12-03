@@ -110,13 +110,36 @@ def apply_filters(
     """Apply all filters sequentially."""
     filtered = df.copy()
 
-    # Filter 1: Species
-    if species_col and species_col in model.raw.columns and selected_species:
-        species_mask = model.raw.loc[filtered.index, species_col].isin(selected_species)
-        filtered = filtered[species_mask]
+# Determine species column to use
+    if species_col and species_col in working_df.columns:
+        # Check if column already contains plain species names
+        sample_values = working_df[species_col].dropna().head(10)
+        is_plain_species = all(
+            str(val).upper().strip() in ["HUMAN", "YEAST", "ECOLI", "MOUSE", "UNKNOWN"]
+            for val in sample_values
+        )
+        
+        if is_plain_species:
+            # Column already has species names, use directly
+            working_df["_extracted_species"] = working_df[species_col].str.upper().str.strip()
+            species_col_to_use = "_extracted_species"
+        else:
+            # Extract from protein ID format
+            working_df["_extracted_species"] = working_df[species_col].apply(extract_species_from_protein_id)
+            species_col_to_use = "_extracted_species"
+    elif pg_col and pg_col in working_df.columns:
+        # Extract species from protein ID column
+        working_df["_extracted_species"] = working_df[pg_col].apply(extract_species_from_protein_id)
+        species_col_to_use = "_extracted_species"
+    else:
+        species_col_to_use = None
+    
+    # Filter by species
+    processed_df = working_df.copy()
+    if species_col_to_use and species_tags:
+    processed_df = filter_by_species(processed_df, species_col_to_use, species_tags)
+    st.info(f"Filtered to {len(processed_df):,} rows matching: {', '.join(species_tags)}")
 
-    if filtered.empty:
-        return filtered
 
     # Filter 2: Min peptides (if column exists)
     if "Peptide_Count" in filtered.columns and min_peptides > 1:
