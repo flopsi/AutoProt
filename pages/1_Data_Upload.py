@@ -29,6 +29,70 @@ class TransformsCache:
     yeo_johnson: pd.DataFrame
     quantile: pd.DataFrame
     condition_wise_cvs: pd.DataFrame
+@dataclass
+class FilteredSubgroups:
+    """Pre-filtered species subsets for fast filtering."""
+    human: pd.DataFrame
+    yeast: pd.DataFrame
+    ecoli: pd.DataFrame
+    mouse: pd.DataFrame
+    all_species: pd.DataFrame
+    
+    def get(self, species_list: List[str]) -> pd.DataFrame:
+        """Get combined dataframe for selected species."""
+        if not species_list:
+            return self.all_species
+        
+        # If all species selected, return full dataset
+        if set(species_list) == {"HUMAN", "YEAST", "ECOLI", "MOUSE"}:
+            return self.all_species
+        
+        # Combine requested species
+        dfs = []
+        for sp in species_list:
+            if sp == "HUMAN" and not self.human.empty:
+                dfs.append(self.human)
+            elif sp == "YEAST" and not self.yeast.empty:
+                dfs.append(self.yeast)
+            elif sp == "ECOLI" and not self.ecoli.empty:
+                dfs.append(self.ecoli)
+            elif sp == "MOUSE" and not self.mouse.empty:
+                dfs.append(self.mouse)
+        
+        return pd.concat(dfs, axis=0) if dfs else pd.DataFrame()
+
+
+@dataclass
+class MSData:
+    raw: pd.DataFrame
+    raw_filled: pd.DataFrame
+    missing_count: int
+    numeric_cols: List[str]
+    transforms: TransformsCache
+    species_subgroups: FilteredSubgroups
+    species_col: str
+
+
+def build_species_subgroups(df: pd.DataFrame, species_col: str, numeric_cols: List[str]) -> FilteredSubgroups:
+    """Pre-filter data by species for fast access."""
+    if species_col not in df.columns:
+        return FilteredSubgroups(
+            human=pd.DataFrame(),
+            yeast=pd.DataFrame(),
+            ecoli=pd.DataFrame(),
+            mouse=pd.DataFrame(),
+            all_species=df,
+        )
+    
+    species_series = df[species_col]
+    
+    return FilteredSubgroups(
+        human=df[species_series == "HUMAN"].copy(),
+        yeast=df[species_series == "YEAST"].copy(),
+        ecoli=df[species_series == "ECOLI"].copy(),
+        mouse=df[species_series == "MOUSE"].copy(),
+        all_species=df.copy(),
+    )
 
 
 @dataclass
@@ -136,7 +200,8 @@ def compute_transforms(raw_filled: pd.DataFrame, numeric_cols: List[str]) -> Tra
     )
 
 
-def build_msdata(processed_df: pd.DataFrame, numeric_cols_renamed: List[str]) -> MSData:
+def build_msdata(processed_df: pd.DataFrame, numeric_cols_renamed: List[str], species_col: str = "_extracted_species") -> MSData:
+    """Build MSData with pre-cached species subgroups."""
     raw = processed_df.copy()
 
     raw[numeric_cols_renamed] = (
@@ -154,6 +219,7 @@ def build_msdata(processed_df: pd.DataFrame, numeric_cols_renamed: List[str]) ->
     missing_count = (raw_filled[numeric_cols_renamed] == 1.0).to_numpy().sum()
 
     transforms = compute_transforms(raw_filled, numeric_cols_renamed)
+    species_subgroups = build_species_subgroups(raw_filled, species_col, numeric_cols_renamed)
 
     return MSData(
         raw=raw,
@@ -161,6 +227,8 @@ def build_msdata(processed_df: pd.DataFrame, numeric_cols_renamed: List[str]) ->
         missing_count=missing_count,
         numeric_cols=numeric_cols_renamed,
         transforms=transforms,
+        species_subgroups=species_subgroups,
+        species_col=species_col,
     )
 
 
