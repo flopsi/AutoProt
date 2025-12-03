@@ -13,7 +13,7 @@ st.set_page_config(
     page_title="Filtering | Thermo Fisher Scientific",
     page_icon="🔬",
     layout="wide",
-    initial_sidebar_state="expanded",  # Changed to expanded
+    initial_sidebar_state="expanded",
 )
 
 inject_custom_css()
@@ -297,82 +297,113 @@ df_raw = protein_model.raw_filled[numeric_cols].copy()
 with st.sidebar:
     st.markdown("## 🎛️ Filter Settings")
     
-    # Initialize filter state
-    if "filter_state_df" not in st.session_state:
-        st.session_state.filter_state_df = pd.DataFrame(
-            [{
-                "species": ["HUMAN", "ECOLI", "YEAST"],
-                "all_species": False,
-                "use_min_peptides": True,
-                "min_peptides": 1,
-                "use_cv": True,
-                "cv_cutoff": 30,
-                "use_missing": True,
-                "max_missing_pct": 34,
-                "transform": "log2",
-                "use_intensity": False,
-            }]
+    # Species selection
+    st.markdown("### Species")
+    all_species = st.checkbox("All species", value=False, key="all_species_sidebar")
+    
+    if all_species:
+        selected_species = ["HUMAN", "ECOLI", "YEAST", "MOUSE"]
+        st.multiselect(
+            "Selected species",
+            options=["HUMAN", "ECOLI", "YEAST", "MOUSE"],
+            default=selected_species,
+            disabled=True,
+            key="species_display"
+        )
+    else:
+        selected_species = st.multiselect(
+            "Select species",
+            options=["HUMAN", "ECOLI", "YEAST", "MOUSE"],
+            default=["HUMAN", "ECOLI", "YEAST"],
+            key="species_sidebar"
         )
     
-    filters_df = st.session_state.filter_state_df
+    st.markdown("---")
     
-    # Transpose for vertical display
-    filters_df_t = filters_df.T
-    filters_df_t.columns = ["Value"]
-    
-    # Editable filter table (transposed)
-    edited_t = st.data_editor(
-        filters_df_t,
-        use_container_width=True,
-        hide_index=False,
-        column_config={
-            "Value": st.column_config.Column(
-                "Setting",
-                width="large",
-            ),
-        },
-        disabled=["_index"],  # Make row labels read-only
+    # Min peptides filter
+    st.markdown("### Min Peptides/Protein")
+    use_min_peptides = st.checkbox("Enable", value=True, key="use_peptides_sidebar")
+    min_peptides = st.slider(
+        "Min peptides",
+        min_value=1,
+        max_value=10,
+        value=1,
+        disabled=not use_min_peptides,
+        key="min_peptides_sidebar"
     )
-    
-    # Transpose back
-    edited = edited_t.T
-    edited.columns = filters_df.columns
-    
-    # Persist edits
-    st.session_state.filter_state_df = edited
-    row = edited.iloc[0]
-    
-    # Derive effective filter values
-    if row["all_species"]:
-        selected_species = ["HUMAN", "ECOLI", "YEAST", "MOUSE"]
-    else:
-        selected_species = list(row["species"]) if row["species"] else []
-    
-    min_peptides = int(row["min_peptides"]) if row["use_min_peptides"] else 1
-    cv_cutoff = float(row["cv_cutoff"]) if row["use_cv"] else 1000.0
-    max_missing_ratio = float(row["max_missing_pct"]) / 100.0 if row["use_missing"] else 1.0
-    transform_key = row["transform"]
-    use_intensity = bool(row["use_intensity"])
     
     st.markdown("---")
-    st.caption(
-        "**Active species:** "
-        + (", ".join(selected_species) if selected_species else "All")
+    
+    # CV filter
+    st.markdown("### CV% Cutoff")
+    use_cv = st.checkbox("Enable", value=True, key="use_cv_sidebar")
+    cv_cutoff = st.slider(
+        "Max CV%",
+        min_value=0,
+        max_value=100,
+        value=30,
+        step=5,
+        disabled=not use_cv,
+        key="cv_sidebar"
     )
     
+    st.markdown("---")
+    
+    # Missing data filter
+    st.markdown("### Max Missing %")
+    use_missing = st.checkbox("Enable", value=True, key="use_missing_sidebar")
+    max_missing_pct = st.slider(
+        "Max missing per condition",
+        min_value=0,
+        max_value=100,
+        value=34,
+        step=10,
+        disabled=not use_missing,
+        key="missing_sidebar"
+    )
+    
+    st.markdown("---")
+    
+    # Transformation
+    st.markdown("### Transformation")
+    transform_key = st.selectbox(
+        "Select transformation",
+        options=list(TRANSFORMS.keys()),
+        format_func=lambda x: TRANSFORMS[x],
+        index=0,
+        key="transform_sidebar"
+    )
+    
+    st.markdown("---")
+    
+    # Intensity range
+    st.markdown("### Intensity Range")
+    use_intensity = st.checkbox("Enable", value=False, key="use_intensity_sidebar")
+    
+    # Derive effective values
+    min_peptides = min_peptides if use_min_peptides else 1
+    cv_cutoff = cv_cutoff if use_cv else 1000.0
+    max_missing_ratio = max_missing_pct / 100.0 if use_missing else 1.0
+    
+    st.markdown("---")
+    
     # Active filters summary
+    st.markdown("### Active Filters")
+    st.caption(f"**Species:** {', '.join(selected_species) if selected_species else 'None'}")
+    
     active_filters = []
-    if row["use_min_peptides"]:
+    if use_min_peptides:
         active_filters.append(f"Min peptides: {min_peptides}")
-    if row["use_cv"]:
+    if use_cv:
         active_filters.append(f"CV <{cv_cutoff:.0f}%")
-    if row["use_missing"]:
-        active_filters.append(f"Max missing: {int(max_missing_ratio * 100)}%")
+    if use_missing:
+        active_filters.append(f"Max missing: {max_missing_pct}%")
     
     if active_filters:
-        st.caption("**Filters:**")
         for f in active_filters:
             st.caption(f"• {f}")
+    else:
+        st.caption("No filters active")
 
 # ========== MAIN: Stats and Visualizations ==========
 
