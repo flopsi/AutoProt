@@ -294,12 +294,13 @@ numeric_cols = protein_model.numeric_cols
 df_raw = protein_model.raw_filled[numeric_cols].copy()
 
 # ========== SIDEBAR: Filter Settings ==========
+# ========== SIDEBAR: Filter Settings ==========
 with st.sidebar:
     st.markdown("## 🎛️ Filter Settings")
     
     # Species selection
     st.markdown("### Species")
-    all_species = st.checkbox("All species", value=False, key="all_species_sidebar")
+    all_species = st.checkbox("All species", value=False, key="filter_all_species")
     
     if all_species:
         selected_species = ["HUMAN", "ECOLI", "YEAST", "MOUSE"]
@@ -308,35 +309,35 @@ with st.sidebar:
             options=["HUMAN", "ECOLI", "YEAST", "MOUSE"],
             default=selected_species,
             disabled=True,
-            key="species_display"
+            key="filter_species_display"
         )
     else:
         selected_species = st.multiselect(
             "Select species",
             options=["HUMAN", "ECOLI", "YEAST", "MOUSE"],
             default=["HUMAN", "ECOLI", "YEAST"],
-            key="species_sidebar"
+            key="filter_species"
         )
     
     st.markdown("---")
     
     # Min peptides filter
     st.markdown("### Min Peptides/Protein")
-    use_min_peptides = st.checkbox("Enable", value=True, key="use_peptides_sidebar")
+    use_min_peptides = st.checkbox("Enable", value=True, key="filter_use_peptides")
     min_peptides = st.slider(
         "Min peptides",
         min_value=1,
         max_value=10,
         value=1,
         disabled=not use_min_peptides,
-        key="min_peptides_sidebar"
+        key="filter_min_peptides"
     )
     
     st.markdown("---")
     
     # CV filter
     st.markdown("### CV% Cutoff")
-    use_cv = st.checkbox("Enable", value=True, key="use_cv_sidebar")
+    use_cv = st.checkbox("Enable", value=True, key="filter_use_cv")
     cv_cutoff = st.slider(
         "Max CV%",
         min_value=0,
@@ -344,14 +345,14 @@ with st.sidebar:
         value=30,
         step=5,
         disabled=not use_cv,
-        key="cv_sidebar"
+        key="filter_cv"
     )
     
     st.markdown("---")
     
     # Missing data filter
     st.markdown("### Max Missing %")
-    use_missing = st.checkbox("Enable", value=True, key="use_missing_sidebar")
+    use_missing = st.checkbox("Enable", value=True, key="filter_use_missing")
     max_missing_pct = st.slider(
         "Max missing per condition",
         min_value=0,
@@ -359,7 +360,7 @@ with st.sidebar:
         value=34,
         step=10,
         disabled=not use_missing,
-        key="missing_sidebar"
+        key="filter_missing"
     )
     
     st.markdown("---")
@@ -371,14 +372,14 @@ with st.sidebar:
         options=list(TRANSFORMS.keys()),
         format_func=lambda x: TRANSFORMS[x],
         index=0,
-        key="transform_sidebar"
+        key="filter_transform"
     )
     
     st.markdown("---")
     
     # Intensity range
     st.markdown("### Intensity Range")
-    use_intensity = st.checkbox("Enable", value=False, key="use_intensity_sidebar")
+    use_intensity = st.checkbox("Enable", value=False, key="filter_use_intensity")
     
     # Derive effective values
     min_peptides = min_peptides if use_min_peptides else 1
@@ -404,6 +405,7 @@ with st.sidebar:
             st.caption(f"• {f}")
     else:
         st.caption("No filters active")
+
 
 # ========== MAIN: Stats and Visualizations ==========
 
