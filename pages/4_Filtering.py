@@ -97,6 +97,10 @@ def compute_cv_per_condition(df: pd.DataFrame, numeric_cols: List[str]) -> pd.Da
 
     return pd.DataFrame(cv_results, index=df.index)
 
+
+# Initial stats (unfiltered)
+initial_stats = compute_stats(df_raw, protein_model, numeric_cols, protein_species_col)
+
 # CONTAINER 1: Summary Stats (Before Filtering) - KEEP THIS
 st.markdown("### Before Filtering")
 c1, c2, c3, c4, c5, c6 = st.columns(6)
