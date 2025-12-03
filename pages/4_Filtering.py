@@ -296,26 +296,11 @@ df_raw = protein_model.raw_filled[numeric_cols].copy()
 # ========== SIDEBAR: Filter Settings ==========
 with st.sidebar:
     st.markdown("## 🎛️ Filter Settings")
-    
-    # Species selection
-    st.markdown("### Species")
-    all_species = st.checkbox("All species", value=False, key="filter_all")
-    
-    if all_species:
-        selected_species = ["HUMAN", "ECOLI", "YEAST", "MOUSE"]
-        st.multiselect(
-            "Selected species",
-            options=["HUMAN", "ECOLI", "YEAST", "MOUSE"],
-            default=selected_species,
-            disabled=True,
-            key="filter_species_display"
-        )
-    else:
-        selected_species = st.multiselect(
-            "Select species",
-            options=["HUMAN", "ECOLI", "YEAST", "MOUSE"],
-            default=["HUMAN", "ECOLI", "YEAST"],
-            key="filter_species"
+    selected_species = st.multiselect(
+        "Select species",
+        options=["HUMAN", "ECOLI", "YEAST", "MOUSE"],
+        default=["HUMAN", "ECOLI", "YEAST"],
+        key="filter_species"
         )
     
     st.markdown("---")
