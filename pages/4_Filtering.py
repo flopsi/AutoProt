@@ -59,6 +59,9 @@ TRANSFORMS = {
     "quantile": "Quantile Norm",
 }
 
+# Initial stats (unfiltered)
+initial_stats = compute_stats(df_raw, protein_model, numeric_cols, protein_species_col)
+
 
 def extract_conditions(cols: List[str]) -> Dict[str, str]:
     """Map each column to a condition code based on its first character."""
@@ -94,7 +97,11 @@ def compute_cv_per_condition(df: pd.DataFrame, numeric_cols: List[str]) -> pd.Da
 
     return pd.DataFrame(cv_results, index=df.index)
 
-
+# CONTAINER 1: Summary Stats (Before Filtering) - KEEP THIS
+st.markdown("### Before Filtering")
+c1, c2, c3, c4, c5, c6 = st.columns(6)
+# ... (keep all the metrics) ...
+st.markdown("---")
 def apply_filters(
     df: pd.DataFrame,
     model: MSData,
@@ -346,95 +353,143 @@ with c6:
 
 st.markdown("---")
 
-# CONTAINER 2: Species Selection
-st.markdown("### Species Selection")
-s1, s2, s3, s4, s5 = st.columns(5)
-
-with s1:
-    all_selected = set(st.session_state.filter_species) >= {"HUMAN", "ECOLI", "YEAST", "MOUSE"}
-    all_cb = st.checkbox("All species", value=all_selected, key="all_species_cb")
-    if all_cb:
-        st.session_state.filter_species = ["HUMAN", "ECOLI", "YEAST", "MOUSE"]
-
-def species_checkbox(label: str, key: str, col):
-    with col:
-        current = label in st.session_state.filter_species
-        checked = st.checkbox(label, value=current, key=key)
-        if checked and label not in st.session_state.filter_species:
-            st.session_state.filter_species.append(label)
-        elif not checked and label in st.session_state.filter_species:
-            st.session_state.filter_species.remove(label)
-
-species_checkbox("HUMAN", "human_cb", s2)
-species_checkbox("YEAST", "yeast_cb", s3)
-species_checkbox("ECOLI", "ecoli_cb", s4)
-species_checkbox("MOUSE", "mouse_cb", s5)
-
-st.markdown("---")
-
-# CONTAINER 3: Filters with Toggle Switches
-st.markdown("### Filter Settings")
-f1, f2, f3, f4, f5, f6 = st.columns(6)
-
-with f1:
-    use_peptides = st.checkbox("Min peptides/protein", value=True, key="use_peptides_cb")
-    if use_peptides:
-        st.session_state.filter_min_peptides = st.slider(
-            "Peptides",
-            min_value=1,
-            max_value=10,
-            value=st.session_state.filter_min_peptides,
-            key="min_pep_slider",
-        )
-    else:
-        st.session_state.filter_min_peptides = 1
-
-with f2:
-    use_cv = st.checkbox("CV% cutoff", value=True, key="use_cv_cb")
-    if use_cv:
-        st.session_state.filter_cv_cutoff = st.slider(
-            "CV%",
-            min_value=0,
-            max_value=100,
-            value=int(st.session_state.filter_cv_cutoff),
-            step=5,
-            key="cv_slider",
-        )
-    else:
-        st.session_state.filter_cv_cutoff = 1000.0
-
-with f3:
-    use_missing = st.checkbox("Max missing %", value=True, key="use_missing_cb")
-    if use_missing:
-        ratio_pct = st.slider(
-            "Missing %",
-            min_value=0,
-            max_value=100,
-            value=int(st.session_state.filter_max_missing_ratio * 100),
-            step=10,
-            key="missing_slider",
-        )
-        st.session_state.filter_max_missing_ratio = ratio_pct / 100.0
-    else:
-        st.session_state.filter_max_missing_ratio = 1.0
-
-with f4:
-    st.session_state.filter_transform = st.selectbox(
-        "Transformation",
-        options=list(TRANSFORMS.keys()),
-        format_func=TRANSFORMS.get,
-        index=list(TRANSFORMS.keys()).index(st.session_state.filter_transform),
-        key="transform_select",
+# NEW: Build filter row model
+if "filter_state_df" not in st.session_state:
+    st.session_state.filter_state_df = pd.DataFrame(
+        [{
+            "species": ["HUMAN", "ECOLI", "YEAST"],
+            "all_species": False,
+            "use_min_peptides": True,
+            "min_peptides": 1,
+            "use_cv": True,
+            "cv_cutoff": 30,
+            "use_missing": True,
+            "max_missing_pct": 34,
+            "transform": "log2",
+            "use_intensity": False,
+        }]
     )
 
-with f5:
-    use_intensity = st.checkbox("Intensity range", value=False, key="use_intensity_cb")
+filters_df = st.session_state.filter_state_df
 
-with f6:
-    st.write("")
+# NEW: Editable filter table
+st.markdown("### Filter Settings")
+
+edited = st.data_editor(
+    filters_df,
+    num_rows="fixed",
+    use_container_width=True,
+    hide_index=True,
+    column_config={
+        "species": st.column_config.MultiselectColumn(
+            "Species",
+            options=["HUMAN", "ECOLI", "YEAST", "MOUSE"],
+            default=["HUMAN", "ECOLI", "YEAST"],
+            help="Species to keep",
+        ),
+        "all_species": st.column_config.CheckboxColumn(
+            "All species",
+            default=False,
+            help="Select all species",
+        ),
+        "use_min_peptides": st.column_config.CheckboxColumn(
+            "Use min peptides",
+            default=True,
+        ),
+        "min_peptides": st.column_config.NumberColumn(
+            "Min peptides/protein",
+            min_value=1,
+            max_value=10,
+            step=1,
+            format="%d",
+        ),
+        "use_cv": st.column_config.CheckboxColumn(
+            "Use CV cutoff",
+            default=True,
+        ),
+        "cv_cutoff": st.column_config.NumberColumn(
+            "CV% cutoff",
+            min_value=0,
+            max_value=100,
+            step=5,
+            format="%d",
+        ),
+        "use_missing": st.column_config.CheckboxColumn(
+            "Use max missing",
+            default=True,
+        ),
+        "max_missing_pct": st.column_config.NumberColumn(
+            "Max missing %",
+            min_value=0,
+            max_value=100,
+            step=5,
+            format="%d",
+        ),
+        "transform": st.column_config.SelectboxColumn(
+            "Transformation",
+            options=list(TRANSFORMS.keys()),
+        ),
+        "use_intensity": st.column_config.CheckboxColumn(
+            "Use intensity range",
+            default=False,
+        ),
+    },
+)
+
+# Persist edits
+st.session_state.filter_state_df = edited
+row = edited.iloc[0]
+
+# Derive effective filter values
+if row["all_species"]:
+    selected_species = ["HUMAN", "ECOLI", "YEAST", "MOUSE"]
+else:
+    selected_species = row["species"] or []
+
+min_peptides = int(row["min_peptides"]) if row["use_min_peptides"] else 1
+cv_cutoff = float(row["cv_cutoff"]) if row["use_cv"] else 1000.0
+max_missing_ratio = float(row["max_missing_pct"]) / 100.0 if row["use_missing"] else 1.0
+transform_key = row["transform"]
+use_intensity = bool(row["use_intensity"])
 
 st.markdown("---")
 
+# ========== END REPLACEMENT ==========
+
+# CONTAINER 4: Intensity Histograms - KEEP THIS
+st.markdown("### Intensity Distribution by Sample")
+
+# Get transformed data
+transform_data = get_transform_data(protein_model, transform_key)
+
+# Set intensity range slider (only if toggled on)
+if use_intensity:
+    min_intensity = float(transform_data[numeric_cols].min().min())
+    max_intensity = float(transform_data[numeric_cols].max().max())
+    
+    intensity_range = st.slider(
+        "Select intensity range",
+        min_value=min_intensity,
+        max_value=max_intensity,
+        value=(min_intensity, max_intensity),
+        key="intensity_slider"
+    )
+else:
+    intensity_range = None
+
+# Apply filters based on table values (instead of scattered widgets)
+filtered_df = apply_filters(
+    df_raw,
+    protein_model,
+    numeric_cols,
+    protein_species_col,
+    selected_species,  # from table
+    min_peptides,      # from table
+    cv_cutoff,         # from table
+    max_missing_ratio, # from table
+    intensity_range,   # from slider if enabled
+    transform_key,     # from table
+)
 # CONTAINER 4: Intensity Histograms
 st.markdown("### Intensity Distribution by Sample")
 
