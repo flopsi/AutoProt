@@ -617,6 +617,46 @@ if st.session_state.get("compute_stats_now", False):
     
     col_before, col_after = st.columns(2)
     
+    # Helper function to style dataframe with conditional formatting
+    def style_metrics_table(data_dict, is_after=False):
+        df = pd.DataFrame(data_dict)
+        
+        def highlight_permanova(row):
+            if row['Metric'] == 'PERMANOVA F':
+                try:
+                    val = float(row['Value'])
+                    # Good: F > 5 (strong group separation)
+                    if val > 5:
+                        return ['background-color: #c6efce; color: #006100'] * len(row)
+                    # Moderate: F > 2
+                    elif val > 2:
+                        return ['background-color: #ffeb9c; color: #9c6500'] * len(row)
+                    # Poor: F < 2
+                    else:
+                        return ['background-color: #ffc7ce; color: #9c0006'] * len(row)
+                except:
+                    pass
+            
+            elif row['Metric'] == 'Shapiro W':
+                try:
+                    val = float(row['Value'])
+                    # Good: W > 0.98 (normal distribution)
+                    if val > 0.98:
+                        return ['background-color: #c6efce; color: #006100'] * len(row)
+                    # Moderate: W > 0.95
+                    elif val > 0.95:
+                        return ['background-color: #ffeb9c; color: #9c6500'] * len(row)
+                    # Poor: W < 0.95 (non-normal)
+                    else:
+                        return ['background-color: #ffc7ce; color: #9c0006'] * len(row)
+                except:
+                    pass
+            
+            return [''] * len(row)
+        
+        styled_df = df.style.apply(highlight_permanova, axis=1)
+        return styled_df
+    
     # Before table
     with col_before:
         st.markdown("#### Before Filtering")
@@ -644,8 +684,8 @@ if st.session_state.get("compute_stats_now", False):
                     before_data["Metric"].append(f"{sp}")
                     before_data["Value"].append(f"{initial_stats['species_counts'][sp]:,}")
         
-        before_df = pd.DataFrame(before_data)
-        st.dataframe(before_df, hide_index=True, use_container_width=True, height=400)
+        styled_before = style_metrics_table(before_data, is_after=False)
+        st.dataframe(styled_before, hide_index=True, use_container_width=True, height=400)
     
     # After table
     with col_after:
@@ -684,11 +724,19 @@ if st.session_state.get("compute_stats_now", False):
                     after_data["Value"].append(f"{after_val:,}")
                     after_data["Change"].append(f"{after_val - before_val:+,}")
         
-        after_df = pd.DataFrame(after_data)
-        st.dataframe(after_df, hide_index=True, use_container_width=True, height=400)
-
-else:
-    st.info("👆 Click 'Calculate Stats' to see before/after comparison tables")
+        styled_after = style_metrics_table(after_data, is_after=True)
+        st.dataframe(styled_after, hide_index=True, use_container_width=True, height=400)
+    
+    # Legend
+    st.markdown("---")
+    st.markdown("**Statistical Quality Indicators:**")
+    leg_col1, leg_col2, leg_col3 = st.columns(3)
+    with leg_col1:
+        st.markdown("🟢 **Good** - PERMANOVA F > 5, Shapiro W > 0.98")
+    with leg_col2:
+        st.markdown("🟡 **Moderate** - PERMANOVA F > 2, Shapiro W > 0.95")
+    with leg_col3:
+        st.markdown("🔴 **Poor** - PERMANOVA F < 2, Shapiro W < 0.95
 
 render_navigation(back_page="pages/3_Preprocessing.py", next_page=None)
 render_footer()
