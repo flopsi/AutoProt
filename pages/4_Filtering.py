@@ -250,9 +250,76 @@ def compute_stats(
     else:
         cv_mean = cv_median = np.nan
 
-    # PERMANOVA (simplified for brevity)
+    # PERMANOVA - CORRECTED VERSION
+    condition_map = extract_conditions(numeric_cols)
+    conditions = np.array([condition_map[c] for c in numeric_cols])
+
     permanova_f = np.nan
     permanova_p = np.nan
+
+    unique_conds = np.unique(conditions)
+    if unique_conds.size >= 2 and len(df) >= 3:
+        try:
+            # Transpose: samples as rows, proteins as columns
+            data = df[numeric_cols].T.values
+            
+            # Remove any rows with NaN
+            valid_mask = ~np.isnan(data).any(axis=1)
+            data_clean = data[valid_mask]
+            conditions_clean = conditions[valid_mask]
+            
+            if len(data_clean) >= 3 and len(np.unique(conditions_clean)) >= 2:
+                # Calculate distance matrix
+                dist_matrix = squareform(pdist(data_clean, metric="euclidean"))
+                n = len(conditions_clean)
+
+                # Total sum of squares
+                ss_total = np.sum(dist_matrix**2) / (2 * n)
+                
+                # Within-group sum of squares
+                ss_within = 0.0
+                for g in np.unique(conditions_clean):
+                    mask = conditions_clean == g
+                    n_g = mask.sum()
+                    if n_g > 1:
+                        ss_within += np.sum(dist_matrix[np.ix_(mask, mask)]**2) / (2 * n_g)
+
+                # Between-group sum of squares
+                ss_between = ss_total - ss_within
+                
+                # Degrees of freedom
+                df_between = len(np.unique(conditions_clean)) - 1
+                df_within = n - len(np.unique(conditions_clean))
+
+                # F-statistic (should always be positive)
+                if df_within > 0 and ss_within > 0:
+                    F = (ss_between / df_between) / (ss_within / df_within)
+                    
+                    # Permutation test for p-value
+                    f_perms = []
+                    for _ in range(999):
+                        perm_cond = np.random.permutation(conditions_clean)
+                        ss_within_perm = 0.0
+                        for g in np.unique(perm_cond):
+                            mask = perm_cond == g
+                            n_g = mask.sum()
+                            if n_g > 1:
+                                ss_within_perm += (
+                                    np.sum(dist_matrix[np.ix_(mask, mask)]**2) / (2 * n_g)
+                                )
+                        ss_between_perm = ss_total - ss_within_perm
+                        if ss_within_perm > 0:
+                            F_perm = (ss_between_perm / df_between) / (ss_within_perm / df_within)
+                            f_perms.append(F_perm)
+
+                    f_perms = np.array(f_perms)
+                    p_val = (np.sum(f_perms >= F) + 1) / (len(f_perms) + 1) if len(f_perms) > 0 else np.nan
+                    
+                    permanova_f = F
+                    permanova_p = p_val
+        except Exception as e:
+            # Silent fail - just leave as NaN
+            pass
 
     # Shapiro-Wilk
     shapiro_w = np.nan
@@ -276,8 +343,9 @@ def compute_stats(
         "shapiro_w": shapiro_w,
         "shapiro_p": shapiro_p,
     }
-
-
+# After the F calculation, add:
+print(f"ss_total: {ss_total:.2f}, ss_between: {ss_between:.2f}, ss_within: {ss_within:.2f}")
+print(f"F-stat: {F:.2f}, df_between: {df_between}, df_within: {df_within}")
 st.markdown("## Protein-level Filtering & QC")
 
 protein_model: MSData | None = st.session_state.get("protein_model")
