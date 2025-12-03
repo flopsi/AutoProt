@@ -1,21 +1,19 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from dataclasses import dataclass
-from typing import List, Dict, Tuple
-from scipy import stats
-from scipy.stats import ttest_ind
 import plotly.graph_objects as go
-import plotly.express as px
-import plotly.figure_factory as ff
+from dataclasses import dataclass
+from typing import List, Dict
+from scipy.stats import shapiro
+from scipy.spatial.distance import pdist, squareform
 
 from components import inject_custom_css, render_header, render_navigation, render_footer, COLORS
 
 st.set_page_config(
-    page_title="Differential Expression | Thermo Fisher Scientific",
+    page_title="Filtering | Thermo Fisher Scientific",
     page_icon="🔬",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 inject_custom_css()
@@ -71,7 +69,24 @@ class MSData:
     species_col: str
 
 
-TF_CHART_COLORS = ["#262262", "#EA7600", "#B5BD00", "#A6192E"]
+SPECIES_COLORS = {
+    "HUMAN": "#87CEEB",
+    "ECOLI": "#008B8B",
+    "YEAST": "#FF8C00",
+    "MOUSE": "#9370DB",
+    "UNKNOWN": "#808080",
+}
+
+SPECIES_ORDER = ["HUMAN", "ECOLI", "YEAST", "MOUSE", "UNKNOWN"]
+
+TRANSFORMS = {
+    "log2": "log2",
+    "log10": "log10",
+    "sqrt": "sqrt",
+    "cbrt": "cbrt",
+    "yeo_johnson": "Yeo-Johnson",
+    "quantile": "Quantile Norm",
+}
 
 
 def extract_conditions(cols: List[str]) -> Dict[str, str]:
@@ -107,884 +122,478 @@ def compute_cv_per_condition(df: pd.DataFrame, numeric_cols: List[str]) -> pd.Da
     return pd.DataFrame(cv_results, index=df.index)
 
 
-def perform_ttest_analysis(
+def apply_filters(
     df: pd.DataFrame,
-    group1_cols: List[str],
-    group2_cols: List[str],
-    min_valid: int = 2,
+    model: MSData,
+    numeric_cols: List[str],
+    selected_species: List[str],
+    min_peptides: int,
+    cv_cutoff: float,
+    max_missing_ratio: float,
+    sd_range: tuple[float, float] | None,
+    apply_sd: bool,
+    transform_key: str,
+    apply_species: bool = True,
+    apply_min_pep: bool = True,
+    apply_cv: bool = True,
+    apply_missing: bool = True,
 ) -> pd.DataFrame:
-    """
-    Perform t-test analysis following LFQb benchmark approach.
+    """Apply filters sequentially with enable/disable flags."""
     
-    Based on: https://github.com/t-jumel/LFQb/blob/main/v3.4.1_LFQ_benchmark.R
-    """
-    results = []
+    filtered = df.copy()
+
+    # Filter 1: Species (if enabled)
+    if apply_species and selected_species:
+        filtered = model.species_subgroups.get(selected_species)
+    elif apply_species:
+        filtered = model.species_subgroups.all_species
     
-    for idx, row in df.iterrows():
-        # Extract values for each group
-        g1_vals = row[group1_cols].dropna()
-        g2_vals = row[group2_cols].dropna()
+    if filtered.empty:
+        return filtered
+
+    # Filter 2: Min peptides (if enabled)
+    if apply_min_pep and "Peptide_Count" in filtered.columns and min_peptides > 1:
+        filtered = filtered[filtered["Peptide_Count"] >= min_peptides]
+
+    if filtered.empty:
+        return filtered
+
+    # Filter 3: CV cutoff (if enabled)
+    if apply_cv and cv_cutoff < 1000:
+        cv_data = compute_cv_per_condition(filtered[numeric_cols], numeric_cols)
+        if not cv_data.empty:
+            cv_mask = cv_data.min(axis=1) <= cv_cutoff
+            filtered = filtered[cv_mask]
+
+    if filtered.empty:
+        return filtered
+
+    # Filter 4: Max missing per condition (if enabled)
+    if apply_missing and max_missing_ratio < 1.0:
+        condition_groups = build_condition_groups(numeric_cols)
+        max_missing_allowed = {
+            cond: int(np.ceil(len(cols) * max_missing_ratio))
+            for cond, cols in condition_groups.items()
+        }
+
+        valid_idx = []
+        for idx, row in filtered.iterrows():
+            keep = True
+            for cond, cols in condition_groups.items():
+                missing_count = (row[cols].isna() | (row[cols] <= 1.0)).sum()
+                if missing_count > max_missing_allowed[cond]:
+                    keep = False
+                    break
+            if keep:
+                valid_idx.append(idx)
+
+        filtered = filtered.loc[valid_idx] if valid_idx else pd.DataFrame(index=df.index, columns=df.columns)
+
+    if filtered.empty:
+        return filtered
+
+    # Filter 5: SD filter (if enabled)
+    if apply_sd and sd_range is not None:
+        transform_data = get_transform_data(model, transform_key).loc[filtered.index, numeric_cols]
         
-        # Require minimum valid values in each group
-        if len(g1_vals) < min_valid or len(g2_vals) < min_valid:
-            results.append({
-                "protein_id": idx,
-                "log2fc": np.nan,
-                "pvalue": np.nan,
-                "mean_group1": np.nan,
-                "mean_group2": np.nan,
-                "n_group1": len(g1_vals),
-                "n_group2": len(g2_vals),
-            })
-            continue
+        sd_mask = pd.Series(True, index=filtered.index)
+        for col in numeric_cols:
+            col_data = transform_data[col].dropna()
+            if len(col_data) > 0:
+                mean_val = col_data.mean()
+                std_val = col_data.std()
+                lower_bound = mean_val - (sd_range[0] * std_val)
+                upper_bound = mean_val + (sd_range[1] * std_val)
+                
+                col_mask = (transform_data[col] >= lower_bound) & (transform_data[col] <= upper_bound)
+                sd_mask &= col_mask
         
-        # Calculate means
-        mean1 = g1_vals.mean()
-        mean2 = g2_vals.mean()
-        
-        # Calculate log2 fold change (group2 / group1)
-        log2fc = mean2 - mean1
-        
-        # Perform t-test
-        try:
-            t_stat, pval = ttest_ind(g1_vals, g2_vals, equal_var=False)  # Welch's t-test
-        except Exception:
-            t_stat, pval = np.nan, np.nan
-        
-        results.append({
-            "protein_id": idx,
-            "log2fc": log2fc,
-            "pvalue": pval,
-            "mean_group1": mean1,
-            "mean_group2": mean2,
-            "n_group1": len(g1_vals),
-            "n_group2": len(g2_vals),
-        })
+        filtered = filtered[sd_mask]
+
+    return filtered
+
+
+def compute_stats(df: pd.DataFrame, model: MSData, numeric_cols: List[str], species_col: str | None) -> dict:
+    """Compute quality metrics."""
+    if df.empty:
+        return {
+            "n_proteins": 0,
+            "species_counts": {},
+            "cv_mean": np.nan,
+            "cv_median": np.nan,
+        }
+
+    n_proteins = len(df)
     
-    results_df = pd.DataFrame(results)
-    results_df.set_index("protein_id", inplace=True)
-    
-    # Add -log10(p-value)
-    results_df["neg_log10_pval"] = -np.log10(results_df["pvalue"].replace(0, 1e-300))
-    
-    # Benjamini-Hochberg FDR correction
-    pvals = results_df["pvalue"].dropna().sort_values()
-    n = len(pvals)
-    if n > 0:
-        ranks = np.arange(1, n + 1)
-        fdr_vals = pvals.values * n / ranks
-        fdr_vals = np.minimum.accumulate(fdr_vals[::-1])[::-1]
-        fdr_dict = dict(zip(pvals.index, fdr_vals))
-        results_df["fdr"] = results_df.index.map(fdr_dict)
+    if species_col and species_col in model.raw.columns:
+        species_counts = model.raw.loc[df.index, species_col].value_counts().to_dict()
     else:
-        results_df["fdr"] = np.nan
-    
-    return results_df
+        species_counts = {}
 
-
-def classify_regulation(row: pd.Series, fc_threshold: float, pval_threshold: float) -> str:
-    """Classify protein regulation status."""
-    if pd.isna(row["log2fc"]) or pd.isna(row["pvalue"]):
-        return "Not tested"
-    
-    if row["pvalue"] > pval_threshold:
-        return "Not significant"
-    
-    if row["log2fc"] > fc_threshold:
-        return "Up-regulated"
-    elif row["log2fc"] < -fc_threshold:
-        return "Down-regulated"
+    cv_data = compute_cv_per_condition(df[numeric_cols], numeric_cols)
+    if not cv_data.empty:
+        cv_clean = cv_data.to_numpy().ravel()
+        cv_clean = cv_clean[~np.isnan(cv_clean)]
+        cv_mean = cv_clean.mean() if cv_clean.size else np.nan
+        cv_median = np.median(cv_clean) if cv_clean.size else np.nan
     else:
-        return "Not significant"
+        cv_mean = cv_median = np.nan
 
-
-def calculate_error_rates(
-    results_df: pd.DataFrame,
-    true_fc_dict: Dict[str, float],
-    fc_threshold: float,
-    pval_threshold: float,
-) -> Dict[str, float]:
-    """
-    Calculate error rates based on theoretical fold changes.
-    
-    Returns:
-        Dictionary with TP, FP, TN, FN, sensitivity, specificity, FPR, FNR
-    """
-    # Add true regulation status
-    results_df["true_log2fc"] = results_df.index.map(
-        lambda x: true_fc_dict.get(x, 0.0)
-    )
-    
-    # Classify true regulation (using same thresholds)
-    results_df["true_regulated"] = results_df["true_log2fc"].apply(
-        lambda x: abs(x) > fc_threshold
-    )
-    
-    # Observed regulation
-    results_df["observed_regulated"] = results_df["regulation"].isin(
-        ["Up-regulated", "Down-regulated"]
-    )
-    
-    # Calculate confusion matrix
-    TP = ((results_df["true_regulated"]) & (results_df["observed_regulated"])).sum()
-    FP = ((~results_df["true_regulated"]) & (results_df["observed_regulated"])).sum()
-    TN = ((~results_df["true_regulated"]) & (~results_df["observed_regulated"])).sum()
-    FN = ((results_df["true_regulated"]) & (~results_df["observed_regulated"])).sum()
-    
-    # Calculate rates
-    sensitivity = TP / (TP + FN) if (TP + FN) > 0 else 0.0
-    specificity = TN / (TN + FP) if (TN + FP) > 0 else 0.0
-    fpr = FP / (FP + TN) if (FP + TN) > 0 else 0.0
-    fnr = FN / (FN + TP) if (FN + TP) > 0 else 0.0
-    precision = TP / (TP + FP) if (TP + FP) > 0 else 0.0
-    
     return {
-        "TP": int(TP),
-        "FP": int(FP),
-        "TN": int(TN),
-        "FN": int(FN),
-        "sensitivity": sensitivity,
-        "specificity": specificity,
-        "FPR": fpr,
-        "FNR": fnr,
-        "precision": precision,
+        "n_proteins": n_proteins,
+        "species_counts": species_counts,
+        "cv_mean": cv_mean,
+        "cv_median": cv_median,
     }
 
 
-def create_volcano_plot(
-    results_df: pd.DataFrame,
-    fc_threshold: float,
-    pval_threshold: float,
-    title: str = "Volcano Plot",
-) -> go.Figure:
-    """Create interactive volcano plot."""
-    
-    # Add regulation classification
-    results_df["regulation"] = results_df.apply(
-        lambda row: classify_regulation(row, fc_threshold, pval_threshold),
-        axis=1
-    )
-    
-    # Color mapping
-    color_map = {
-        "Up-regulated": "#EA7600",
-        "Down-regulated": "#262262",
-        "Not significant": "#CCCCCC",
-        "Not tested": "#999999",
-    }
-    
-    fig = go.Figure()
-    
-    for reg_type in ["Not significant", "Not tested", "Down-regulated", "Up-regulated"]:
-        subset = results_df[results_df["regulation"] == reg_type]
-        if not subset.empty:
-            fig.add_trace(go.Scatter(
-                x=subset["log2fc"],
-                y=subset["neg_log10_pval"],
-                mode="markers",
-                name=reg_type,
-                marker=dict(
-                    color=color_map[reg_type],
-                    size=6,
-                    opacity=0.7 if reg_type in ["Up-regulated", "Down-regulated"] else 0.3,
-                ),
-                text=subset.index,
-                hovertemplate="<b>%{text}</b><br>" +
-                             "log2FC: %{x:.2f}<br>" +
-                             "-log10(p): %{y:.2f}<br>" +
-                             "<extra></extra>",
-            ))
-    
-    # Add threshold lines
-    fig.add_hline(
-        y=-np.log10(pval_threshold),
-        line_dash="dash",
-        line_color="red",
-        annotation_text=f"p={pval_threshold}",
-    )
-    fig.add_vline(x=fc_threshold, line_dash="dash", line_color="red")
-    fig.add_vline(x=-fc_threshold, line_dash="dash", line_color="red")
-    
-    fig.update_layout(
-        title=title,
-        xaxis_title="log2 Fold Change",
-        yaxis_title="-log10(p-value)",
-        plot_bgcolor="#FFFFFF",
-        paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Arial", color="#54585A"),
-        height=600,
-        hovermode="closest",
-        legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
-    )
-    
-    return fig
-
-
-def create_ma_plot(
-    results_df: pd.DataFrame,
-    fc_threshold: float,
-    pval_threshold: float,
-) -> go.Figure:
-    """Create MA plot (log2FC vs mean abundance)."""
-    
-    results_df["mean_abundance"] = (results_df["mean_group1"] + results_df["mean_group2"]) / 2
-    results_df["regulation"] = results_df.apply(
-        lambda row: classify_regulation(row, fc_threshold, pval_threshold),
-        axis=1
-    )
-    
-    color_map = {
-        "Up-regulated": "#EA7600",
-        "Down-regulated": "#262262",
-        "Not significant": "#CCCCCC",
-        "Not tested": "#999999",
-    }
-    
-    fig = go.Figure()
-    
-    for reg_type in ["Not significant", "Not tested", "Down-regulated", "Up-regulated"]:
-        subset = results_df[results_df["regulation"] == reg_type]
-        if not subset.empty:
-            fig.add_trace(go.Scatter(
-                x=subset["mean_abundance"],
-                y=subset["log2fc"],
-                mode="markers",
-                name=reg_type,
-                marker=dict(
-                    color=color_map[reg_type],
-                    size=6,
-                    opacity=0.7 if reg_type in ["Up-regulated", "Down-regulated"] else 0.3,
-                ),
-                text=subset.index,
-                hovertemplate="<b>%{text}</b><br>" +
-                             "Mean: %{x:.2f}<br>" +
-                             "log2FC: %{y:.2f}<br>" +
-                             "<extra></extra>",
-            ))
-    
-    # Add threshold lines
-    fig.add_hline(y=fc_threshold, line_dash="dash", line_color="red")
-    fig.add_hline(y=-fc_threshold, line_dash="dash", line_color="red")
-    fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
-    
-    fig.update_layout(
-        title="MA Plot",
-        xaxis_title="Mean log2 Abundance",
-        yaxis_title="log2 Fold Change",
-        plot_bgcolor="#FFFFFF",
-        paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Arial", color="#54585A"),
-        height=600,
-        hovermode="closest",
-        legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
-    )
-    
-    return fig
-
-
-def create_combined_distplot_boxplot(
-    results_df: pd.DataFrame,
-    fc_threshold: float,
-    pval_threshold: float,
-) -> go.Figure:
-    """Create combined distplot (left) and boxplot (right) with rug plots."""
-    
-    from plotly.subplots import make_subplots
-    
-    # Classify regulation
-    results_df["regulation"] = results_df.apply(
-        lambda row: classify_regulation(row, fc_threshold, pval_threshold),
-        axis=1
-    )
-    
-    # Prepare data for each group
-    regulation_groups = [
-        ("Down-regulated", "Group 1", TF_CHART_COLORS[0]),
-        ("Not significant", "Group 2", TF_CHART_COLORS[1]),
-        ("Up-regulated", "Group 3", TF_CHART_COLORS[2]),
-        ("Not tested", "Group 4", TF_CHART_COLORS[3]),
-    ]
-    
-    hist_data = []
-    group_labels = []
-    colors = []
-    
-    for reg_type, label, color in regulation_groups:
-        data = results_df[results_df["regulation"] == reg_type]["log2fc"].dropna()
-        if len(data) > 0:
-            hist_data.append(data.values)
-            group_labels.append(label)
-            colors.append(color)
-    
-    if not hist_data:
-        fig = go.Figure()
-        fig.add_annotation(text="No data available", showarrow=False)
-        return fig
-    
-    # Create subplot structure: 2 columns, 2 rows (rug + main plot for each)
-    fig = make_subplots(
-        rows=2, cols=2,
-        row_heights=[0.1, 0.9],
-        column_widths=[0.7, 0.3],
-        specs=[
-            [{"type": "scatter"}, {"type": "box"}],
-            [{"type": "histogram"}, {"type": "box"}]
-        ],
-        horizontal_spacing=0.05,
-        vertical_spacing=0.02,
-    )
-    
-    # Add distplot components to left panel (row 2, col 1)
-    for i, (data, label, color) in enumerate(zip(hist_data, group_labels, colors)):
-        # Histogram
-        fig.add_trace(
-            go.Histogram(
-                x=data,
-                name=label,
-                marker_color=color,
-                opacity=0.6,
-                nbinsx=30,
-                legendgroup=label,
-                showlegend=True,
-            ),
-            row=2, col=1
-        )
-        
-        # KDE curve approximation using histogram with more bins
-        hist, bin_edges = np.histogram(data, bins=50, density=True)
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-        
-        # Smooth with Gaussian kernel
-        from scipy.ndimage import gaussian_filter1d
-        smoothed = gaussian_filter1d(hist, sigma=2)
-        
-        fig.add_trace(
-            go.Scatter(
-                x=bin_centers,
-                y=smoothed,
-                name=label,
-                line=dict(color=color, width=2),
-                legendgroup=label,
-                showlegend=False,
-            ),
-            row=2, col=1
-        )
-        
-        # Rug plot (row 1, col 1)
-        fig.add_trace(
-            go.Scatter(
-                x=data,
-                y=[i] * len(data),
-                mode="markers",
-                marker=dict(
-                    color=color,
-                    symbol="line-ns-open",
-                    size=10,
-                    line=dict(width=1),
-                ),
-                name=label,
-                legendgroup=label,
-                showlegend=False,
-            ),
-            row=1, col=1
-        )
-        
-        # Boxplot (spans both rows, col 2)
-        fig.add_trace(
-            go.Box(
-                y=data,
-                name=label,
-                marker_color=color,
-                legendgroup=label,
-                showlegend=False,
-                boxmean='sd'
-            ),
-            row=2, col=2
-        )
-    
-    # Add threshold lines to distplot
-    fig.add_vline(x=fc_threshold, line_dash="dash", line_color="red", line_width=2, row=2, col=1)
-    fig.add_vline(x=-fc_threshold, line_dash="dash", line_color="red", line_width=2, row=2, col=1)
-    fig.add_vline(x=0, line_dash="solid", line_color="black", line_width=1, row=2, col=1)
-    
-    # Add threshold lines to boxplot
-    fig.add_hline(y=fc_threshold, line_dash="dash", line_color="red", line_width=2, row=2, col=2)
-    fig.add_hline(y=-fc_threshold, line_dash="dash", line_color="red", line_width=2, row=2, col=2)
-    fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1, row=2, col=2)
-    
-    # Update axes
-    fig.update_xaxes(title_text="log2 Fold Change", row=2, col=1)
-    fig.update_yaxes(title_text="Density", row=2, col=1)
-    fig.update_yaxes(title_text="log2 Fold Change", row=2, col=2)
-    fig.update_xaxes(showticklabels=False, row=1, col=1)
-    fig.update_yaxes(showticklabels=False, row=1, col=1)
-    
-    fig.update_layout(
-        title="Distribution of log2 Fold Changes",
-        height=700,
-        plot_bgcolor="#FFFFFF",
-        paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Arial", color="#54585A"),
-        showlegend=True,
-        legend=dict(x=1.05, y=1),
-        barmode='overlay'
-    )
-    
-    return fig
-
-
-st.markdown("## Differential Expression Analysis")
+st.markdown("## Protein-level Filtering & QC")
 
 protein_model: MSData | None = st.session_state.get("protein_model")
 protein_idx = st.session_state.get("protein_index_col")
+protein_species_col = st.session_state.get("protein_species_col")
 
 if protein_model is None:
     st.warning("No protein data cached. Please upload data on the Data Upload page first.")
-    render_navigation(back_page="pages/4_Filtering.py", next_page=None)
+    render_navigation(back_page="pages/3_Preprocessing.py", next_page=None)
     render_footer()
     st.stop()
 
 numeric_cols = protein_model.numeric_cols
-condition_groups = build_condition_groups(numeric_cols)
+df_raw = protein_model.raw_filled[numeric_cols].copy()
 
-# ========== TOP: Dataset Overview ==========
-st.markdown("### 📊 Dataset Overview (Filtered Population)")
+# ========== FILTER CONTROLS (MAIN PAGE) ==========
+st.markdown("### 🎚️ Filter Configuration")
 
-# Get current filtered data stats
-transform_data = get_transform_data(protein_model, "log2")
-cv_data = compute_cv_per_condition(transform_data, numeric_cols)
+# Initialize filter enable states
+if "filter_enable_species" not in st.session_state:
+    st.session_state.filter_enable_species = True
+if "filter_enable_min_pep" not in st.session_state:
+    st.session_state.filter_enable_min_pep = True
+if "filter_enable_cv" not in st.session_state:
+    st.session_state.filter_enable_cv = False
+if "filter_enable_missing" not in st.session_state:
+    st.session_state.filter_enable_missing = False
+if "filter_enable_sd" not in st.session_state:
+    st.session_state.filter_enable_sd = False
 
-col_o1, col_o2, col_o3, col_o4 = st.columns(4)
+# ========== FILTER 1: SPECIES ==========
+st.markdown("#### 1️⃣ Species Selection")
+col_f1_toggle, col_f1_space = st.columns([1, 4])
 
-with col_o1:
-    st.metric("Total Proteins", f"{len(transform_data):,}")
-
-with col_o2:
-    if not cv_data.empty:
-        cv_mean = cv_data.to_numpy().ravel()
-        cv_mean = cv_mean[~np.isnan(cv_mean)].mean()
-        st.metric("Mean CV%", f"{cv_mean:.1f}")
-    else:
-        st.metric("Mean CV%", "N/A")
-
-with col_o3:
-    if not cv_data.empty:
-        cv_median = np.median(cv_data.to_numpy().ravel()[~np.isnan(cv_data.to_numpy().ravel())])
-        st.metric("Median CV%", f"{cv_median:.1f}")
-    else:
-        st.metric("Median CV%", "N/A")
-
-with col_o4:
-    st.metric("Conditions", len(condition_groups))
-
-st.markdown("---")
-
-# ========== SIDEBAR: Analysis Settings ==========
-with st.sidebar:
-    st.markdown("## 🎛️ Analysis Settings")
-    
-    # Condition selection
-    st.markdown("### Condition Comparison")
-    
-    available_conditions = sorted(condition_groups.keys())
-    
-    if len(available_conditions) < 2:
-        st.error("Need at least 2 conditions for differential expression analysis")
-        st.stop()
-    
-    group1 = st.selectbox(
-        "Group 1 (control/reference)",
-        options=available_conditions,
-        index=0,
-        key="de_group1"
+with col_f1_toggle:
+    enable_species = st.checkbox(
+        "Enable",
+        value=st.session_state.filter_enable_species,
+        key="filter_enable_species_cb",
+        label_visibility="collapsed"
     )
-    
-    group2 = st.selectbox(
-        "Group 2 (treatment/test)",
-        options=[c for c in available_conditions if c != group1],
-        index=0,
-        key="de_group2"
-    )
-    
-    st.caption(f"**Comparison:** {group2} vs {group1}")
-    st.caption(f"**Interpretation:** Positive log2FC = higher in {group2}")
-    
-    st.markdown("---")
-    
-    # Transformation
-    st.markdown("### Transformation")
-    transform_key = st.selectbox(
-        "Select transformation",
-        options=["log2", "log10", "sqrt", "cbrt", "yeo_johnson", "quantile"],
-        format_func=lambda x: {
-            "log2": "log2",
-            "log10": "log10",
-            "sqrt": "Square root",
-            "cbrt": "Cube root",
-            "yeo_johnson": "Yeo-Johnson",
-            "quantile": "Quantile Norm",
-        }[x],
-        index=0,
-        key="de_transform"
-    )
-    
-    st.info("ℹ️ **Note:** Differential expression analysis is performed on transformed data. log2 is recommended for interpretable fold changes.")
-    
-    st.markdown("---")
-    
-    # Statistical thresholds
-    st.markdown("### Statistical Thresholds")
-    
-    fc_threshold = st.number_input(
-        "log2 Fold Change threshold",
-        min_value=0.0,
-        max_value=5.0,
-        value=1.0,
-        step=0.1,
-        key="de_fc_threshold",
-        help="Absolute log2FC threshold for significance (1.0 = 2-fold change)"
-    )
-    
-    st.caption(f"Fold change: {2**fc_threshold:.2f}x")
-    
-    pval_threshold = st.number_input(
-        "P-value threshold",
-        min_value=0.001,
-        max_value=0.1,
-        value=0.05,
-        step=0.01,
-        format="%.3f",
-        key="de_pval_threshold",
-        help="P-value cutoff for significance"
-    )
-    
-    use_fdr = st.checkbox(
-        "Use FDR instead of p-value",
-        value=False,
-        key="de_use_fdr",
-        help="Use Benjamini-Hochberg FDR correction"
-    )
-    
-    st.markdown("---")
-    
-    # Minimum valid values
-    st.markdown("### Data Requirements")
-    
-    min_valid = st.number_input(
-        "Min valid values per group",
-        min_value=2,
-        max_value=10,
-        value=2,
-        step=1,
-        key="de_min_valid",
-        help="Minimum number of non-missing values required in each group"
-    )
+    st.session_state.filter_enable_species = enable_species
 
-# ========== MAIN ANALYSIS ==========
-
-# Get transformed data
-transform_data = get_transform_data(protein_model, transform_key)
-
-# Get columns for each group
-group1_cols = condition_groups[group1]
-group2_cols = condition_groups[group2]
-
-st.markdown(f"### Comparison: {group2} vs {group1}")
-
-col_info1, col_info2, col_info3 = st.columns(3)
-with col_info1:
-    st.metric("Group 1 samples", len(group1_cols))
-    st.caption(", ".join(group1_cols))
-with col_info2:
-    st.metric("Group 2 samples", len(group2_cols))
-    st.caption(", ".join(group2_cols))
-with col_info3:
-    st.metric("Total proteins", len(transform_data))
-
-st.markdown("---")
-
-# Perform analysis button
-if st.button("🔬 Run Differential Expression Analysis", type="primary", key="run_de"):
-    with st.spinner("Performing t-test analysis..."):
-        results_df = perform_ttest_analysis(
-            transform_data,
-            group1_cols,
-            group2_cols,
-            min_valid=min_valid
-        )
-        
-        st.session_state.de_results = results_df
-        st.session_state.de_params = {
-            "group1": group1,
-            "group2": group2,
-            "group1_cols": group1_cols,
-            "group2_cols": group2_cols,
-            "transform_key": transform_key,
-            "fc_threshold": fc_threshold,
-            "pval_threshold": pval_threshold,
-            "use_fdr": use_fdr,
-        }
-        st.success("✅ Analysis complete!")
-        st.rerun()
-
-# Display results if available
-if "de_results" in st.session_state:
-    results_df = st.session_state.de_results.copy()
-    params = st.session_state.de_params
-    
-    # Check if parameters have changed
-    params_changed = (
-        params["group1"] != group1 or
-        params["group2"] != group2 or
-        params["fc_threshold"] != fc_threshold or
-        params["pval_threshold"] != pval_threshold or
-        params["use_fdr"] != use_fdr
-    )
-    
-    if params_changed:
-        st.warning("⚠️ Parameters changed. Click 'Run Analysis' to update results.")
-    
-    # Classify results
-    pval_col = "fdr" if use_fdr else "pvalue"
-    results_df["regulation"] = results_df.apply(
-        lambda row: classify_regulation(
-            pd.Series({"log2fc": row["log2fc"], "pvalue": row[pval_col]}),
-            fc_threshold,
-            pval_threshold
-        ),
-        axis=1
-    )
-    
-    # Summary statistics
-    st.markdown("### Summary Statistics")
-    
-    n_up = (results_df["regulation"] == "Up-regulated").sum()
-    n_down = (results_df["regulation"] == "Down-regulated").sum()
-    n_ns = (results_df["regulation"] == "Not significant").sum()
-    n_not_tested = (results_df["regulation"] == "Not tested").sum()
-    
+if enable_species:
     col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-    col_s1.metric("Up-regulated", f"{n_up:,}", delta=f"{n_up/len(results_df)*100:.1f}%")
-    col_s2.metric("Down-regulated", f"{n_down:,}", delta=f"{n_down/len(results_df)*100:.1f}%")
-    col_s3.metric("Not significant", f"{n_ns:,}")
-    col_s4.metric("Not tested", f"{n_not_tested:,}")
     
-    st.markdown("---")
+    with col_s1:
+        species_human = st.checkbox("Human", value=True, key="filter_species_human")
+    with col_s2:
+        species_ecoli = st.checkbox("E.coli", value=True, key="filter_species_ecoli")
+    with col_s3:
+        species_yeast = st.checkbox("Yeast", value=True, key="filter_species_yeast")
+    with col_s4:
+        species_mouse = st.checkbox("Mouse", value=False, key="filter_species_mouse")
     
-    # ========== THEORETICAL FOLD CHANGES INPUT ==========
-    st.markdown("### 🎯 Theoretical Fold Changes (Optional)")
-    st.caption("Enter expected log2 fold changes for spike-in proteins or known standards to calculate error rates")
-    
-    with st.expander("📝 Enter Theoretical Values", expanded=False):
-        st.markdown("**Format:** One entry per line as `protein_id:log2fc`")
-        st.caption("Example: `HUMAN_P12345:2.0` (2-fold increase)")
-        
-        theoretical_input = st.text_area(
-            "Theoretical fold changes",
-            height=200,
-            placeholder="HUMAN_P12345:2.0\nYEAST_Q67890:-1.5\nECOLI_A11111:0.0",
-            key="de_theoretical_input"
+    selected_species = []
+    if species_human:
+        selected_species.append("HUMAN")
+    if species_ecoli:
+        selected_species.append("ECOLI")
+    if species_yeast:
+        selected_species.append("YEAST")
+    if species_mouse:
+        selected_species.append("MOUSE")
+else:
+    selected_species = ["HUMAN", "ECOLI", "YEAST", "MOUSE"]
+    st.caption("ℹ️ Species filter disabled - all species included")
+
+st.markdown("---")
+
+# ========== FILTER 2: MIN PEPTIDES ==========
+st.markdown("#### 2️⃣ Minimum Peptides per Protein")
+col_f2_toggle, col_f2_input = st.columns([1, 2])
+
+with col_f2_toggle:
+    enable_min_pep = st.checkbox(
+        "Enable",
+        value=st.session_state.filter_enable_min_pep,
+        key="filter_enable_min_pep_cb",
+        label_visibility="collapsed"
+    )
+    st.session_state.filter_enable_min_pep = enable_min_pep
+
+with col_f2_input:
+    min_peptides = st.number_input(
+        "Min peptides",
+        min_value=1,
+        max_value=10,
+        value=1,
+        step=1,
+        key="filter_min_peptides",
+        disabled=not enable_min_pep,
+    )
+
+if not enable_min_pep:
+    st.caption("ℹ️ Min peptides filter disabled - no minimum applied")
+else:
+    st.caption(f"Only keep proteins with ≥{min_peptides} peptides")
+
+st.markdown("---")
+
+# ========== FILTER 3: CV CUTOFF ==========
+st.markdown("#### 3️⃣ CV% (Coefficient of Variation) Cutoff")
+col_f3_toggle, col_f3_input = st.columns([1, 2])
+
+with col_f3_toggle:
+    enable_cv = st.checkbox(
+        "Enable",
+        value=st.session_state.filter_enable_cv,
+        key="filter_enable_cv_cb",
+        label_visibility="collapsed"
+    )
+    st.session_state.filter_enable_cv = enable_cv
+
+with col_f3_input:
+    cv_cutoff = st.number_input(
+        "Max CV%",
+        min_value=0,
+        max_value=100,
+        value=30,
+        step=5,
+        key="filter_cv",
+        disabled=not enable_cv,
+    )
+
+if not enable_cv:
+    st.caption("ℹ️ CV filter disabled - no cutoff applied")
+else:
+    st.caption(f"Only keep proteins with min(CV) ≤ {cv_cutoff}% in any condition")
+
+st.markdown("---")
+
+# ========== FILTER 4: MISSING DATA ==========
+st.markdown("#### 4️⃣ Maximum Missing Data per Condition")
+col_f4_toggle, col_f4_input = st.columns([1, 2])
+
+with col_f4_toggle:
+    enable_missing = st.checkbox(
+        "Enable",
+        value=st.session_state.filter_enable_missing,
+        key="filter_enable_missing_cb",
+        label_visibility="collapsed"
+    )
+    st.session_state.filter_enable_missing = enable_missing
+
+with col_f4_input:
+    max_missing_pct = st.number_input(
+        "Max missing %",
+        min_value=0,
+        max_value=100,
+        value=34,
+        step=5,
+        key="filter_missing",
+        disabled=not enable_missing,
+    )
+
+if not enable_missing:
+    st.caption("ℹ️ Missing data filter disabled - no limit applied")
+else:
+    st.caption(f"Only keep proteins with ≤{max_missing_pct}% missing per condition")
+
+st.markdown("---")
+
+# ========== FILTER 5: SD RANGE ==========
+st.markdown("#### 5️⃣ Standard Deviation Range Filter")
+col_f5_toggle, col_f5_space = st.columns([1, 4])
+
+with col_f5_toggle:
+    enable_sd = st.checkbox(
+        "Enable",
+        value=st.session_state.filter_enable_sd,
+        key="filter_enable_sd_cb",
+        label_visibility="collapsed"
+    )
+    st.session_state.filter_enable_sd = enable_sd
+
+if enable_sd:
+    col_sd1, col_sd2 = st.columns(2)
+    with col_sd1:
+        sd_min = st.number_input(
+            "Min SD (σ below mean)",
+            min_value=0.0,
+            max_value=10.0,
+            value=2.0,
+            step=0.5,
+            key="sd_min_input",
         )
-        
-        if st.button("✅ Calculate Error Rates", key="calc_error_rates"):
-            if theoretical_input.strip():
-                # Parse input
-                true_fc_dict = {}
-                for line in theoretical_input.strip().split("\n"):
-                    if ":" in line:
-                        parts = line.strip().split(":")
-                        if len(parts) == 2:
-                            protein_id, fc_str = parts
-                            try:
-                                true_fc_dict[protein_id.strip()] = float(fc_str.strip())
-                            except ValueError:
-                                st.error(f"Invalid fold change value: {fc_str}")
-                
-                if true_fc_dict:
-                    st.session_state.de_true_fc = true_fc_dict
-                    st.success(f"✅ Loaded {len(true_fc_dict)} theoretical values")
-                    st.rerun()
-                else:
-                    st.error("No valid entries found")
-            else:
-                st.warning("Please enter at least one theoretical value")
-    
-    # Display error rates if theoretical values provided
-    if "de_true_fc" in st.session_state and st.session_state.de_true_fc:
-        st.markdown("---")
-        st.markdown("### 📈 Error Rate Analysis")
-        
-        error_metrics = calculate_error_rates(
-            results_df.copy(),
-            st.session_state.de_true_fc,
-            fc_threshold,
-            pval_threshold
+    with col_sd2:
+        sd_max = st.number_input(
+            "Max SD (σ above mean)",
+            min_value=0.0,
+            max_value=10.0,
+            value=2.0,
+            step=0.5,
+            key="sd_max_input",
         )
-        
-        # Confusion matrix
-        col_cm1, col_cm2 = st.columns(2)
-        
-        with col_cm1:
-            st.markdown("#### Confusion Matrix")
-            cm_df = pd.DataFrame({
-                "Predicted Positive": [error_metrics["TP"], error_metrics["FP"]],
-                "Predicted Negative": [error_metrics["FN"], error_metrics["TN"]],
-            }, index=["Actual Positive", "Actual Negative"])
-            
-            st.dataframe(cm_df, use_container_width=True)
-        
-        with col_cm2:
-            st.markdown("#### Performance Metrics")
-            perf_df = pd.DataFrame({
-                "Metric": ["Sensitivity (TPR)", "Specificity (TNR)", "Precision (PPV)", "False Positive Rate", "False Negative Rate"],
-                "Value": [
-                    f"{error_metrics['sensitivity']:.2%}",
-                    f"{error_metrics['specificity']:.2%}",
-                    f"{error_metrics['precision']:.2%}",
-                    f"{error_metrics['FPR']:.2%}",
-                    f"{error_metrics['FNR']:.2%}",
-                ]
-            })
-            st.dataframe(perf_df, hide_index=True, use_container_width=True)
-        
-        st.caption(f"**Total proteins with theoretical values:** {len(st.session_state.de_true_fc)}")
-    
-    st.markdown("---")
-    
-    # Visualization tabs
-    tab_volcano, tab_ma, tab_dist, tab_table = st.tabs(["Volcano Plot", "MA Plot", "Distribution + Boxplot", "Results Table"])
-    
-    with tab_volcano:
-        st.markdown("### Volcano Plot")
-        fig_volcano = create_volcano_plot(
-            results_df.copy(),
-            fc_threshold,
-            pval_threshold,
-            title=f"Volcano Plot: {params['group2']} vs {params['group1']}"
-        )
-        st.plotly_chart(fig_volcano, use_container_width=True)
-    
-    with tab_ma:
-        st.markdown("### MA Plot")
-        fig_ma = create_ma_plot(
-            results_df.copy(),
-            fc_threshold,
-            pval_threshold
-        )
-        st.plotly_chart(fig_ma, use_container_width=True)
-    
-    with tab_dist:
-        st.markdown("### Distribution + Boxplot")
-        st.caption("Left: Histogram with KDE curves and rug plots | Right: Boxplots with mean ± SD")
-        fig_combined = create_combined_distplot_boxplot(
-            results_df.copy(),
-            fc_threshold,
-            pval_threshold
-        )
-        st.plotly_chart(fig_combined, use_container_width=True)
-    
-    with tab_table:
-        st.markdown("### Results Table")
-        
-        # Filter options
-        col_f1, col_f2, col_f3 = st.columns(3)
-        
-        with col_f1:
-            show_filter = st.selectbox(
-                "Show proteins",
-                options=["All", "Significant only", "Up-regulated", "Down-regulated"],
-                index=0,
-                key="de_table_filter"
-            )
-        
-        with col_f2:
-            sort_by = st.selectbox(
-                "Sort by",
-                options=["P-value", "log2FC", "Mean abundance"],
-                index=0,
-                key="de_table_sort"
-            )
-        
-        # Apply filter
-        if show_filter == "Significant only":
-            display_df = results_df[results_df["regulation"].isin(["Up-regulated", "Down-regulated"])]
-        elif show_filter == "Up-regulated":
-            display_df = results_df[results_df["regulation"] == "Up-regulated"]
-        elif show_filter == "Down-regulated":
-            display_df = results_df[results_df["regulation"] == "Down-regulated"]
+    st.caption(f"Keep values within μ - {sd_min}σ to μ + {sd_max}σ")
+else:
+    sd_min = 2.0
+    sd_max = 2.0
+    st.caption("ℹ️ SD range filter disabled - no filtering applied")
+
+st.markdown("---")
+
+# ========== TRANSFORMATION SELECTION ==========
+st.markdown("#### 🔄 Transformation")
+transform_key = st.selectbox(
+    "Select transformation",
+    options=list(TRANSFORMS.keys()),
+    format_func=lambda x: TRANSFORMS[x],
+    index=0,
+    key="filter_transform"
+)
+st.caption("Used for CV and SD range calculations")
+
+st.markdown("---")
+
+# ========== DERIVE EFFECTIVE FILTER VALUES ==========
+cv_cutoff_val = cv_cutoff if enable_cv else 1000.0
+max_missing_ratio = max_missing_pct / 100.0 if enable_missing else 1.0
+sd_range = (sd_min, sd_max) if enable_sd else None
+
+# ========== APPLY FILTERS AND COMPUTE STATS ==========
+initial_stats = compute_stats(df_raw, protein_model, numeric_cols, protein_species_col)
+
+filtered_df = apply_filters(
+    df_raw,
+    protein_model,
+    numeric_cols,
+    selected_species,
+    min_peptides,
+    cv_cutoff_val,
+    max_missing_ratio,
+    sd_range,
+    enable_sd,
+    transform_key,
+    apply_species=enable_species,
+    apply_min_pep=enable_min_pep,
+    apply_cv=enable_cv,
+    apply_missing=enable_missing,
+)
+
+filtered_stats = compute_stats(filtered_df, protein_model, numeric_cols, protein_species_col)
+
+st.markdown("---")
+
+# ========== SUMMARY STATISTICS ==========
+st.markdown("### 📊 Filter Summary")
+
+col_summ1, col_summ2, col_summ3, col_summ4 = st.columns(4)
+
+with col_summ1:
+    st.metric(
+        "Before",
+        f"{initial_stats['n_proteins']:,}",
+        delta=f"{filtered_stats['n_proteins'] - initial_stats['n_proteins']:+,}"
+    )
+
+with col_summ2:
+    st.metric(
+        "After",
+        f"{filtered_stats['n_proteins']:,}",
+        delta=f"{filtered_stats['n_proteins'] / initial_stats['n_proteins'] * 100:.1f}%"
+    )
+
+with col_summ3:
+    st.metric(
+        "Mean CV% (Before)",
+        f"{initial_stats['cv_mean']:.1f}" if not np.isnan(initial_stats["cv_mean"]) else "N/A",
+        delta=f"{filtered_stats['cv_mean'] - initial_stats['cv_mean']:.1f}" if not (np.isnan(filtered_stats['cv_mean']) or np.isnan(initial_stats['cv_mean'])) else None
+    )
+
+with col_summ4:
+    st.metric(
+        "Mean CV% (After)",
+        f"{filtered_stats['cv_mean']:.1f}" if not np.isnan(filtered_stats["cv_mean"]) else "N/A",
+    )
+
+st.markdown("---")
+
+# ========== ACTIVE FILTERS BADGE ==========
+st.markdown("### ✓ Active Filters")
+
+active_filters = []
+if enable_species and selected_species:
+    active_filters.append(f"Species: {', '.join(selected_species)}")
+if enable_min_pep:
+    active_filters.append(f"Min peptides: {min_peptides}")
+if enable_cv:
+    active_filters.append(f"CV <{cv_cutoff}%")
+if enable_missing:
+    active_filters.append(f"Missing <{max_missing_pct}%")
+if enable_sd:
+    active_filters.append(f"SD: μ±{sd_min:.1f}σ to μ±{sd_max:.1f}σ")
+
+if active_filters:
+    for i, f in enumerate(active_filters, 1):
+        st.caption(f"✓ {f}")
+else:
+    st.caption("No filters active - using all proteins")
+
+st.markdown("---")
+
+# ========== STORE FILTERED DATASET ==========
+col_store1, col_store2 = st.columns([1, 3])
+
+with col_store1:
+    if st.button("💾 Store for Analysis", type="primary", key="store_filtered"):
+        if not filtered_df.empty:
+            st.session_state.last_filtered_data = filtered_df.copy()
+            st.session_state.last_filtered_params = {
+                "selected_species": selected_species,
+                "min_peptides": min_peptides,
+                "cv_cutoff": cv_cutoff_val,
+                "missing_ratio": max_missing_ratio,
+                "use_sd_filter": enable_sd,
+                "sd_range": sd_range,
+                "transform_key": transform_key,
+                "n_proteins": len(filtered_df),
+                "active_filters": active_filters,
+            }
+            st.success(f"✅ Stored {len(filtered_df):,} proteins for analysis!")
         else:
-            display_df = results_df
-        
-        # Sort
-        if sort_by == "P-value":
-            display_df = display_df.sort_values(pval_col)
-        elif sort_by == "log2FC":
-            display_df = display_df.sort_values("log2fc", ascending=False, key=abs)
-        else:
-            display_df["mean_abundance"] = (display_df["mean_group1"] + display_df["mean_group2"]) / 2
-            display_df = display_df.sort_values("mean_abundance", ascending=False)
-        
-        # Display table
-        display_cols = [
-            "log2fc",
-            "pvalue",
-            "fdr",
-            "mean_group1",
-            "mean_group2",
-            "regulation",
-            "n_group1",
-            "n_group2",
-        ]
-        
-        styled_df = display_df[display_cols].style.format({
-            "log2fc": "{:.3f}",
-            "pvalue": "{:.2e}",
-            "fdr": "{:.2e}",
-            "mean_group1": "{:.2f}",
-            "mean_group2": "{:.2f}",
-            "n_group1": "{:.0f}",
-            "n_group2": "{:.0f}",
-        }).background_gradient(
-            subset=["log2fc"],
-            cmap="RdBu_r",
-            vmin=-3,
-            vmax=3
-        )
-        
-        st.dataframe(styled_df, use_container_width=True, height=600)
-        
-        st.caption(f"Showing {len(display_df):,} of {len(results_df):,} proteins")
-    
-    st.markdown("---")
-    
-    # Export results
-    st.markdown("### Export Results")
-    
-    col_exp1, col_exp2, col_exp3 = st.columns([1, 1, 2])
+            st.error("❌ No proteins after filtering. Adjust filters to proceed.")
+
+with col_store2:
+    if not filtered_df.empty:
+        st.metric("Proteins Ready", f"{filtered_stats['n_proteins']:,}")
+
+st.markdown("---")
+
+# ========== EXPORT FILTERED DATA ==========
+if not filtered_df.empty:
+    col_exp1, col_exp2 = st.columns([1, 1])
     
     with col_exp1:
-        if st.button("💾 Export All Results", key="export_all"):
-            csv = results_df.to_csv(index=True)
+        if st.button("💾 Export Filtered Data", key="export_filtered"):
+            csv = filtered_df.to_csv(index=True)
             st.download_button(
                 label="Download CSV",
                 data=csv,
-                file_name=f"de_results_{params['group2']}_vs_{params['group1']}.csv",
+                file_name="filtered_proteins.csv",
                 mime="text/csv",
             )
     
     with col_exp2:
-        if st.button("💾 Export Significant Only", key="export_sig"):
-            sig_df = results_df[results_df["regulation"].isin(["Up-regulated", "Down-regulated"])]
-            csv = sig_df.to_csv(index=True)
-            st.download_button(
-                label="Download CSV",
-                data=csv,
-                file_name=f"de_significant_{params['group2']}_vs_{params['group1']}.csv",
-                mime="text/csv",
-            )
+        st.caption("Export current filtered dataset as CSV")
 
-else:
-    st.info("👆 Click 'Run Differential Expression Analysis' to start")
-
-render_navigation(back_page="pages/4_Filtering.py", next_page=None)
+render_navigation(back_page="pages/3_Preprocessing.py", next_page=None)
 render_footer()
