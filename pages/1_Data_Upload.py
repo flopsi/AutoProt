@@ -64,11 +64,11 @@ def extract_species_from_protein_id(protein_id: str) -> str:
         return protein_str
     
     # Otherwise, extract from protein ID format
-    if "_HUMAN" in protein_str or "HUMAN_" or "HUMAN" in protein_str:
+    if "_HUMAN" in protein_str or "HUMAN_" in protein_str or "HUMAN" in protein_str:
         return "HUMAN"
-    elif "_YEAST" in protein_str or "YEAST_" or "YEAST" in protein_str:
+    elif "_YEAST" in protein_str or "YEAST_" in protein_str or "YEAST" in protein_str:
         return "YEAST"
-    elif "_ECOLI" in protein_str or "ECOLI_" or "ECOLI" in protein_str:
+    elif "_ECOLI" in protein_str or "ECOLI_" in protein_str or "ECOLI" in protein_str:
         return "ECOLI"
     elif "_MOUSE" in protein_str or "MOUSE_" or "MOUSE" in protein_str:
         return "MOUSE"
