@@ -19,6 +19,7 @@ st.set_page_config(
 inject_custom_css()
 render_header()
 
+
 @dataclass
 class TransformsCache:
     log2: pd.DataFrame
@@ -70,76 +71,8 @@ class MSData:
     missing_count: int
     numeric_cols: List[str]
     transforms: TransformsCache
-    species_subgroups: FilteredSubgroups  # NEW
-    species_col: str  # NEW
-
-
-def build_species_subgroups(df: pd.DataFrame, species_col: str, numeric_cols: List[str]) -> FilteredSubgroups:
-    """Pre-filter data by species for fast access."""
-    if species_col not in df.columns:
-        return FilteredSubgroups(
-            human=pd.DataFrame(),
-            yeast=pd.DataFrame(),
-            ecoli=pd.DataFrame(),
-            mouse=pd.DataFrame(),
-            all_species=df,
-        )
-    
-    species_series = df[species_col]
-    
-    return FilteredSubgroups(
-        human=df[species_series == "HUMAN"].copy(),
-        yeast=df[species_series == "YEAST"].copy(),
-        ecoli=df[species_series == "ECOLI"].copy(),
-        mouse=df[species_series == "MOUSE"].copy(),
-        all_species=df.copy(),
-    )
-
-
-def build_msdata(
-    processed_df: pd.DataFrame, 
-    numeric_cols_renamed: List[str], 
-    species_col: str = "_extracted_species"
-) -> MSData:
-    """Build MSData with pre-cached species subgroups."""
-    raw = processed_df.copy()
-
-    raw[numeric_cols_renamed] = (
-        raw[numeric_cols_renamed]
-        .apply(pd.to_numeric, errors="coerce")
-        .astype("float64")
-    )
-
-    raw_filled = raw.copy()
-    vals = raw_filled[numeric_cols_renamed]
-    vals = vals.fillna(1.0)
-    vals = vals.where(~vals.isin([0.0, 1.0]), 1.0)
-    raw_filled[numeric_cols_renamed] = vals
-
-    missing_count = (raw_filled[numeric_cols_renamed] == 1.0).to_numpy().sum()
-
-    transforms = compute_transforms(raw_filled, numeric_cols_renamed)
-    species_subgroups = build_species_subgroups(raw_filled, species_col, numeric_cols_renamed)
-
-    return MSData(
-        raw=raw,
-        raw_filled=raw_filled,
-        missing_count=missing_count,
-        numeric_cols=numeric_cols_renamed,
-        transforms=transforms,
-        species_subgroups=species_subgroups,
-        species_col=species_col,
-    )
-
-
-
-@dataclass
-class MSData:
-    raw: pd.DataFrame
-    raw_filled: pd.DataFrame
-    missing_count: int
-    numeric_cols: List[str]
-    transforms: TransformsCache
+    species_subgroups: FilteredSubgroups
+    species_col: str
 
 
 @st.cache_data
@@ -161,18 +94,27 @@ def extract_species_from_protein_id(protein_id: str) -> str:
     
     protein_str = str(protein_id).upper().strip()
     
-    # If it's already a plain species name, return it
+    # If it's already a plain species name, return it immediately
     if protein_str in ["HUMAN", "YEAST", "ECOLI", "MOUSE"]:
         return protein_str
     
-    # Otherwise, extract from protein ID format
-    if "_HUMAN" in protein_str or "HUMAN_" in protein_str:
+    # Otherwise, extract from protein ID format (look for underscore patterns first)
+    if "_HUMAN" in protein_str:
         return "HUMAN"
-    elif "_YEAST" in protein_str or "YEAST_" in protein_str:
+    elif "_YEAST" in protein_str:
         return "YEAST"
-    elif "_ECOLI" in protein_str or "ECOLI_" in protein_str:
+    elif "_ECOLI" in protein_str:
         return "ECOLI"
-    elif "_MOUSE" in protein_str or "MOUSE_" in protein_str:
+    elif "_MOUSE" in protein_str:
+        return "MOUSE"
+    # Fallback: check if species word appears anywhere
+    elif "HUMAN" in protein_str:
+        return "HUMAN"
+    elif "YEAST" in protein_str:
+        return "YEAST"
+    elif "ECOLI" in protein_str:
+        return "ECOLI"
+    elif "MOUSE" in protein_str:
         return "MOUSE"
     else:
         return "UNKNOWN"
@@ -238,11 +180,32 @@ def compute_transforms(raw_filled: pd.DataFrame, numeric_cols: List[str]) -> Tra
     )
 
 
+def build_species_subgroups(df: pd.DataFrame, species_col: str, numeric_cols: List[str]) -> FilteredSubgroups:
+    """Pre-filter data by species for fast access."""
+    if species_col not in df.columns:
+        return FilteredSubgroups(
+            human=pd.DataFrame(),
+            yeast=pd.DataFrame(),
+            ecoli=pd.DataFrame(),
+            mouse=pd.DataFrame(),
+            all_species=df,
+        )
+    
+    species_series = df[species_col]
+    
+    return FilteredSubgroups(
+        human=df[species_series == "HUMAN"].copy(),
+        yeast=df[species_series == "YEAST"].copy(),
+        ecoli=df[species_series == "ECOLI"].copy(),
+        mouse=df[species_series == "MOUSE"].copy(),
+        all_species=df.copy(),
+    )
+
+
 def build_msdata(
     processed_df: pd.DataFrame, 
     numeric_cols_renamed: List[str], 
-    species_col: str = "_extracted_species",
-    _version: int = 2  # Increment this to break cache
+    species_col: str = "_extracted_species"
 ) -> MSData:
     """Build MSData with pre-cached species subgroups."""
     raw = processed_df.copy()
@@ -273,11 +236,6 @@ def build_msdata(
         species_subgroups=species_subgroups,
         species_col=species_col,
     )
-
-
-@st.cache_data
-def get_msdata(df: pd.DataFrame, quant_cols: List[str]) -> MSData:
-    return build_msdata(df, quant_cols)
 
 
 DEFAULTS = {
@@ -365,7 +323,7 @@ with col3:
     )
     peptide_seq_col = None if peptide_seq_col == "None" else peptide_seq_col
 
-# NEW: Drop columns selector
+# Drop columns selector
 drop_cols = st.multiselect(
     "⚠️ Drop columns (these will be permanently removed)",
     options=[c for c in all_cols if c not in {pg_col, species_col, peptide_seq_col} if c is not None],
@@ -450,7 +408,7 @@ def config_fragment():
     rename_map = {k: v for k, v in st.session_state.column_renames.items() if k in raw_df.columns}
     working_df = raw_df.rename(columns=rename_map)
     
-    # DROP SELECTED COLUMNS - NEW
+    # Drop selected columns
     if drop_cols:
         working_df = working_df.drop(columns=drop_cols)
         st.info(f"🗑️ Dropped {len(drop_cols)} columns: {', '.join(drop_cols[:3])}{'...' if len(drop_cols) > 3 else ''}")
@@ -520,9 +478,9 @@ def config_fragment():
             model = build_msdata(
                 processed_df, 
                 numeric_cols_renamed, 
-                species_col="_extracted_species",
-                _version=2
+                species_col="_extracted_species"
             )
+            missing_mask = processed_df[numeric_cols_renamed].isna() | (processed_df[numeric_cols_renamed] <= 1.0)
 
             st.session_state[existing_key] = model
             st.session_state[index_key] = pg_col
@@ -534,6 +492,10 @@ def config_fragment():
             
             # Show cache summary
             st.success(f"✅ Cached {data_type} data")
+            st.write(f"- HUMAN: {len(model.species_subgroups.human):,} rows")
+            st.write(f"- YEAST: {len(model.species_subgroups.yeast):,} rows")
+            st.write(f"- ECOLI: {len(model.species_subgroups.ecoli):,} rows")
+            st.write(f"- MOUSE: {len(model.species_subgroups.mouse):,} rows")
             
             # Auto-redirect only if both loaded
             if st.session_state.get("protein_model") and st.session_state.get("peptide_model"):
@@ -545,7 +507,6 @@ def config_fragment():
         if st.button("Cancel"):
             reset_upload_state()
             st.rerun()
-
 
 config_fragment()
 
