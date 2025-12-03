@@ -395,10 +395,10 @@ with col2:
     if use_cv:
         st.session_state.filter_cv_cutoff = st.slider(
             "CV%",
-            min_value=0.00,
-            max_value=1.00,
-            value=st.session_state.filter_cv_cutoff,
-            step=5.0,
+            min_value=0,
+            max_value=100,
+            value=int(st.session_state.filter_cv_cutoff*100),
+            step=5,
             key="cv_slider"
         )
     else:
