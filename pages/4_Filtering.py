@@ -509,6 +509,7 @@ with c4:
 st.markdown("---")
 
 # ========== 2. FILTERING MODE ==========
+# ========== 2. FILTERING MODE ==========
 st.markdown("### 🎯 Filtering Mode")
 
 optimization_mode = st.radio(
@@ -522,7 +523,278 @@ optimization_mode = st.radio(
 use_species_optimization = optimization_mode == "Species-specific optimization (build sequentially)"
 
 if use_species_optimization:
-    st.info("📋 **Sequential Selection**: Configure and add each species separately. Implementation available in previous version.")
+    st.info("📋 **Sequential Selection**: Configure and add each species separately with optimized filters. The final dataset combines all selections.")
+    
+    # Initialize species-specific state - store indices instead of DataFrames
+    if "optimized_species_indices" not in st.session_state:
+        st.session_state.optimized_species_indices = {}
+    
+    # Species selection for optimization
+    available_species = ["HUMAN", "ECOLI", "YEAST", "MOUSE"]
+    already_added = list(st.session_state.optimized_species_indices.keys())
+    remaining_species = [sp for sp in available_species if sp not in already_added]
+    
+    if remaining_species:
+        st.markdown("### Configure Next Species")
+        
+        col_sp1, col_sp2, col_sp3 = st.columns([2, 2, 1])
+        
+        with col_sp1:
+            current_species = st.selectbox(
+                "Select species to optimize",
+                options=remaining_species,
+                key="current_species_select"
+            )
+        
+        with col_sp2:
+            st.metric("Species added", len(already_added))
+            st.caption(f"Added: {', '.join(already_added) if already_added else 'None'}")
+        
+        # Get species subset for preview
+        species_subset = protein_model.species_subgroups.get([current_species])
+        
+        if not species_subset.empty:
+            # Show initial stats for this species
+            species_initial_stats = compute_stats(species_subset, protein_model, numeric_cols, protein_species_col)
+            
+            st.markdown(f"#### Current Stats for {current_species} (unfiltered)")
+            col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+            col_s1.metric("Proteins", f"{species_initial_stats['n_proteins']:,}")
+            col_s2.metric("Mean CV%", f"{species_initial_stats['cv_mean']:.1f}" if not np.isnan(species_initial_stats['cv_mean']) else "N/A")
+            col_s3.metric("PERMANOVA F", f"{species_initial_stats['permanova_f']:.2f}" if not np.isnan(species_initial_stats['permanova_f']) else "N/A")
+            col_s4.metric("Shapiro W", f"{species_initial_stats['shapiro_w']:.4f}" if not np.isnan(species_initial_stats['shapiro_w']) else "N/A")
+            
+            st.markdown("---")
+            
+            # Species-specific filter overrides
+            st.markdown(f"#### Configure Filters for {current_species}")
+            
+            col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+            
+            with col_f1:
+                sp_min_peptides = st.number_input(
+                    "Min peptides",
+                    min_value=1,
+                    max_value=10,
+                    value=min_peptides,
+                    step=1,
+                    key=f"sp_min_pep_{current_species}",
+                    help="Minimum peptides per protein"
+                )
+            
+            with col_f2:
+                sp_use_cv = st.checkbox(
+                    "Enable CV filter",
+                    value=use_cv,
+                    key=f"sp_use_cv_{current_species}"
+                )
+                sp_cv_cutoff = st.number_input(
+                    "Max CV%",
+                    min_value=0,
+                    max_value=100,
+                    value=cv_cutoff,
+                    step=5,
+                    disabled=not sp_use_cv,
+                    key=f"sp_cv_val_{current_species}"
+                )
+            
+            with col_f3:
+                sp_use_missing = st.checkbox(
+                    "Enable missing filter",
+                    value=use_missing,
+                    key=f"sp_use_missing_{current_species}"
+                )
+                sp_missing_pct = st.number_input(
+                    "Max missing %",
+                    min_value=0,
+                    max_value=100,
+                    value=max_missing_pct,
+                    step=5,
+                    disabled=not sp_use_missing,
+                    key=f"sp_missing_val_{current_species}"
+                )
+            
+            with col_f4:
+                sp_use_sd = st.checkbox(
+                    "Enable SD filter",
+                    value=use_sd_filter,
+                    key=f"sp_use_sd_{current_species}"
+                )
+                sp_sd_min = st.number_input(
+                    "Min SD",
+                    min_value=0.0,
+                    max_value=10.0,
+                    value=sd_min,
+                    step=0.5,
+                    disabled=not sp_use_sd,
+                    key=f"sp_sd_min_{current_species}"
+                )
+                sp_sd_max = st.number_input(
+                    "Max SD",
+                    min_value=0.0,
+                    max_value=10.0,
+                    value=sd_max,
+                    step=0.5,
+                    disabled=not sp_use_sd,
+                    key=f"sp_sd_max_{current_species}"
+                )
+            
+            # Preview stats for this species with selected filters
+            sp_cv = sp_cv_cutoff if sp_use_cv else 1000.0
+            sp_missing_ratio = sp_missing_pct / 100.0 if sp_use_missing else 1.0
+            sp_sd_range = (sp_sd_min, sp_sd_max) if sp_use_sd else None
+            
+            # Apply filters to preview
+            preview_filtered = apply_filters(
+                species_subset[numeric_cols],
+                protein_model,
+                numeric_cols,
+                [current_species],
+                sp_min_peptides,
+                sp_cv,
+                sp_missing_ratio,
+                sp_sd_range,
+                sp_use_sd,
+                transform_key,
+            )
+            
+            preview_stats = compute_stats(preview_filtered, protein_model, numeric_cols, protein_species_col)
+            
+            st.markdown(f"#### Preview: {current_species} After Filtering")
+            col_p1, col_p2, col_p3, col_p4, col_p5 = st.columns(5)
+            col_p1.metric("Before", f"{len(species_subset):,}")
+            col_p2.metric("After", f"{preview_stats['n_proteins']:,}")
+            col_p3.metric("Kept", f"{preview_stats['n_proteins'] / len(species_subset) * 100:.1f}%")
+            col_p4.metric("Mean CV%", f"{preview_stats['cv_mean']:.1f}" if not np.isnan(preview_stats['cv_mean']) else "N/A")
+            col_p5.metric("PERMANOVA F", f"{preview_stats['permanova_f']:.2f}" if not np.isnan(preview_stats['permanova_f']) else "N/A")
+            
+            st.markdown("---")
+            
+            col_add1, col_add2, col_add3 = st.columns([1, 1, 2])
+            
+            with col_add1:
+                if st.button(f"➕ Add {current_species}", type="primary", key=f"add_{current_species}", use_container_width=True):
+                    # Store only indices and filter settings - NOT DataFrames
+                    st.session_state.optimized_species_indices[current_species] = {
+                        "indices": preview_filtered.index.tolist(),
+                        "filters": {
+                            "min_peptides": sp_min_peptides,
+                            "cv_cutoff": sp_cv,
+                            "missing_ratio": sp_missing_ratio,
+                            "use_cv": sp_use_cv,
+                            "use_missing": sp_use_missing,
+                            "use_sd": sp_use_sd,
+                            "sd_range": sp_sd_range,
+                        },
+                        "stats": {
+                            "n_proteins": preview_stats['n_proteins'],
+                            "cv_mean": preview_stats['cv_mean'],
+                            "permanova_f": preview_stats['permanova_f'],
+                        }
+                    }
+                    st.success(f"✅ Added {current_species} with {preview_stats['n_proteins']:,} proteins!")
+                    st.rerun()
+            
+            with col_add2:
+                if st.button(f"⏭️ Skip {current_species}", key=f"skip_{current_species}", use_container_width=True):
+                    st.session_state.optimized_species_indices[current_species] = {
+                        "indices": [],
+                        "filters": {"skipped": True},
+                        "stats": {"n_proteins": 0}
+                    }
+                    st.info(f"Skipped {current_species}")
+                    st.rerun()
+        
+        else:
+            st.warning(f"No {current_species} proteins found in dataset")
+    
+    else:
+        st.success("✅ All available species configured!")
+    
+    st.markdown("---")
+    
+    # Show summary of added species
+    if already_added:
+        st.markdown("### 📊 Species Selection Summary")
+        
+        summary_data = []
+        for sp in already_added:
+            sp_info = st.session_state.optimized_species_indices[sp]
+            if sp_info["filters"].get("skipped"):
+                summary_data.append({
+                    "Species": sp,
+                    "Proteins": 0,
+                    "Status": "⏭️ Skipped",
+                    "Min Peptides": "—",
+                    "CV Filter": "—",
+                    "Missing Filter": "—",
+                    "SD Filter": "—",
+                    "Mean CV%": "—",
+                    "PERMANOVA F": "—",
+                })
+            else:
+                filters = sp_info["filters"]
+                stats = sp_info["stats"]
+                summary_data.append({
+                    "Species": sp,
+                    "Proteins": stats["n_proteins"],
+                    "Status": "✅ Added",
+                    "Min Peptides": filters["min_peptides"],
+                    "CV Filter": f"<{filters['cv_cutoff']:.0f}%" if filters.get("use_cv") else "Off",
+                    "Missing Filter": f"<{filters['missing_ratio']*100:.0f}%" if filters.get("use_missing") else "Off",
+                    "SD Filter": f"±{filters['sd_range'][0]:.1f}σ to ±{filters['sd_range'][1]:.1f}σ" if filters.get("use_sd") else "Off",
+                    "Mean CV%": f"{stats['cv_mean']:.1f}" if not np.isnan(stats['cv_mean']) else "N/A",
+                    "PERMANOVA F": f"{stats['permanova_f']:.2f}" if not np.isnan(stats['permanova_f']) else "N/A",
+                })
+        
+        summary_df = pd.DataFrame(summary_data)
+        st.dataframe(summary_df, hide_index=True, use_container_width=True)
+        
+        col_action1, col_action2, col_action3 = st.columns([1, 1, 2])
+        
+        with col_action1:
+            if st.button("🔄 Reset All", key="reset_optimization", use_container_width=True):
+                st.session_state.optimized_species_indices = {}
+                st.session_state.pop("optimization_finalized", None)
+                st.rerun()
+        
+        with col_action2:
+            if len(already_added) >= 1:  # Allow finalizing with at least one species
+                if st.button("✅ Finalize Selection", type="primary", key="finalize_optimization", use_container_width=True):
+                    st.session_state.optimization_finalized = True
+                    st.rerun()
+        
+        # Show combined stats if finalized
+        if st.session_state.get("optimization_finalized"):
+            st.markdown("---")
+            st.markdown("### 🎉 Finalized Combined Dataset")
+            
+            # Reconstruct combined dataframe from stored indices
+            all_indices = []
+            for sp_info in st.session_state.optimized_species_indices.values():
+                if not sp_info["filters"].get("skipped") and sp_info["indices"]:
+                    all_indices.extend(sp_info["indices"])
+            
+            if all_indices:
+                combined_df = protein_model.raw_filled.loc[all_indices, numeric_cols]
+                
+                combined_stats = compute_stats(combined_df, protein_model, numeric_cols, protein_species_col)
+                
+                col_c1, col_c2, col_c3, col_c4, col_c5 = st.columns(5)
+                col_c1.metric("Total Proteins", f"{combined_stats['n_proteins']:,}")
+                col_c2.metric("Mean CV%", f"{combined_stats['cv_mean']:.1f}" if not np.isnan(combined_stats['cv_mean']) else "N/A")
+                col_c3.metric("Median CV%", f"{combined_stats['cv_median']:.1f}" if not np.isnan(combined_stats['cv_median']) else "N/A")
+                col_c4.metric("PERMANOVA F", f"{combined_stats['permanova_f']:.2f}" if not np.isnan(combined_stats['permanova_f']) else "N/A")
+                col_c5.metric("Shapiro W", f"{combined_stats['shapiro_w']:.4f}" if not np.isnan(combined_stats['shapiro_w']) else "N/A")
+                
+                # Species breakdown
+                if combined_stats['species_counts']:
+                    st.markdown("**Species Breakdown:**")
+                    species_breakdown_cols = st.columns(len(combined_stats['species_counts']))
+                    for idx, (sp, count) in enumerate(combined_stats['species_counts'].items()):
+                        species_breakdown_cols[idx].metric(sp, f"{count:,}")
+            else:
+                st.error("No proteins selected from any species!")
 
 st.markdown("---")
 
