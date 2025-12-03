@@ -29,6 +29,7 @@ class TransformsCache:
     yeo_johnson: pd.DataFrame
     quantile: pd.DataFrame
     condition_wise_cvs: pd.DataFrame
+
 @dataclass
 class FilteredSubgroups:
     """Pre-filtered species subsets for fast filtering."""
@@ -200,7 +201,12 @@ def compute_transforms(raw_filled: pd.DataFrame, numeric_cols: List[str]) -> Tra
     )
 
 
-def build_msdata(processed_df: pd.DataFrame, numeric_cols_renamed: List[str], species_col: str = "_extracted_species") -> MSData:
+def build_msdata(
+    processed_df: pd.DataFrame, 
+    numeric_cols_renamed: List[str], 
+    species_col: str = "_extracted_species",
+    _version: int = 2  # Increment this to break cache
+) -> MSData:
     """Build MSData with pre-cached species subgroups."""
     raw = processed_df.copy()
 
@@ -263,7 +269,7 @@ def reset_upload_state():
     st.session_state.raw_df = None
     st.session_state.column_renames = {}
     st.session_state.selected_quant_cols = []
-    st.session_state.upload_key += 1
+    st.session_state.upload_key = st.session_state.get("upload_key", 0) + 1
 
 
 st.markdown("## Data upload")
@@ -474,8 +480,12 @@ def config_fragment():
     with col_b1:
         if st.button("Confirm & cache", type="primary"):
             # Build model with species subgroups cached
-            model = build_msdata(processed_df, numeric_cols_renamed, species_col="_extracted_species")
-            missing_mask = processed_df[numeric_cols_renamed].isna() | (processed_df[numeric_cols_renamed] <= 1.0)
+            model = build_msdata(
+                processed_df, 
+                numeric_cols_renamed, 
+                species_col="_extracted_species",
+                _version=2
+            )
 
             st.session_state[existing_key] = model
             st.session_state[index_key] = pg_col
