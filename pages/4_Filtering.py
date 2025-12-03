@@ -250,43 +250,6 @@ def compute_stats(
     else:
         cv_mean = cv_median = np.nan
 
-def compute_stats(
-    df: pd.DataFrame,
-    model: MSData,
-    numeric_cols: List[str],
-    species_col: str | None,
-) -> dict:
-    """Compute quality metrics for the given subset of proteins."""
-    if df.empty:
-        return {
-            "n_proteins": 0,
-            "species_counts": {},
-            "cv_mean": np.nan,
-            "cv_median": np.nan,
-            "permanova_f": np.nan,
-            "permanova_p": np.nan,
-            "shapiro_w": np.nan,
-            "shapiro_p": np.nan,
-        }
-
-    n_proteins = len(df)
-
-    # Species counts
-    if species_col and species_col in model.raw.columns:
-        species_counts = model.raw.loc[df.index, species_col].value_counts().to_dict()
-    else:
-        species_counts = {}
-
-    # CV stats
-    cv_data = compute_cv_per_condition(df[numeric_cols], numeric_cols)
-    if not cv_data.empty:
-        cv_clean = cv_data.to_numpy().ravel()
-        cv_clean = cv_clean[~np.isnan(cv_clean)]
-        cv_mean = cv_clean.mean() if cv_clean.size else np.nan
-        cv_median = np.median(cv_clean) if cv_clean.size else np.nan
-    else:
-        cv_mean = cv_median = np.nan
-
     # PERMANOVA - CORRECTED VERSION
     condition_map = extract_conditions(numeric_cols)
     conditions = np.array([condition_map[c] for c in numeric_cols])
@@ -364,6 +327,7 @@ def compute_stats(
     try:
         mean_vals = df[numeric_cols].mean(axis=1).dropna()
         if len(mean_vals) >= 3:
+            np.random.seed(42)  # Make deterministic
             sample = np.random.choice(mean_vals, size=min(5000, len(mean_vals)), replace=False)
             W, p = shapiro(sample)
             shapiro_w, shapiro_p = W, p
@@ -380,6 +344,7 @@ def compute_stats(
         "shapiro_w": shapiro_w,
         "shapiro_p": shapiro_p,
     }
+
 
 st.markdown("## Protein-level Filtering & QC")
 
@@ -423,12 +388,14 @@ with st.sidebar:
     
     # Min peptides filter (DEFAULT: 1, always enabled)
     st.markdown("### Min Peptides/Protein")
-    min_peptides = st.slider(
+    min_peptides = st.number_input(
         "Min peptides",
         min_value=1,
         max_value=10,
         value=1,
-        key="filter_min_peptides"
+        step=1,
+        key="filter_min_peptides",
+        help="Minimum number of peptides required per protein"
     )
     
     st.markdown("---")
@@ -436,14 +403,15 @@ with st.sidebar:
     # CV filter (DEFAULT: OFF)
     st.markdown("### CV% Cutoff")
     use_cv = st.checkbox("Enable", value=False, key="filter_use_cv")
-    cv_cutoff = st.slider(
+    cv_cutoff = st.number_input(
         "Max CV%",
         min_value=0,
         max_value=100,
         value=30,
         step=5,
         disabled=not use_cv,
-        key="filter_cv"
+        key="filter_cv",
+        help="Maximum coefficient of variation percentage"
     )
     
     st.markdown("---")
@@ -451,14 +419,15 @@ with st.sidebar:
     # Missing data filter (DEFAULT: OFF)
     st.markdown("### Max Missing %")
     use_missing = st.checkbox("Enable", value=False, key="filter_use_missing")
-    max_missing_pct = st.slider(
+    max_missing_pct = st.number_input(
         "Max missing per condition",
         min_value=0,
         max_value=100,
         value=34,
-        step=10,
+        step=5,
         disabled=not use_missing,
-        key="filter_missing"
+        key="filter_missing",
+        help="Maximum percentage of missing values allowed per condition"
     )
     
     st.markdown("---")
@@ -479,7 +448,7 @@ with st.sidebar:
     st.markdown("### Standard Deviation Filter")
     use_sd_filter = st.checkbox("Enable", value=False, key="filter_use_sd")
     
-    st.caption("Range slider always visible for reference")
+    st.caption("Range inputs always visible for reference")
     
     # Derive effective values
     cv_cutoff_val = cv_cutoff if use_cv else 1000.0
@@ -496,7 +465,7 @@ with st.sidebar:
     if use_cv:
         active_filters.append(f"CV <{cv_cutoff:.0f}%")
     if use_missing:
-        active_filters.append(f"Max missing: {max_missing_pct}%")
+        active_filters.append(f"Max missing: {max_missing_pct:.0f}%")
     if use_sd_filter:
         active_filters.append("SD range filter")
     
@@ -506,7 +475,13 @@ with st.sidebar:
 # ========== 1. SUMMARY STATISTICS ==========
 st.markdown("### Summary Statistics")
 
-initial_stats = compute_stats(df_raw, protein_model, numeric_cols, protein_species_col)
+# Calculate initial stats for SELECTED SPECIES only
+if selected_species:
+    initial_species_subset = protein_model.species_subgroups.get(selected_species)
+else:
+    initial_species_subset = df_raw
+
+initial_stats = compute_stats(initial_species_subset, protein_model, numeric_cols, protein_species_col)
 
 c1, c2, c3, c4 = st.columns(4)
 
@@ -551,28 +526,49 @@ if use_species_optimization:
 
 st.markdown("---")
 
-# ========== 3. INTENSITY DISTRIBUTION WITH RANGE SLIDER ==========
+# ========== 3. INTENSITY DISTRIBUTION WITH RANGE INPUTS ==========
 st.markdown("### Intensity Distribution by Sample")
 
 # Get transformed data
 transform_data = get_transform_data(protein_model, transform_key)
 
-# SD range slider - ALWAYS VISIBLE - DEFAULT: ±2σ
-st.markdown("#### Standard Deviation Range (drag slider to adjust)")
-sd_range = st.slider(
-    "Filter range (standard deviations from mean)",
-    min_value=0.5,
-    max_value=5.0,
-    value=(2.0, 2.0),  # DEFAULT: ±2σ
-    step=0.5,
-    key="sd_range_slider",
-    help=f"{'🟢 Filter ACTIVE - values outside this range will be removed' if use_sd_filter else '📊 Filter INACTIVE - slider shows reference only'}"
-)
+# SD range inputs - ALWAYS VISIBLE
+st.markdown("#### Standard Deviation Range")
 
-if use_sd_filter:
-    st.success(f"✅ SD filter active: Keeping data within {sd_range[0]}σ to {sd_range[1]}σ")
-else:
-    st.info("ℹ️ SD filter disabled. Slider shows reference bounds only (±2σ by default).")
+col_sd1, col_sd2, col_sd3 = st.columns([1, 1, 2])
+
+with col_sd1:
+    sd_min = st.number_input(
+        "Min SD (σ below mean)",
+        min_value=0.0,
+        max_value=10.0,
+        value=2.0,
+        step=0.5,
+        key="sd_min_input",
+        help="Number of standard deviations below the mean"
+    )
+
+with col_sd2:
+    sd_max = st.number_input(
+        "Max SD (σ above mean)",
+        min_value=0.0,
+        max_value=10.0,
+        value=2.0,
+        step=0.5,
+        key="sd_max_input",
+        help="Number of standard deviations above the mean"
+    )
+
+with col_sd3:
+    st.markdown("")  # Spacing
+    st.markdown("")  # Spacing
+    if use_sd_filter:
+        st.success(f"✅ Filter active: μ - {sd_min}σ to μ + {sd_max}σ")
+    else:
+        st.info(f"📊 Reference only: μ - {sd_min}σ to μ + {sd_max}σ")
+
+# Create sd_range tuple for compatibility with apply_filters
+sd_range = (sd_min, sd_max)
 
 # Apply filters
 filtered_df = apply_filters(
@@ -715,11 +711,8 @@ for row_idx in range(n_rows):
                 st.info("No data after filtering")
 
 st.markdown("---")
-# Add this after the histogram plots section and before the Export section
 
-st.markdown("---")
-
-# ========== CALCULATE STATS & COMPARISON ==========
+# ========== 4. CALCULATE STATS & COMPARISON ==========
 col1, col2, col3 = st.columns([1, 1, 2])
 
 with col1:
@@ -866,7 +859,8 @@ else:
     st.info("👆 Click 'Calculate Stats' to see before/after comparison tables")
 
 st.markdown("---")
-# ========== 4. EXPORT ==========
+
+# ========== 5. EXPORT ==========
 col1, col2 = st.columns([1, 3])
 
 with col1:
