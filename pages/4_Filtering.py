@@ -110,36 +110,13 @@ def apply_filters(
     """Apply all filters sequentially."""
     filtered = df.copy()
 
-# Determine species column to use
-    if species_col and species_col in working_df.columns:
-        # Check if column already contains plain species names
-        sample_values = working_df[species_col].dropna().head(10)
-        is_plain_species = all(
-            str(val).upper().strip() in ["HUMAN", "YEAST", "ECOLI", "MOUSE", "UNKNOWN"]
-            for val in sample_values
-        )
-        
-        if is_plain_species:
-            # Column already has species names, use directly
-            working_df["_extracted_species"] = working_df[species_col].str.upper().str.strip()
-            species_col_to_use = "_extracted_species"
-        else:
-            # Extract from protein ID format
-            working_df["_extracted_species"] = working_df[species_col].apply(extract_species_from_protein_id)
-            species_col_to_use = "_extracted_species"
-    elif pg_col and pg_col in working_df.columns:
-        # Extract species from protein ID column
-        working_df["_extracted_species"] = working_df[pg_col].apply(extract_species_from_protein_id)
-        species_col_to_use = "_extracted_species"
-    else:
-        species_col_to_use = None
-    
-    # Filter by species
-    processed_df = working_df.copy()
-    if species_col_to_use and species_tags:
-    processed_df = filter_by_species(processed_df, species_col_to_use, species_tags)
-    st.info(f"Filtered to {len(processed_df):,} rows matching: {', '.join(species_tags)}")
+    # Filter 1: Species
+    if species_col and species_col in model.raw.columns and selected_species:
+        species_mask = model.raw.loc[filtered.index, species_col].isin(selected_species)
+        filtered = filtered[species_mask]
 
+    if filtered.empty:
+        return filtered
 
     # Filter 2: Min peptides (if column exists)
     if "Peptide_Count" in filtered.columns and min_peptides > 1:
@@ -404,8 +381,8 @@ with st.sidebar:
     use_intensity = st.checkbox("Enable", value=False, key="filter_use_intensity")
     
     # Derive effective values
-    min_peptides = min_peptides if use_min_peptides else 1
-    cv_cutoff = cv_cutoff if use_cv else 1000.0
+    min_peptides_val = min_peptides if use_min_peptides else 1
+    cv_cutoff_val = cv_cutoff if use_cv else 1000.0
     max_missing_ratio = max_missing_pct / 100.0 if use_missing else 1.0
     
     st.markdown("---")
@@ -427,7 +404,6 @@ with st.sidebar:
             st.caption(f"• {f}")
     else:
         st.caption("No filters active")
-
 
 # ========== MAIN: Stats and Visualizations ==========
 
@@ -503,8 +479,8 @@ filtered_df = apply_filters(
     numeric_cols,
     protein_species_col,
     selected_species,
-    min_peptides,
-    cv_cutoff,
+    min_peptides_val,
+    cv_cutoff_val,
     max_missing_ratio,
     intensity_range,
     transform_key,
@@ -516,7 +492,7 @@ if not filtered_df.empty:
 else:
     transform_data_filtered = pd.DataFrame()
 
-# Create histograms in 3x2 grid
+# Create histograms in 3-column grid
 n_cols = 3
 n_rows = (len(numeric_cols) + n_cols - 1) // n_cols
 
@@ -543,7 +519,6 @@ for row_idx in range(n_rows):
                 mean_val = sample_data.mean()
                 std_val = sample_data.std()
                 
-                # Histogram
                 fig.add_trace(go.Histogram(
                     x=sample_data,
                     name="Distribution",
@@ -552,7 +527,6 @@ for row_idx in range(n_rows):
                     showlegend=False,
                 ))
                 
-                # Mean line
                 fig.add_vline(
                     x=mean_val,
                     line_dash="solid",
@@ -562,7 +536,6 @@ for row_idx in range(n_rows):
                     annotation_position="top",
                 )
                 
-                # Std dev shade
                 fig.add_vrect(
                     x0=mean_val - std_val,
                     x1=mean_val + std_val,
@@ -599,7 +572,6 @@ st.markdown("---")
 # CONTAINER 3: After Filtering Stats
 st.markdown("### After Filtering")
 
-# Only compute stats when button clicked
 col1, col2, col3 = st.columns([1, 1, 2])
 
 with col1:
