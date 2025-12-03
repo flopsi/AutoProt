@@ -509,7 +509,6 @@ with c4:
 st.markdown("---")
 
 # ========== 2. FILTERING MODE ==========
-# ========== 2. FILTERING MODE ==========
 st.markdown("### 🎯 Filtering Mode")
 
 optimization_mode = st.radio(
@@ -624,7 +623,7 @@ if use_species_optimization:
                     "Min SD",
                     min_value=0.0,
                     max_value=10.0,
-                    value=sd_min,
+                    value=2.0,
                     step=0.5,
                     disabled=not sp_use_sd,
                     key=f"sp_sd_min_{current_species}"
@@ -633,7 +632,7 @@ if use_species_optimization:
                     "Max SD",
                     min_value=0.0,
                     max_value=10.0,
-                    value=sd_max,
+                    value=2.0,
                     step=0.5,
                     disabled=not sp_use_sd,
                     key=f"sp_sd_max_{current_species}"
@@ -742,7 +741,7 @@ if use_species_optimization:
                     "Min Peptides": filters["min_peptides"],
                     "CV Filter": f"<{filters['cv_cutoff']:.0f}%" if filters.get("use_cv") else "Off",
                     "Missing Filter": f"<{filters['missing_ratio']*100:.0f}%" if filters.get("use_missing") else "Off",
-                    "SD Filter": f"±{filters['sd_range'][0]:.1f}σ to ±{filters['sd_range'][1]:.1f}σ" if filters.get("use_sd") else "Off",
+                    "SD Filter": f"±{filters['sd_range'][0]:.1f}σ to ±{filters['sd_range'][1]:.1f}σ" if filters.get("use_sd") and filters['sd_range'] else "Off",
                     "Mean CV%": f"{stats['cv_mean']:.1f}" if not np.isnan(stats['cv_mean']) else "N/A",
                     "PERMANOVA F": f"{stats['permanova_f']:.2f}" if not np.isnan(stats['permanova_f']) else "N/A",
                 })
@@ -842,19 +841,32 @@ with col_sd3:
 # Create sd_range tuple for compatibility with apply_filters
 sd_range = (sd_min, sd_max)
 
-# Apply filters
-filtered_df = apply_filters(
-    df_raw,
-    protein_model,
-    numeric_cols,
-    selected_species,
-    min_peptides,
-    cv_cutoff_val,
-    max_missing_ratio,
-    sd_range,
-    use_sd_filter,
-    transform_key,
-)
+# Determine which filtered_df to use
+if use_species_optimization and st.session_state.get("optimization_finalized"):
+    # Use optimized combined dataset
+    all_indices = []
+    for sp_info in st.session_state.optimized_species_indices.values():
+        if not sp_info["filters"].get("skipped") and sp_info["indices"]:
+            all_indices.extend(sp_info["indices"])
+    
+    filtered_df = protein_model.raw_filled.loc[all_indices, numeric_cols] if all_indices else pd.DataFrame()
+    
+    if not filtered_df.empty:
+        st.success(f"✅ Using species-optimized dataset: {len(filtered_df):,} proteins from {len([k for k, v in st.session_state.optimized_species_indices.items() if not v['filters'].get('skipped')])} species")
+else:
+    # Use global filters
+    filtered_df = apply_filters(
+        df_raw,
+        protein_model,
+        numeric_cols,
+        selected_species,
+        min_peptides,
+        cv_cutoff_val,
+        max_missing_ratio,
+        sd_range,
+        use_sd_filter,
+        transform_key,
+    )
 
 # Get transformed data for visualization
 if not filtered_df.empty:
@@ -1137,13 +1149,16 @@ col1, col2 = st.columns([1, 3])
 
 with col1:
     if st.button("💾 Export Filtered Data", type="primary", key="export_btn"):
-        csv = filtered_df.to_csv(index=False)
-        st.download_button(
-            label="Download CSV",
-            data=csv,
-            file_name="filtered_proteins.csv",
-            mime="text/csv",
-        )
+        if not filtered_df.empty:
+            csv = filtered_df.to_csv(index=True)
+            st.download_button(
+                label="Download CSV",
+                data=csv,
+                file_name="filtered_proteins.csv",
+                mime="text/csv",
+            )
+        else:
+            st.error("No data to export. Please adjust filters.")
 
 render_navigation(back_page="pages/3_Preprocessing.py", next_page=None)
 render_footer()
