@@ -381,4 +381,157 @@ initial_stats = compute_stats(df_raw, protein_model, numeric_cols, protein_speci
 
 # CONTAINER 1: Summary Stats (Before Filtering)
 st.markdown("### Before Filtering")
-c1, c2, c3, c4, c5, c6 = st.columns(
+c1, c2, c3, c4, c5, c6 = st.columns(6)
+
+with c1:
+    st.metric("Total Proteins", f"{initial_stats['n_proteins']:,}")
+
+with c2:
+    species_str = ", ".join(
+        f"{s}:{initial_stats['species_counts'].get(s, 0)}"
+        for s in SPECIES_ORDER
+        if s in initial_stats["species_counts"]
+    )
+    st.metric("Species Count", species_str or "N/A")
+
+with c3:
+    st.metric(
+        "Mean CV%",
+        f"{initial_stats['cv_mean']:.1f}" if not np.isnan(initial_stats["cv_mean"]) else "N/A",
+    )
+
+with c4:
+    st.metric(
+        "Median CV%",
+        f"{initial_stats['cv_median']:.1f}" if not np.isnan(initial_stats["cv_median"]) else "N/A",
+    )
+
+with c5:
+    st.metric(
+        "PERMANOVA F",
+        f"{initial_stats['permanova_f']:.2f}" if not np.isnan(initial_stats["permanova_f"]) else "N/A",
+    )
+
+with c6:
+    st.metric(
+        "Shapiro W",
+        f"{initial_stats['shapiro_w']:.4f}" if not np.isnan(initial_stats["shapiro_w"]) else "N/A",
+    )
+
+st.markdown("---")
+
+# CONTAINER 2: Intensity Distribution
+st.markdown("### Intensity Distribution by Sample")
+
+# Get transformed data
+transform_data = get_transform_data(protein_model, transform_key)
+
+# Set intensity range slider (only if toggled on)
+if use_intensity:
+    min_intensity = float(transform_data[numeric_cols].min().min())
+    max_intensity = float(transform_data[numeric_cols].max().max())
+    
+    intensity_range = st.slider(
+        "Select intensity range",
+        min_value=min_intensity,
+        max_value=max_intensity,
+        value=(min_intensity, max_intensity),
+        key="intensity_slider"
+    )
+else:
+    intensity_range = None
+
+# Apply filters
+filtered_df = apply_filters(
+    df_raw,
+    protein_model,
+    numeric_cols,
+    protein_species_col,
+    selected_species,
+    min_peptides,
+    cv_cutoff,
+    max_missing_ratio,
+    intensity_range,
+    transform_key,
+)
+
+# Get transformed data for filtered
+if not filtered_df.empty:
+    transform_data_filtered = get_transform_data(protein_model, transform_key).loc[filtered_df.index, numeric_cols]
+else:
+    transform_data_filtered = pd.DataFrame()
+
+# Create histograms in 3x2 grid
+n_cols = 3
+n_rows = (len(numeric_cols) + n_cols - 1) // n_cols
+
+for row_idx in range(n_rows):
+    cols = st.columns(n_cols)
+    for col_idx in range(n_cols):
+        sample_idx = row_idx * n_cols + col_idx
+        
+        if sample_idx >= len(numeric_cols):
+            break
+        
+        sample = numeric_cols[sample_idx]
+        
+        with cols[col_idx]:
+            fig = go.Figure()
+            
+            sample_data = (
+                transform_data_filtered[sample].dropna()
+                if not transform_data_filtered.empty
+                else pd.Series(dtype=float)
+            )
+            
+            if not sample_data.empty:
+                mean_val = sample_data.mean()
+                std_val = sample_data.std()
+                
+                # Histogram
+                fig.add_trace(go.Histogram(
+                    x=sample_data,
+                    name="Distribution",
+                    nbinsx=50,
+                    marker_color="rgba(135, 206, 235, 0.7)",
+                    showlegend=False,
+                ))
+                
+                # Mean line
+                fig.add_vline(
+                    x=mean_val,
+                    line_dash="solid",
+                    line_color="red",
+                    line_width=2,
+                    annotation_text=f"μ={mean_val:.1f}",
+                    annotation_position="top",
+                )
+                
+                # Std dev shade
+                fig.add_vrect(
+                    x0=mean_val - std_val,
+                    x1=mean_val + std_val,
+                    fillcolor="red",
+                    opacity=0.1,
+                    layer="below",
+                    line_width=0,
+                )
+                
+                fig.update_layout(
+                    title=f"{sample} (n={len(sample_data)})",
+                    xaxis_title=TRANSFORMS[transform_key],
+                    yaxis_title="Count",
+                    height=350,
+                    plot_bgcolor="#FFFFFF",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(family="Arial", size=10, color="#54585A"),
+                    showlegend=False,
+                    margin=dict(l=40, r=40, t=60, b=40),
+                )
+            else:
+                fig.add_annotation(text="No data after filtering", showarrow=False)
+                fig.update_layout(
+                    height=350,
+                    plot_bgcolor="#FFFFFF",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(family="Arial
