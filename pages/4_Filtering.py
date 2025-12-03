@@ -411,42 +411,79 @@ initial_stats = compute_stats(df_raw, protein_model, numeric_cols, protein_speci
 
 # CONTAINER 1: Summary Stats (Before Filtering)
 st.markdown("### Before Filtering")
-c1, c2, c3, c4, c5, c6 = st.columns(6)
 
-with c1:
-    st.metric("Total Proteins", f"{initial_stats['n_proteins']:,}")
+# Species counts table
+if initial_stats['species_counts']:
+    species_df = pd.DataFrame([
+        {"Species": sp, "Count": initial_stats['species_counts'].get(sp, 0)}
+        for sp in SPECIES_ORDER
+        if sp in initial_stats['species_counts']
+    ])
+    
+    col_left, col_right = st.columns([1, 3])
+    
+    with col_left:
+        st.markdown("**Species Distribution**")
+        st.dataframe(
+            species_df,
+            hide_index=True,
+            use_container_width=True,
+            height=200
+        )
+    
+    with col_right:
+        c1, c2, c3, c4 = st.columns(4)
+        
+        with c1:
+            st.metric("Total Proteins", f"{initial_stats['n_proteins']:,}")
+        
+        with c2:
+            st.metric(
+                "Mean CV%",
+                f"{initial_stats['cv_mean']:.1f}" if not np.isnan(initial_stats["cv_mean"]) else "N/A",
+            )
+        
+        with c3:
+            st.metric(
+                "Median CV%",
+                f"{initial_stats['cv_median']:.1f}" if not np.isnan(initial_stats["cv_median"]) else "N/A",
+            )
+        
+        with c4:
+            st.metric(
+                "PERMANOVA F",
+                f"{initial_stats['permanova_f']:.2f}" if not np.isnan(initial_stats["permanova_f"]) else "N/A",
+            )
+else:
+    # Fallback if no species data
+    c1, c2, c3, c4, c5 = st.columns(5)
 
-with c2:
-    species_str = ", ".join(
-        f"{s}:{initial_stats['species_counts'].get(s, 0)}"
-        for s in SPECIES_ORDER
-        if s in initial_stats["species_counts"]
-    )
-    st.metric("Species Count", species_str or "N/A")
+    with c1:
+        st.metric("Total Proteins", f"{initial_stats['n_proteins']:,}")
 
-with c3:
-    st.metric(
-        "Mean CV%",
-        f"{initial_stats['cv_mean']:.1f}" if not np.isnan(initial_stats["cv_mean"]) else "N/A",
-    )
+    with c2:
+        st.metric(
+            "Mean CV%",
+            f"{initial_stats['cv_mean']:.1f}" if not np.isnan(initial_stats["cv_mean"]) else "N/A",
+        )
 
-with c4:
-    st.metric(
-        "Median CV%",
-        f"{initial_stats['cv_median']:.1f}" if not np.isnan(initial_stats["cv_median"]) else "N/A",
-    )
+    with c3:
+        st.metric(
+            "Median CV%",
+            f"{initial_stats['cv_median']:.1f}" if not np.isnan(initial_stats["cv_median"]) else "N/A",
+        )
 
-with c5:
-    st.metric(
-        "PERMANOVA F",
-        f"{initial_stats['permanova_f']:.2f}" if not np.isnan(initial_stats["permanova_f"]) else "N/A",
-    )
-
-with c6:
-    st.metric(
-        "Shapiro W",
-        f"{initial_stats['shapiro_w']:.4f}" if not np.isnan(initial_stats["shapiro_w"]) else "N/A",
-    )
+    with c4:
+        st.metric(
+            "PERMANOVA F",
+            f"{initial_stats['permanova_f']:.2f}" if not np.isnan(initial_stats["permanova_f"]) else "N/A",
+        )
+    
+    with c5:
+        st.metric(
+            "Shapiro W",
+            f"{initial_stats['shapiro_w']:.4f}" if not np.isnan(initial_stats["shapiro_w"]) else "N/A",
+        )
 
 st.markdown("---")
 
@@ -603,49 +640,95 @@ if st.session_state.get("compute_stats_now", False):
             return "↓" if higher_is_better else "↑"
         return "→"
 
-    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    # Species counts table
+    if filtered_stats['species_counts']:
+        species_df_after = pd.DataFrame([
+            {
+                "Species": sp, 
+                "Before": initial_stats['species_counts'].get(sp, 0),
+                "After": filtered_stats['species_counts'].get(sp, 0),
+                "Change": filtered_stats['species_counts'].get(sp, 0) - initial_stats['species_counts'].get(sp, 0)
+            }
+            for sp in SPECIES_ORDER
+            if sp in initial_stats['species_counts'] or sp in filtered_stats['species_counts']
+        ])
+        
+        col_left, col_right = st.columns([1, 3])
+        
+        with col_left:
+            st.markdown("**Species Distribution**")
+            st.dataframe(
+                species_df_after,
+                hide_index=True,
+                use_container_width=True,
+                height=200
+            )
+        
+        with col_right:
+            m1, m2, m3, m4 = st.columns(4)
 
-    with m1:
-        arrow = get_arrow(initial_stats["n_proteins"], filtered_stats["n_proteins"], True)
-        st.metric(f"Proteins {arrow}", f"{filtered_stats['n_proteins']:,}")
+            with m1:
+                arrow = get_arrow(initial_stats["n_proteins"], filtered_stats["n_proteins"], True)
+                st.metric(f"Proteins {arrow}", f"{filtered_stats['n_proteins']:,}")
 
-    with m2:
-        species_str = ", ".join(
-            f"{s}:{filtered_stats['species_counts'].get(s, 0)}"
-            for s in SPECIES_ORDER
-            if s in filtered_stats["species_counts"]
-        )
-        st.metric("Species Count", species_str or "N/A")
+            with m2:
+                arrow = get_arrow(initial_stats["cv_mean"], filtered_stats["cv_mean"], higher_is_better=False)
+                st.metric(
+                    f"Mean CV% {arrow}",
+                    f"{filtered_stats['cv_mean']:.1f}" if not np.isnan(filtered_stats["cv_mean"]) else "N/A",
+                )
 
-    with m3:
-        arrow = get_arrow(initial_stats["cv_mean"], filtered_stats["cv_mean"], higher_is_better=False)
-        st.metric(
-            f"Mean CV% {arrow}",
-            f"{filtered_stats['cv_mean']:.1f}" if not np.isnan(filtered_stats["cv_mean"]) else "N/A",
-        )
+            with m3:
+                arrow = get_arrow(initial_stats["cv_median"], filtered_stats["cv_median"], higher_is_better=False)
+                st.metric(
+                    f"Median CV% {arrow}",
+                    f"{filtered_stats['cv_median']:.1f}" if not np.isnan(filtered_stats["cv_median"]) else "N/A",
+                )
 
-    with m4:
-        arrow = get_arrow(initial_stats["cv_median"], filtered_stats["cv_median"], higher_is_better=False)
-        st.metric(
-            f"Median CV% {arrow}",
-            f"{filtered_stats['cv_median']:.1f}" if not np.isnan(filtered_stats["cv_median"]) else "N/A",
-        )
+            with m4:
+                arrow = get_arrow(initial_stats["permanova_f"], filtered_stats["permanova_f"], True)
+                st.metric(
+                    f"PERMANOVA F {arrow}",
+                    f"{filtered_stats['permanova_f']:.2f}" if not np.isnan(filtered_stats["permanova_f"]) else "N/A",
+                )
+    else:
+        # Fallback metrics without species table
+        m1, m2, m3, m4, m5 = st.columns(5)
 
-    with m5:
-        arrow = get_arrow(initial_stats["permanova_f"], filtered_stats["permanova_f"], True)
-        st.metric(
-            f"PERMANOVA F {arrow}",
-            f"{filtered_stats['permanova_f']:.2f}" if not np.isnan(filtered_stats["permanova_f"]) else "N/A",
-        )
+        with m1:
+            arrow = get_arrow(initial_stats["n_proteins"], filtered_stats["n_proteins"], True)
+            st.metric(f"Proteins {arrow}", f"{filtered_stats['n_proteins']:,}")
 
-    with m6:
-        arrow = get_arrow(initial_stats["shapiro_w"], filtered_stats["shapiro_w"], True)
-        st.metric(
-            f"Shapiro W {arrow}",
-            f"{filtered_stats['shapiro_w']:.4f}" if not np.isnan(filtered_stats["shapiro_w"]) else "N/A",
-        )
+        with m2:
+            arrow = get_arrow(initial_stats["cv_mean"], filtered_stats["cv_mean"], higher_is_better=False)
+            st.metric(
+                f"Mean CV% {arrow}",
+                f"{filtered_stats['cv_mean']:.1f}" if not np.isnan(filtered_stats["cv_mean"]) else "N/A",
+            )
+
+        with m3:
+            arrow = get_arrow(initial_stats["cv_median"], filtered_stats["cv_median"], higher_is_better=False)
+            st.metric(
+                f"Median CV% {arrow}",
+                f"{filtered_stats['cv_median']:.1f}" if not np.isnan(filtered_stats["cv_median"]) else "N/A",
+            )
+
+        with m4:
+            arrow = get_arrow(initial_stats["permanova_f"], filtered_stats["permanova_f"], True)
+            st.metric(
+                f"PERMANOVA F {arrow}",
+                f"{filtered_stats['permanova_f']:.2f}" if not np.isnan(filtered_stats["permanova_f"]) else "N/A",
+            )
+
+        with m5:
+            arrow = get_arrow(initial_stats["shapiro_w"], filtered_stats["shapiro_w"], True)
+            st.metric(
+                f"Shapiro W {arrow}",
+                f"{filtered_stats['shapiro_w']:.4f}" if not np.isnan(filtered_stats["shapiro_w"]) else "N/A",
+            )
 else:
     st.info("Click 'Calculate Stats' to compute quality metrics for filtered data.")
+
 
 render_navigation(back_page="pages/3_Preprocessing.py", next_page=None)
 render_footer()
