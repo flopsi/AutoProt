@@ -738,5 +738,8 @@ if st.session_state.get("compute_stats_now", False):
     with leg_col3:
         st.markdown("🔴 **Poor** - PERMANOVA F < 2, Shapiro W < 0.95
 
+    st.info("👆 Click 'Calculate Stats' to see before/after comparison tables")
+
+
 render_navigation(back_page="pages/3_Preprocessing.py", next_page=None)
 render_footer()
