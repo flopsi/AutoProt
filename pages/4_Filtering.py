@@ -473,44 +473,94 @@ st.markdown("---")
 # CONTAINER 2: Intensity Distribution
 st.markdown("### Intensity Distribution by Sample")
 
+# Replace the intensity distribution section with this:
+
+# CONTAINER 2: Intensity Distribution
+st.markdown("### Intensity Distribution by Sample")
+
 # Get transformed data
 transform_data = get_transform_data(protein_model, transform_key)
 
-# Set intensity range slider (only if toggled on)
-if use_intensity:
-    min_intensity = float(transform_data[numeric_cols].min().min())
-    max_intensity = float(transform_data[numeric_cols].max().max())
-    
-    intensity_range = st.slider(
-        "Select intensity range",
-        min_value=min_intensity,
-        max_value=max_intensity,
-        value=(min_intensity, max_intensity),
-        key="intensity_slider"
+# Standard deviation filter
+st.markdown("#### Standard Deviation Filter")
+col_sd1, col_sd2 = st.columns([3, 1])
+
+with col_sd1:
+    sd_range = st.slider(
+        "Filter by standard deviations from mean (per sample)",
+        min_value=0.5,
+        max_value=5.0,
+        value=(0.5, 3.0),
+        step=0.5,
+        key="sd_range_slider",
+        help="Values outside this range will be highlighted. Only filtered when checkbox is enabled."
     )
+
+with col_sd2:
+    apply_sd_filter = st.checkbox(
+        "Apply filter",
+        value=False,
+        key="apply_sd_filter",
+        help="When enabled, actually filters the data. Otherwise just shows what would be filtered."
+    )
+
+# Apply filters (including SD filter if enabled)
+if apply_sd_filter:
+    # First apply other filters
+    filtered_df_temp = apply_filters(
+        df_raw,
+        protein_model,
+        numeric_cols,
+        selected_species,
+        min_peptides_val,
+        cv_cutoff_val,
+        max_missing_ratio,
+        None,  # No intensity range yet
+        transform_key,
+    )
+    
+    # Then apply SD filter on transformed data
+    if not filtered_df_temp.empty:
+        transform_temp = get_transform_data(protein_model, transform_key).loc[filtered_df_temp.index, numeric_cols]
+        
+        # Filter each sample independently
+        sd_mask = pd.Series(True, index=filtered_df_temp.index)
+        for col in numeric_cols:
+            col_data = transform_temp[col].dropna()
+            if len(col_data) > 0:
+                mean_val = col_data.mean()
+                std_val = col_data.std()
+                lower_bound = mean_val - (sd_range[0] * std_val)
+                upper_bound = mean_val + (sd_range[1] * std_val)
+                
+                # Mark rows outside range
+                col_mask = (transform_temp[col] >= lower_bound) & (transform_temp[col] <= upper_bound)
+                sd_mask &= col_mask
+        
+        filtered_df = filtered_df_temp[sd_mask]
+    else:
+        filtered_df = filtered_df_temp
 else:
-    intensity_range = None
+    # Just apply other filters, not SD filter
+    filtered_df = apply_filters(
+        df_raw,
+        protein_model,
+        numeric_cols,
+        selected_species,
+        min_peptides_val,
+        cv_cutoff_val,
+        max_missing_ratio,
+        None,
+        transform_key,
+    )
 
-# Apply filters
-filtered_df = apply_filters(
-    df_raw,
-    protein_model,
-    numeric_cols,
-    selected_species,
-    min_peptides_val,
-    cv_cutoff_val,
-    max_missing_ratio,
-    intensity_range,
-    transform_key,
-)
-
-# Get transformed data for filtered
+# Get transformed data for visualization
 if not filtered_df.empty:
     transform_data_filtered = get_transform_data(protein_model, transform_key).loc[filtered_df.index, numeric_cols]
 else:
     transform_data_filtered = pd.DataFrame()
 
-# Create histograms in 3-column grid
+# Create Vega-Lite histograms in 3-column grid
 n_cols = 3
 n_rows = (len(numeric_cols) + n_cols - 1) // n_cols
 
@@ -525,8 +575,6 @@ for row_idx in range(n_rows):
         sample = numeric_cols[sample_idx]
         
         with cols[col_idx]:
-            fig = go.Figure()
-            
             sample_data = (
                 transform_data_filtered[sample].dropna()
                 if not transform_data_filtered.empty
@@ -537,55 +585,110 @@ for row_idx in range(n_rows):
                 mean_val = sample_data.mean()
                 std_val = sample_data.std()
                 
-                fig.add_trace(go.Histogram(
-                    x=sample_data,
-                    name="Distribution",
-                    nbinsx=50,
-                    marker_color="rgba(135, 206, 235, 0.7)",
-                    showlegend=False,
-                ))
+                # Calculate SD bounds
+                lower_bound = mean_val - (sd_range[0] * std_val)
+                upper_bound = mean_val + (sd_range[1] * std_val)
                 
-                fig.add_vline(
-                    x=mean_val,
-                    line_dash="solid",
-                    line_color="red",
-                    line_width=2,
-                    annotation_text=f"μ={mean_val:.1f}",
-                    annotation_position="top",
-                )
+                # Count filtered vs kept
+                in_range = ((sample_data >= lower_bound) & (sample_data <= upper_bound)).sum()
+                out_range = len(sample_data) - in_range
                 
-                fig.add_vrect(
-                    x0=mean_val - std_val,
-                    x1=mean_val + std_val,
-                    fillcolor="red",
-                    opacity=0.1,
-                    layer="below",
-                    line_width=0,
-                )
+                # Prepare data for Vega-Lite
+                chart_data = pd.DataFrame({
+                    'value': sample_data.values,
+                    'in_range': (sample_data >= lower_bound) & (sample_data <= upper_bound)
+                })
                 
-                fig.update_layout(
-                    title=f"{sample} (n={len(sample_data)})",
-                    xaxis_title=TRANSFORMS[transform_key],
-                    yaxis_title="Count",
-                    height=350,
-                    plot_bgcolor="#FFFFFF",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    font=dict(family="Arial", size=10, color="#54585A"),
-                    showlegend=False,
-                    margin=dict(l=40, r=40, t=60, b=40),
-                )
+                # Vega-Lite specification
+                spec = {
+                    "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+                    "width": "container",
+                    "height": 300,
+                    "title": {
+                        "text": f"{sample} (n={len(sample_data)})",
+                        "fontSize": 14
+                    },
+                    "data": {"values": chart_data.to_dict('records')},
+                    "layer": [
+                        {
+                            "mark": {
+                                "type": "bar",
+                                "binSpacing": 1,
+                                "stroke": "white",
+                                "strokeWidth": 0.5
+                            },
+                            "encoding": {
+                                "x": {
+                                    "bin": {"maxbins": 50},
+                                    "field": "value",
+                                    "title": TRANSFORMS[transform_key],
+                                    "axis": {"labelFontSize": 10, "titleFontSize": 11}
+                                },
+                                "y": {
+                                    "aggregate": "count",
+                                    "title": "Count",
+                                    "axis": {"labelFontSize": 10, "titleFontSize": 11}
+                                },
+                                "color": {
+                                    "field": "in_range",
+                                    "scale": {
+                                        "domain": [False, True],
+                                        "range": ["#ff6b6b", "#87CEEB"]
+                                    },
+                                    "legend": None
+                                },
+                                "tooltip": [
+                                    {"aggregate": "count", "title": "Count"}
+                                ]
+                            }
+                        },
+                        {
+                            "mark": {"type": "rule", "color": "red", "strokeWidth": 2},
+                            "encoding": {
+                                "x": {"datum": mean_val}
+                            }
+                        },
+                        {
+                            "mark": {
+                                "type": "rect",
+                                "opacity": 0.15,
+                                "color": "red"
+                            },
+                            "encoding": {
+                                "x": {"datum": mean_val - std_val},
+                                "x2": {"datum": mean_val + std_val}
+                            }
+                        },
+                        {
+                            "mark": {"type": "rule", "color": "orange", "strokeWidth": 2, "strokeDash": [5, 5]},
+                            "encoding": {
+                                "x": {"datum": lower_bound}
+                            }
+                        },
+                        {
+                            "mark": {"type": "rule", "color": "orange", "strokeWidth": 2, "strokeDash": [5, 5]},
+                            "encoding": {
+                                "x": {"datum": upper_bound}
+                            }
+                        }
+                    ],
+                    "config": {
+                        "view": {"stroke": None},
+                        "axis": {"grid": False}
+                    }
+                }
+                
+                st.vega_lite_chart(spec, use_container_width=True)
+                
+                # Show filter stats
+                if apply_sd_filter:
+                    st.caption(f"✅ **Kept:** {in_range} | ❌ **Filtered:** {out_range}")
+                else:
+                    st.caption(f"📊 **In range:** {in_range} | 🔍 **Would filter:** {out_range}")
+                
+                st.caption(f"μ={mean_val:.1f}, σ={std_val:.1f} | Range: [{lower_bound:.1f}, {upper_bound:.1f}]")
             else:
-                fig.add_annotation(text="No data after filtering", showarrow=False)
-                fig.update_layout(
-                    height=350,
-                    plot_bgcolor="#FFFFFF",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    font=dict(family="Arial", size=10, color="#54585A"),
-                )
-            
-            st.plotly_chart(fig, use_container_width=True, key=f"hist_{sample}_{sample_idx}")
-
-st.markdown("---")
+                st.info("No data after filtering")
 
 # CONTAINER 3: Action Buttons
 col1, col2, col3 = st.columns([1, 1, 2])
