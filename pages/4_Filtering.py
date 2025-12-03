@@ -298,8 +298,8 @@ with st.sidebar:
     st.markdown("## 🎛️ Filter Settings")
     
     # Species selection
-    st.markdown("### Species")
-    all_species = st.checkbox("All species", value=False, key="filter_all_species")
+    #st.markdown("### Species")
+    #all_species = st.checkbox("All species", value=False, key="filter_all_species")
     
     if all_species:
         selected_species = ["HUMAN", "ECOLI", "YEAST", "MOUSE"]
