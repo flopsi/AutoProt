@@ -341,6 +341,27 @@ with col2:
 st.success("✅ Metadata columns identified")
 
 # ============================================================================
+# STEP 6.5: DROP UNUSED COLUMNS
+# ============================================================================
+
+st.subheader("6️⃣.5 Cleaning Dataset")
+
+# Keep only: quantitative + protein ID + species
+columns_to_keep = list(numeric_cols)
+if protein_id_col: 
+    columns_to_keep.insert(0, protein_id_col)
+if species_col: 
+    columns_to_keep.append(species_col)
+
+columns_to_remove = [c for c in df.columns if c not in columns_to_keep]
+
+if columns_to_remove:
+    st.info(f"ℹ️ Removing {len(columns_to_remove)} unused columns")
+
+df = df[columns_to_keep]
+st.success(f"✅ Keeping {len(columns_to_keep)} columns")
+
+# ============================================================================
 # STEP 7: PREVIEW DATA (10 ROWS)
 # ============================================================================
 
@@ -373,7 +394,13 @@ if species_col:
 n_proteins = len(df)
 n_samples = len(numeric_cols)
 n_conditions = max(1, n_samples // 3)  # Estimate
-missing_rate = (df[numeric_cols].isna().sum().sum() / (n_proteins * n_samples) * 100)
+# Count both NaN and 1.0 (imputed) as missing
+missing_count = 0
+for col in numeric_cols:
+    missing_count += df[col].isna().sum()
+    missing_count += (df[col] == 1.0).sum()
+
+missing_rate = (missing_count / (n_proteins * n_samples) * 100)
 
 col1, col2, col3, col4 = st.columns(4)
 
@@ -389,12 +416,7 @@ with col3:
 with col4:
     st.metric("Missing Values %", f"{missing_rate:.1f}%")
 
-# Numeric summary
-with st.expander("📊 Quantitative Columns Summary"):
-    summary_stats = df[numeric_cols].describe().T
-    summary_stats = summary_stats[['mean', 'std', 'min', 'max']]
-    summary_stats.columns = ['Mean', 'Std Dev', 'Min', 'Max']
-    st.dataframe(summary_stats, use_container_width=True)
+
 
 # Species breakdown (if available)
 if species_mapping:
