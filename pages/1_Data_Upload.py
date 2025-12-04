@@ -494,16 +494,12 @@ with col4:
         )
         
         st.plotly_chart(fig, use_container_width=True)
-
-# Species Breakdown by Sample (Stacked Bar Chart)
-if species_mapping and species_col:
-        # Total species counts with metrics
-    species_totals = df[species_col].value_counts()
     
-    cols = st.columns(len(species_totals))
-    for col, (species, count) in zip(cols, species_totals.items()):
-        with col:
-            st.metric(species, f"{count:,}")
+    
+cols = st.columns(len(species_totals))
+for col, (species, count) in zip(cols, species_totals.items()):
+    with col:
+        st.metric(species, f"{count:,}")
 
 
 
