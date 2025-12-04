@@ -1,17 +1,48 @@
 """
-pages/1_Data_Upload.py
-Upload and explore proteomics data
-Detects columns, species, and shows initial visualization
+pages/1_Data_Upload_Enhanced_v2.py
+Upload with: column selection, renaming, file name cleaning, and column cleanup
 """
 
 import streamlit as st
 import pandas as pd
 import numpy as np
+import re
 from helpers.file_io import read_csv, read_tsv, read_excel, detect_numeric_columns, detect_protein_id_column, detect_species_column, validate_numeric_data
 from helpers.dataclasses import ProteinData
 from helpers.plots import create_density_plot
 from helpers.audit import log_event
 from helpers.peptide_protein import detect_data_level, aggregate_peptides_by_id
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def clean_species_name(name: str) -> str:
+    """Remove leading/trailing underscores from species names."""
+    if pd.isna(name):
+        return name
+    return str(name).strip().strip('_').upper()
+
+
+def clean_column_name(name: str) -> str:
+    """
+    Clean column names: remove special chars, standardize spacing.
+    Example: "Sample_001 (Q1)" → "Sample_001_Q1"
+    """
+    # Remove parentheses and brackets
+    name = re.sub(r'[\(\)\[\]\{\}]', '', name)
+    
+    # Replace multiple spaces with single space
+    name = re.sub(r'\s+', ' ', name)
+    
+    # Replace spaces with underscores
+    name = name.replace(' ', '_')
+    
+    # Remove leading/trailing underscores
+    name = name.strip('_')
+    
+    return name
+
 
 # ============================================================================
 # PAGE CONFIGURATION
@@ -44,9 +75,12 @@ st.title("📊 Data Upload")
 st.markdown("""
 Upload your proteomics data file. The system will:
 1. Detect data format and structure
-2. Identify protein/peptide IDs and species info
-3. Validate data quality
-4. Show initial visualization
+2. Let you select quantitative columns
+3. Clean column names
+4. Optionally rename columns
+5. Remove unused columns (keep analysis-relevant only)
+6. Identify protein/peptide IDs and species
+7. Validate data quality
 """)
 
 # ============================================================================
@@ -87,7 +121,7 @@ try:
         df = read_csv(uploaded_file)
         file_format = "CSV"
     
-    progress_bar.progress(25)
+    progress_bar.progress(20)
     
     st.success(f"✅ Loaded {file_format} file: {len(df):,} rows × {len(df.columns)} columns")
     
@@ -96,71 +130,218 @@ except Exception as e:
     st.stop()
 
 # ============================================================================
-# DETECT COLUMNS
+# STEP 3: CLEAN COLUMN NAMES
 # ============================================================================
 
-st.subheader("3️⃣ Detecting Data Structure...")
+st.subheader("3️⃣ Clean Column Names")
 
-# Numeric columns
-numeric_cols = detect_numeric_columns(df)
-st.write(f"📊 Found {len(numeric_cols)} numeric columns")
+st.markdown("""
+Column names are being cleaned (remove special characters, standardize spacing).
+""")
 
-if len(numeric_cols) < 4:
-    st.error(f"❌ Need at least 4 numeric columns for analysis, found {len(numeric_cols)}")
+# Show before/after for first few columns
+col_sample = pd.DataFrame({
+    "Before": df.columns[:min(5, len(df.columns))],
+    "After": [clean_column_name(col) for col in df.columns[:min(5, len(df.columns))]]
+})
+
+with st.expander("👀 View Name Cleaning Examples"):
+    st.dataframe(col_sample, use_container_width=True)
+
+# Apply cleaning
+df.columns = [clean_column_name(col) for col in df.columns]
+st.success("✅ Column names cleaned")
+
+progress_bar.progress(30)
+
+# ============================================================================
+# STEP 4: SELECT QUANTITATIVE COLUMNS
+# ============================================================================
+
+st.subheader("4️⃣ Select Quantitative Columns")
+
+st.markdown("""
+Select which columns contain quantitative measurements (intensities, abundances, etc.).
+Non-numeric columns will be excluded from analysis.
+""")
+
+# Show preview of columns
+st.write("**Available columns:**")
+col_info = pd.DataFrame({
+    "Column": df.columns,
+    "Type": [df[col].dtype for col in df.columns],
+    "Sample": [str(df[col].iloc[0])[:50] if len(df) > 0 else "N/A" for col in df.columns]
+})
+st.dataframe(col_info, use_container_width=True)
+
+progress_bar.progress(35)
+
+# Multi-select for quantitative columns
+all_cols = list(df.columns)
+default_numeric = detect_numeric_columns(df)
+
+st.info("💡 **Tip:** Click columns to select them. Deselect columns that aren't measurements.")
+
+selected_numeric_cols = st.multiselect(
+    "🔢 Select quantitative columns:",
+    options=all_cols,
+    default=default_numeric,
+    help="Hold Ctrl/Cmd to select multiple columns"
+)
+
+if len(selected_numeric_cols) < 4:
+    st.warning(f"⚠️ Need at least 4 quantitative columns for analysis. You selected {len(selected_numeric_cols)}.")
     st.stop()
+
+numeric_cols = selected_numeric_cols
+
+st.success(f"✅ Selected {len(numeric_cols)} quantitative columns")
+
+progress_bar.progress(40)
+
+# ============================================================================
+# STEP 5: RENAME COLUMNS (OPTIONAL)
+# ============================================================================
+
+st.subheader("5️⃣ Rename Columns (Optional)")
+
+st.markdown("**Rename columns to meaningful names.** You can keep originals or create new names.")
+
+rename_dict = {}
+rename_cols = st.columns(2)
+
+with rename_cols[0]:
+    should_rename = st.checkbox(
+        "Enable column renaming?",
+        value=False,
+        help="Rename quantitative columns for clarity"
+    )
+
+with rename_cols[1]:
+    if should_rename:
+        st.info("Enter new names in the text boxes below")
+
+if should_rename:
+    st.markdown("**Original → New Name**")
+    
+    for col in numeric_cols:
+        col1, col2, col3 = st.columns([2, 1, 2])
+        
+        with col1:
+            st.write(f"**{col}**")
+        
+        with col2:
+            st.write("→")
+        
+        with col3:
+            new_name = st.text_input(
+                "New name",
+                value=col,
+                label_visibility="collapsed",
+                key=f"rename_{col}"
+            )
+            if new_name != col:
+                rename_dict[col] = new_name
+    
+    # Apply renaming
+    if rename_dict:
+        df = df.rename(columns=rename_dict)
+        numeric_cols = [rename_dict.get(col, col) for col in numeric_cols]
+        st.success(f"✅ Renamed {len(rename_dict)} columns")
 
 progress_bar.progress(50)
 
-# Protein ID column
-protein_id_col = detect_protein_id_column(df)
-st.write(f"🔍 Detected protein/peptide ID column: **{protein_id_col}**")
-
-# Species column
-species_col = detect_species_column(df)
-if species_col:
-    st.write(f"🧬 Detected species column: **{species_col}**")
-else:
-    st.write("🧬 No species column detected (optional)")
-
-# Data level detection
-data_level, reasoning = detect_data_level(df, protein_id_col)
-st.write(f"📈 Data level: **{data_level.upper()}** ({reasoning})")
-
-progress_bar.progress(75)
-
 # ============================================================================
-# OPTIONAL: MANUAL COLUMN SELECTION
+# STEP 6: IDENTIFY METADATA COLUMNS & CLEAN SPECIES
 # ============================================================================
 
-with st.expander("🔧 Advanced: Manual Column Selection"):
-    st.markdown("Override auto-detected columns if needed:")
+st.subheader("6️⃣ Identify Metadata Columns")
+
+st.markdown("Select columns for protein/peptide ID and species (optional).")
+
+col1, col2 = st.columns(2)
+
+# Get non-numeric columns for ID/species
+non_numeric_cols = [c for c in df.columns if c not in numeric_cols]
+
+with col1:
+    protein_id_col = detect_protein_id_column(df)
+    if protein_id_col not in df.columns:
+        protein_id_col = non_numeric_cols[0] if non_numeric_cols else None
     
-    col1, col2 = st.columns(2)
+    protein_id_col = st.selectbox(
+        "🔍 Protein/Peptide ID column",
+        options=non_numeric_cols,
+        index=non_numeric_cols.index(protein_id_col) if protein_id_col in non_numeric_cols else 0,
+    )
+
+with col2:
+    species_col = detect_species_column(df)
+    species_options = ["(None)"] + non_numeric_cols
     
-    with col1:
-        protein_id_col = st.selectbox(
-            "Protein/Peptide ID column",
-            options=df.columns,
-            index=list(df.columns).index(protein_id_col) if protein_id_col in df.columns else 0,
-            key="protein_col_manual"
-        )
+    default_idx = 0
+    if species_col and species_col in df.columns:
+        default_idx = species_options.index(species_col)
+        # CLEAN SPECIES NAMES
+        df[species_col] = df[species_col].apply(clean_species_name)
     
-    with col2:
-        species_options = ["(None)"] + list(df.columns)
-        species_col = st.selectbox(
-            "Species column",
-            options=species_options,
-            index=0,
-            key="species_col_manual"
-        )
-        if species_col == "(None)":
-            species_col = None
+    species_col = st.selectbox(
+        "🧬 Species column",
+        options=species_options,
+        index=default_idx,
+    )
+    
+    if species_col == "(None)":
+        species_col = None
+    elif species_col:
+        # Clean species names if selected
+        df[species_col] = df[species_col].apply(clean_species_name)
+
+progress_bar.progress(60)
 
 # ============================================================================
-# VALIDATE DATA
+# STEP 7: REMOVE UNUSED COLUMNS
 # ============================================================================
 
-st.subheader("4️⃣ Data Validation")
+st.subheader("7️⃣ Remove Unused Columns")
+
+st.markdown("""
+**Columns to keep for analysis:**
+- Quantitative columns (measurements)
+- Protein/Peptide ID column
+- Species column (if selected)
+
+**All other columns will be removed** to keep data clean and focused.
+""")
+
+# Determine which columns to keep
+columns_to_keep = list(numeric_cols)
+if protein_id_col and protein_id_col not in columns_to_keep:
+    columns_to_keep.insert(0, protein_id_col)
+if species_col and species_col not in columns_to_keep:
+    columns_to_keep.append(species_col)
+
+# Show what will be removed
+columns_to_remove = [col for col in df.columns if col not in columns_to_keep]
+
+if columns_to_remove:
+    st.info(f"ℹ️ Will remove {len(columns_to_remove)} unused columns: {', '.join(columns_to_remove[:5])}")
+    if len(columns_to_remove) > 5:
+        st.write(f"   ... and {len(columns_to_remove) - 5} more")
+
+# Remove unused columns
+df = df[columns_to_keep]
+
+st.success(f"✅ Keeping {len(columns_to_keep)} analysis-relevant columns")
+st.write(f"   Columns: {', '.join(columns_to_keep)}")
+
+progress_bar.progress(70)
+
+# ============================================================================
+# STEP 8: DATA VALIDATION
+# ============================================================================
+
+st.subheader("8️⃣ Data Validation")
 
 is_valid, validation_msg = validate_numeric_data(df, numeric_cols)
 
@@ -170,22 +351,19 @@ else:
     st.error(f"❌ {validation_msg}")
     st.stop()
 
-progress_bar.progress(90)
+progress_bar.progress(75)
 
 # ============================================================================
-# CREATE PROTEIN DATA OBJECT
+# STEP 9: PEPTIDE DATA DETECTION & AGGREGATION
 # ============================================================================
 
-# Map species if available
-species_mapping = {}
-if species_col and species_col in df.columns:
-    species_mapping = dict(zip(df[protein_id_col], df[species_col]))
+data_level, reasoning = detect_data_level(df, protein_id_col)
 
-# If peptide data, optionally aggregate
 if data_level == "peptide":
-    st.subheader("5️⃣ Peptide Data Detected - Aggregation Options")
+    st.subheader("9️⃣ Peptide Data Detected - Aggregation Options")
     
     col1, col2 = st.columns(2)
+    
     with col1:
         should_aggregate = st.checkbox(
             "Aggregate to protein level?",
@@ -222,8 +400,22 @@ if data_level == "peptide":
         except Exception as e:
             st.error(f"❌ Aggregation failed: {str(e)}")
             st.stop()
+    
+    progress_bar.progress(80)
+else:
+    st.subheader("9️⃣ Data Level")
+    st.info(f"📈 **Data level: PROTEIN** — {reasoning}")
+    progress_bar.progress(80)
 
-# Create ProteinData object
+# ============================================================================
+# STEP 10: CREATE PROTEIN DATA OBJECT
+# ============================================================================
+
+# Map species if available
+species_mapping = {}
+if species_col and species_col in df.columns:
+    species_mapping = dict(zip(df[protein_id_col], df[species_col]))
+
 protein_data = ProteinData(
     raw=df,
     numeric_cols=numeric_cols,
@@ -236,36 +428,37 @@ protein_data = ProteinData(
 
 # Store in session
 st.session_state.protein_data = protein_data
+st.session_state.column_mapping = rename_dict  # Store for reference
 
-progress_bar.progress(100)
+progress_bar.progress(90)
 
 # ============================================================================
-# DISPLAY SUMMARY
+# STEP 11: DISPLAY SUMMARY
 # ============================================================================
 
-st.subheader("6️⃣ Data Summary")
+st.subheader("🔟 Data Summary")
 
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    st.metric("Proteins/Peptides", f"{protein_data.n_proteins:,}")
+    st.metric("Proteins", f"{protein_data.n_proteins:,}")
 
 with col2:
-    st.metric("Samples", protein_data.n_samples)
+    st.metric("Quantitative Samples", protein_data.n_samples)
 
 with col3:
-    st.metric("Conditions", protein_data.n_conditions)
+    st.metric("Inferred Conditions", protein_data.n_conditions)
 
 with col4:
     st.metric("Missing %", f"{protein_data.missing_rate:.1f}%")
 
 # ============================================================================
-# DATA PREVIEW
+# STEP 12: DATA PREVIEW
 # ============================================================================
 
-st.subheader("7️⃣ Data Preview")
+st.subheader("1️⃣1️⃣ Data Preview")
 
-with st.expander("🔍 View First 10 Rows"):
+with st.expander("🔍 View Data (First 10 Rows)"):
     st.dataframe(
         df.head(10),
         use_container_width=True,
@@ -273,18 +466,28 @@ with st.expander("🔍 View First 10 Rows"):
     )
 
 # ============================================================================
-# INITIAL PLOT: RAW INTENSITY DISTRIBUTION
+# STEP 13: COLUMN MAPPING REFERENCE
 # ============================================================================
 
-st.subheader("8️⃣ Initial Visualization - Raw Intensity Distribution")
+if rename_dict:
+    st.subheader("Column Name Mapping")
+    mapping_df = pd.DataFrame({
+        "Original Name": list(rename_dict.keys()),
+        "New Name": list(rename_dict.values())
+    })
+    st.dataframe(mapping_df, use_container_width=True)
+
+# ============================================================================
+# STEP 14: INITIAL VISUALIZATION
+# ============================================================================
+
+st.subheader("1️⃣2️⃣ Initial Visualization - Raw Intensity Distribution")
 
 st.markdown("""
-The plot below shows the distribution of raw intensities across all samples.
-Each sample's median, quartiles, and range are displayed.
+The plot shows the distribution of raw intensities across all samples.
 """)
 
 try:
-    # Create density plot from raw data
     fig = create_density_plot(
         df[numeric_cols].mean(axis=1),
         fc_threshold=1.0,
@@ -297,7 +500,7 @@ except Exception as e:
     st.error(f"❌ Error creating plot: {str(e)}")
 
 # ============================================================================
-# SPECIES BREAKDOWN (IF AVAILABLE)
+# STEP 15: SPECIES BREAKDOWN (IF AVAILABLE)
 # ============================================================================
 
 if species_mapping:
@@ -329,14 +532,19 @@ log_event(
         "n_conditions": protein_data.n_conditions,
         "missing_rate": float(protein_data.missing_rate),
         "data_level": data_level,
+        "columns_selected": len(numeric_cols),
+        "columns_renamed": len(rename_dict),
+        "columns_removed": len([c for c in col_info['Column'] if c not in df.columns]),
     }
 )
+
+progress_bar.progress(100)
 
 # ============================================================================
 # SUCCESS MESSAGE & NEXT STEPS
 # ============================================================================
 
-st.success("✅ Data loaded successfully!")
+st.success("✅ Data loaded, cleaned, and configured successfully!")
 
 st.markdown("""
 ### ✨ Next Steps
@@ -346,5 +554,5 @@ st.markdown("""
 3. **Preprocessing** (4_Preprocessing.py) - Transform & filter
 4. **Analysis** (6_Analysis.py) - Differential expression
 
-Use the sidebar navigation to continue.
+Use the sidebar navigation to continue. Your data is stored and available for all following pages.
 """)
