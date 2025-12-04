@@ -569,7 +569,17 @@ for row_idx in range(n_rows):
                 
                 # Create figure with range slider
                 fig = go.Figure()
+
+                # Single histogram trace
+                fig.add_trace(go.Histogram(
+                    x=sample_data,
+                    nbinsx=50,
+                    marker_color="rgba(135, 206, 235, 0.7)",
+                    name="Intensity",
+                    showlegend=False,
+                ))
                 
+                # Add mean line
 
                 fig.add_vline(
                     x=mean_val,
@@ -579,17 +589,6 @@ for row_idx in range(n_rows):
                     annotation_text=f"μ={mean_val:.1f}",
                     annotation_position="top",
                 )
-                
-                # Add ±1σ shaded area
-                fig.add_vrect(
-                    x0=mean_val - std_val,
-                    x1=mean_val + std_val,
-                    fillcolor="red",
-                    opacity=0.1,
-                    layer="below",
-                    line_width=0,
-                )
-                
                 # Add SD range bounds as VISUAL GUIDE (orange dashed lines)
                 # These show the filter preview, not actual filter status
                 if apply_sd:
