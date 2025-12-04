@@ -1,12 +1,17 @@
 """
 pages/2_EDA.py
 Visual Exploratory Data Analysis
-Distribution plot with transform selection
+- 6 individual sample distributions (A1-A3, B1-B3)
+- 2 ranked intensity plots (A group, B group)
+- Intensity heatmap (1000 random proteins)
 """
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
 from helpers.constants import get_theme, TRANSFORMS
 from helpers.transforms import apply_transform
 from helpers.audit import log_event
@@ -29,6 +34,7 @@ if "protein_data" not in st.session_state:
 protein_data = st.session_state.protein_data
 df = protein_data.raw.copy()
 numeric_cols = protein_data.numeric_cols
+protein_id_col = protein_data.protein_id_col
 
 # ============================================================================
 # SIDEBAR: SETTINGS
@@ -55,6 +61,21 @@ with st.sidebar:
     )
     
     st.session_state.theme = theme_name
+    
+    # Group assignment
+    st.subheader("Sample Groups")
+    st.info("Assign samples to groups A or B")
+    
+    sample_groups = {}
+    for col in numeric_cols:
+        group = st.radio(
+            f"{col}",
+            options=["A", "B"],
+            key=f"group_{col}",
+            horizontal=True,
+            index=0 if "A" in col.upper() else 1
+        )
+        sample_groups[col] = group
 
 # ============================================================================
 # MAIN CONTENT
@@ -62,10 +83,8 @@ with st.sidebar:
 
 st.title("📊 Visual Exploratory Data Analysis")
 
-st.markdown("""
-Visualize intensity distributions across samples to assess data quality 
-and identify potential batch effects or outliers.
-""")
+# Get theme
+theme = get_theme(theme_name)
 
 # ============================================================================
 # DATA TRANSFORMATION
@@ -73,144 +92,261 @@ and identify potential batch effects or outliers.
 
 st.subheader("1️⃣ Data Transformation")
 
-col1, col2 = st.columns(2)
-
-with col1:
-    st.metric("Transform", transform_method)
-    st.metric("Total Proteins", f"{len(df):,}")
-
-with col2:
-    st.metric("Samples", len(numeric_cols))
-    st.metric("Missing %", f"{protein_data.missing_rate:.1f}%")
-
-# Apply transformation
 with st.spinner(f"Applying {transform_method} transformation..."):
     df_transformed = apply_transform(df, numeric_cols, method=transform_method)
 
-st.success(f"✅ {transform_method} transformation applied")
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("Transform", transform_method)
+with col2:
+    group_a_samples = [c for c, g in sample_groups.items() if g == "A"]
+    group_b_samples = [c for c, g in sample_groups.items() if g == "B"]
+    st.metric("Group A", len(group_a_samples))
+with col3:
+    st.metric("Group B", len(group_b_samples))
 
 # ============================================================================
-# DISTRIBUTION PLOT
+# PLOT 1: 6 INDIVIDUAL DISTRIBUTIONS (3x2 GRID)
 # ============================================================================
 
-st.subheader("2️⃣ Intensity Distribution")
+st.subheader("2️⃣ Individual Sample Distributions")
 
-st.markdown(f"""
-Distribution of **{transform_method}-transformed** intensities across all samples.
-Each curve represents one sample.
-""")
+# Create 3x2 subplot grid
+fig = make_subplots(
+    rows=2, cols=3,
+    subplot_titles=[f"{col}" for col in numeric_cols[:6]],
+    vertical_spacing=0.12,
+    horizontal_spacing=0.08
+)
 
-# Get theme
-theme = get_theme(theme_name)
-
-# Prepare data for plotting
-fig = go.Figure()
-
-# Add histogram for each sample
-for i, col in enumerate(numeric_cols):
-    # Filter out missing values (1.0 after imputation)
+# Add each sample as subplot
+for idx, col in enumerate(numeric_cols[:6]):
+    row = (idx // 3) + 1
+    col_pos = (idx % 3) + 1
+    
+    # Get values (filter out missing)
     values = df_transformed[col][df_transformed[col] > 1.0]
     
     # Add histogram
-    fig.add_trace(go.Histogram(
-        x=values,
-        name=col,
-        opacity=0.6,
-        histnorm='probability density',
-        nbinsx=50
-    ))
+    fig.add_trace(
+        go.Histogram(
+            x=values,
+            name=col,
+            nbinsx=50,
+            opacity=0.7,
+            marker_color=theme['color_human']
+        ),
+        row=row, col=col_pos
+    )
 
-# Update layout with theme
+# Update layout
 fig.update_layout(
-    title=f"{transform_method.upper()}-Transformed Intensity Distribution",
-    xaxis_title=f"{transform_method.upper()} Intensity",
-    yaxis_title="Density",
-    barmode='overlay',
+    title_text=f"{transform_method.upper()}-Transformed Intensity Distributions",
+    showlegend=False,
     plot_bgcolor=theme['bg_primary'],
     paper_bgcolor=theme['paper_bg'],
-    font=dict(
-        family="Arial",
-        size=14,
-        color=theme['text_primary']
-    ),
-    height=500,
-    showlegend=True,
-    legend=dict(
-        orientation="v",
-        yanchor="top",
-        y=1,
-        xanchor="left",
-        x=1.02
-    )
+    font=dict(family="Arial", size=12, color=theme['text_primary']),
+    height=600
 )
 
-fig.update_xaxes(
-    showgrid=True,
-    gridcolor=theme['grid'],
-    gridwidth=1
-)
-
-fig.update_yaxes(
-    showgrid=True,
-    gridcolor=theme['grid'],
-    gridwidth=1
-)
+# Update axes
+fig.update_xaxes(title_text=f"{transform_method} Intensity", showgrid=True, gridcolor=theme['grid'])
+fig.update_yaxes(title_text="Count", showgrid=True, gridcolor=theme['grid'])
 
 st.plotly_chart(fig, use_container_width=True)
+
+# ============================================================================
+# PLOT 2: RANKED INTENSITY PLOTS (GROUP A & B)
+# ============================================================================
+
+st.subheader("3️⃣ Ranked Intensity Plots")
+
+st.markdown("""
+Proteins ranked by median intensity. Shows dynamic range and data quality.
+""")
+
+# Function to calculate ranked intensities
+def get_ranked_intensities(df, cols):
+    """Calculate median intensity per protein and rank."""
+    # Get median across samples
+    median_intensities = df[cols].median(axis=1)
+    
+    # Filter valid proteins (at least one value > 1.0)
+    valid_mask = (df[cols] > 1.0).any(axis=1)
+    median_intensities = median_intensities[valid_mask]
+    
+    # Rank
+    ranked = median_intensities.sort_values(ascending=False).reset_index(drop=True)
+    ranked.index = ranked.index + 1  # Start from 1
+    
+    return ranked
+
+# Create side-by-side plots
+col1, col2 = st.columns(2)
+
+# Group A
+with col1:
+    st.markdown("**Group A**")
+    
+    ranked_a = get_ranked_intensities(df_transformed, group_a_samples)
+    
+    fig_a = go.Figure()
+    fig_a.add_trace(go.Scatter(
+        x=list(range(1, len(ranked_a) + 1)),
+        y=ranked_a.values,
+        mode='lines',
+        line=dict(color=theme['color_human'], width=2),
+        name='Group A'
+    ))
+    
+    fig_a.update_layout(
+        title="Group A: Ranked Protein Intensities",
+        xaxis_title="Protein Rank",
+        yaxis_title=f"{transform_method} Intensity",
+        plot_bgcolor=theme['bg_primary'],
+        paper_bgcolor=theme['paper_bg'],
+        font=dict(family="Arial", size=12, color=theme['text_primary']),
+        height=400,
+        yaxis_type="log"  # Log scale for y-axis
+    )
+    
+    fig_a.update_xaxes(showgrid=True, gridcolor=theme['grid'])
+    fig_a.update_yaxes(showgrid=True, gridcolor=theme['grid'])
+    
+    st.plotly_chart(fig_a, use_container_width=True)
+    st.metric("Total Proteins", f"{len(ranked_a):,}")
+
+# Group B
+with col2:
+    st.markdown("**Group B**")
+    
+    ranked_b = get_ranked_intensities(df_transformed, group_b_samples)
+    
+    fig_b = go.Figure()
+    fig_b.add_trace(go.Scatter(
+        x=list(range(1, len(ranked_b) + 1)),
+        y=ranked_b.values,
+        mode='lines',
+        line=dict(color=theme['color_yeast'], width=2),
+        name='Group B'
+    ))
+    
+    fig_b.update_layout(
+        title="Group B: Ranked Protein Intensities",
+        xaxis_title="Protein Rank",
+        yaxis_title=f"{transform_method} Intensity",
+        plot_bgcolor=theme['bg_primary'],
+        paper_bgcolor=theme['paper_bg'],
+        font=dict(family="Arial", size=12, color=theme['text_primary']),
+        height=400,
+        yaxis_type="log"
+    )
+    
+    fig_b.update_xaxes(showgrid=True, gridcolor=theme['grid'])
+    fig_b.update_yaxes(showgrid=True, gridcolor=theme['grid'])
+    
+    st.plotly_chart(fig_b, use_container_width=True)
+    st.metric("Total Proteins", f"{len(ranked_b):,}")
+
+# ============================================================================
+# PLOT 3: INTENSITY HEATMAP (1000 RANDOM PROTEINS)
+# ============================================================================
+
+st.subheader("4️⃣ Intensity Heatmap")
+
+st.markdown("""
+Random sample of 1000 proteins showing intensity patterns across all samples.
+""")
+
+# Sample 1000 random proteins
+n_sample = min(1000, len(df_transformed))
+sampled_df = df_transformed.sample(n=n_sample, random_state=42)
+
+# Get intensity matrix (filter valid values)
+heatmap_data = sampled_df[numeric_cols].copy()
+
+# Replace missing values (1.0) with NaN for better visualization
+heatmap_data = heatmap_data.replace(1.0, np.nan)
+
+# Create heatmap
+fig_heatmap = go.Figure(data=go.Heatmap(
+    z=heatmap_data.values,
+    x=numeric_cols,
+    y=[f"P{i+1}" for i in range(len(heatmap_data))],
+    colorscale='Viridis',
+    colorbar=dict(title=f"{transform_method}<br>Intensity"),
+    hoverongaps=False
+))
+
+fig_heatmap.update_layout(
+    title=f"Intensity Heatmap ({n_sample} Random Proteins)",
+    xaxis_title="Samples",
+    yaxis_title="Proteins",
+    plot_bgcolor=theme['bg_primary'],
+    paper_bgcolor=theme['paper_bg'],
+    font=dict(family="Arial", size=12, color=theme['text_primary']),
+    height=700,
+    yaxis=dict(showticklabels=False)  # Hide protein labels (too many)
+)
+
+st.plotly_chart(fig_heatmap, use_container_width=True)
 
 # ============================================================================
 # SUMMARY STATISTICS
 # ============================================================================
 
-st.subheader("3️⃣ Summary Statistics")
-
-# Calculate stats on transformed data
-stats = []
-for col in numeric_cols:
-    values = df_transformed[col][df_transformed[col] > 1.0]
-    stats.append({
-        'Sample': col,
-        'Mean': values.mean(),
-        'Median': values.median(),
-        'Std Dev': values.std(),
-        'Min': values.min(),
-        'Max': values.max(),
-        'N Valid': len(values)
-    })
-
-stats_df = pd.DataFrame(stats)
-
-# Display as table
-st.dataframe(
-    stats_df.style.format({
-        'Mean': '{:.2f}',
-        'Median': '{:.2f}',
-        'Std Dev': '{:.2f}',
-        'Min': '{:.2f}',
-        'Max': '{:.2f}',
-        'N Valid': '{:,.0f}'
-    }),
-    use_container_width=True,
-    height=300
-)
+with st.expander("📊 Summary Statistics"):
+    
+    stats = []
+    for col in numeric_cols:
+        values = df_transformed[col][df_transformed[col] > 1.0]
+        group = sample_groups.get(col, "Unknown")
+        stats.append({
+            'Sample': col,
+            'Group': group,
+            'Mean': values.mean(),
+            'Median': values.median(),
+            'Std Dev': values.std(),
+            'Min': values.min(),
+            'Max': values.max(),
+            'N Valid': len(values)
+        })
+    
+    stats_df = pd.DataFrame(stats)
+    
+    st.dataframe(
+        stats_df.style.format({
+            'Mean': '{:.2f}',
+            'Median': '{:.2f}',
+            'Std Dev': '{:.2f}',
+            'Min': '{:.2f}',
+            'Max': '{:.2f}',
+            'N Valid': '{:,.0f}'
+        }),
+        use_container_width=True,
+        height=300
+    )
 
 # ============================================================================
-# INSIGHTS
+# INTERPRETATION GUIDE
 # ============================================================================
 
 with st.expander("💡 Interpretation Guide"):
     st.markdown("""
-    **What to look for:**
+    **Distribution Plots:**
+    - Similar shapes → Good batch consistency
+    - Different peaks → Potential batch effects
+    - Wide spread → High variance
     
-    - **Similar distributions** → Good batch consistency
-    - **Different peaks** → Potential batch effects
-    - **Skewed distributions** → May need different transform
-    - **Multiple peaks** → Possible contamination or subpopulations
+    **Ranked Intensity Plots:**
+    - Smooth curve → Good data quality
+    - Wide dynamic range → Many orders of magnitude
+    - Flat regions → Detection limit reached
     
-    **Next steps:**
-    - If distributions are similar → Proceed to preprocessing
-    - If batch effects visible → Consider normalization
-    - If outliers present → Check data quality (Page 4: Filtering)
+    **Heatmap:**
+    - Vertical patterns → Sample-specific effects
+    - Horizontal patterns → Protein groups with similar behavior
+    - Missing values (white) → Proteins not detected
     """)
 
 # ============================================================================
@@ -219,12 +355,14 @@ with st.expander("💡 Interpretation Guide"):
 
 log_event(
     "Visual EDA",
-    f"Applied {transform_method} transform and viewed distribution",
+    f"Generated 3 plot types with {transform_method} transform",
     {
         "transform": transform_method,
         "theme": theme_name,
         "n_samples": len(numeric_cols),
-        "n_proteins": len(df)
+        "n_proteins": len(df),
+        "group_a_samples": len(group_a_samples),
+        "group_b_samples": len(group_b_samples)
     }
 )
 
