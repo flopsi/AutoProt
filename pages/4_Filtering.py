@@ -696,22 +696,22 @@ with col_store2:
 st.markdown("---")
 
 
-  # ========== EXPORT FILTERED DATA ==========
-    if not filtered_df.empty:
-        col_exp1, col_exp2 = st.columns([1, 1])
-        
-        with col_exp1:
-            if st.button("💾 Export Filtered Data", key="export_filtered"):
-                csv = filtered_df.to_csv(index=True)
-                st.download_button(
-                    label="Download CSV",
-                    data=csv,
-                    file_name="filtered_proteins.csv",
-                    mime="text/csv",
-                )
-        
-        with col_exp2:
-            st.caption("Export current filtered dataset as CSV")
+# ========== EXPORT FILTERED DATA ==========
+if not filtered_df.empty:
+    col_exp1, col_exp2 = st.columns([1, 1])
+    
+    with col_exp1:
+        if st.button("💾 Export Filtered Data", key="export_filtered"):
+            csv = filtered_df.to_csv(index=True)
+            st.download_button(
+                label="Download CSV",
+                data=csv,
+                file_name="filtered_proteins.csv",
+                mime="text/csv",
+            )
+    
+    with col_exp2:
+        st.caption("Export current filtered dataset as CSV")
 
 else:
     st.info("👆 Configure filters in the sidebar and click **Apply All Filters** to see results")
