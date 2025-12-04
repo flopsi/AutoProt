@@ -419,9 +419,7 @@ with col4:
 
 # Species Breakdown by Sample (Stacked Bar Chart)
 if species_mapping and species_col:
-    st.subheader("Species Breakdown by Sample")
         # Total species counts with metrics
-    st.subheader("Total Species Distribution")
     species_totals = df[species_col].value_counts()
     
     cols = st.columns(len(species_totals))
