@@ -417,11 +417,6 @@ with col3:
 with col4:
     st.metric("Missing Values %", f"{missing_rate:.1f}%")
 
-
-if species_mapping and species_col:
-    st.subheader("Species Breakdown by Sample")
-    
-
 # Species Breakdown by Sample (Stacked Bar Chart)
 if species_mapping and species_col:
     st.subheader("Species Breakdown by Sample")
@@ -504,6 +499,15 @@ if species_mapping and species_col:
         
         st.plotly_chart(fig, use_container_width=True)
     
+    # Total species counts with metrics
+    st.subheader("Total Species Distribution")
+    species_totals = df[species_col].value_counts()
+    
+    cols = st.columns(len(species_totals))
+    for col, (species, count) in zip(cols, species_totals.items()):
+        with col:
+            st.metric(species, f"{count:,}")
+
     # Total species counts with metrics
     st.subheader("Total Species Distribution")
     species_totals = df[species_col].value_counts()
