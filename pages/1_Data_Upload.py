@@ -186,18 +186,51 @@ selected_numeric_cols = st.multiselect(
     "🔢 Select quantitative columns:",
     options=all_cols,
     default=default_numeric,
-    help="Hold Ctrl/Cmd to select multiple columns"
 )
 
+
+# Create dataframe with checkboxes
+df_col_select = pd.DataFrame({
+    "Select": [col in default_numeric for col in all_cols],
+    "Column": all_cols,
+    "Type": [str(df[col].dtype) for col in all_cols],
+})
+
+st.info("💡 **Check columns to include in analysis.**")
+
+# Interactive checkbox table
+edited_cols = st.data_editor(
+    df_col_select,
+    column_config={
+        "Select": st.column_config.CheckboxColumn(
+            "✓ Include",
+            help="Check to include this column"
+        ),
+        "Column": st.column_config.TextColumn(
+            "Column Name",
+            width="large",
+            disabled=True
+        ),
+        "Type": st.column_config.TextColumn(
+            "Data Type",
+            width="small",
+            disabled=True
+        ),
+    },
+    hide_index=True,
+    use_container_width=True,
+    key="column_selector_table"
+)
+
+# Extract selected columns
+selected_numeric_cols = edited_cols[edited_cols["Select"]]["Column"].tolist()
+
 if len(selected_numeric_cols) < 4:
-    st.warning(f"⚠️ Need at least 4 quantitative columns for analysis. You selected {len(selected_numeric_cols)}.")
+    st.warning(f"⚠️ Need at least 4 columns. You selected {len(selected_numeric_cols)}.")
     st.stop()
 
 numeric_cols = selected_numeric_cols
-
-st.success(f"✅ Selected {len(numeric_cols)} quantitative columns")
-
-progress_bar.progress(40)
+st.success(f"✅ Selected {len(numeric_cols)} columns")
 
 # ============================================================================
 # STEP 5: RENAME COLUMNS (OPTIONAL)
