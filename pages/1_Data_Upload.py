@@ -487,7 +487,7 @@ st.subheader("1️⃣2️⃣ Initial Visualization - Raw Intensity Distribution"
 st.markdown("""
 The plot shows the distribution of raw intensities across all samples.
 """)
-df_log2=log2_transform(df)
+df_log2=log2_transform(df,numeric_cols)
 try:
     fig = create_density_plot(
         df_log2[numeric_cols].mean(axis=1),
