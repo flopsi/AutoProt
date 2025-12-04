@@ -223,6 +223,62 @@ def calculate_error_rates(
     }
 
 
+def calculate_species_rmse(
+    results_df: pd.DataFrame,
+    true_fc_dict: Dict[str, float],
+    species_col_data: Dict,
+    fc_threshold: float,
+    pval_threshold: float,
+) -> pd.DataFrame:
+    """Calculate RMSE and other metrics per species."""
+    species_metrics = []
+    
+    for species in ["HUMAN", "YEAST", "ECOLI"]:
+        # Get proteins for this species
+        species_proteins = [pid for pid, sp in species_col_data.items() if sp == species]
+        
+        if not species_proteins:
+            continue
+        
+        # Get results for this species
+        species_results = results_df.loc[results_df.index.intersection(species_proteins)].copy()
+        
+        if len(species_results) == 0:
+            continue
+        
+        # Get theoretical FC for this species
+        theo_fc = true_fc_dict.get(species_proteins[0], 0.0)
+        
+        # Calculate prediction error
+        species_results["error"] = species_results["log2fc"] - theo_fc
+        
+        # Metrics
+        n_proteins = len(species_results)
+        rmse = np.sqrt((species_results["error"] ** 2).mean())
+        mae = species_results["error"].abs().mean()
+        bias = species_results["error"].mean()
+        
+        # Classification accuracy
+        species_results["regulation"] = species_results.apply(
+            lambda row: classify_regulation(row, fc_threshold, pval_threshold),
+            axis=1
+        )
+        
+        n_detected = (species_results["regulation"].isin(["Up-regulated", "Down-regulated"])).sum()
+        detection_rate = n_detected / n_proteins if n_proteins > 0 else 0
+        
+        species_metrics.append({
+            "Species": species,
+            "N": n_proteins,
+            "Theo FC": f"{theo_fc:.2f}",
+            "RMSE": f"{rmse:.3f}",
+            "MAE": f"{mae:.3f}",
+            "Detection": f"{detection_rate:.1%}",
+        })
+    
+    return pd.DataFrame(species_metrics)
+
+
 def create_volcano_plot(
     results_df: pd.DataFrame,
     fc_threshold: float,
@@ -287,11 +343,14 @@ def create_volcano_plot(
     return fig
 
 
-def create_ma_plot(
+def create_ma_plot_with_theoretical(
     results_df: pd.DataFrame,
     fc_threshold: float,
     pval_threshold: float,
+    theo_fc_species: Dict[str, float],
 ) -> go.Figure:
+    """Create MA plot with theoretical FC lines for each species."""
+    
     results_df["mean_abundance"] = (results_df["mean_group1"] + results_df["mean_group2"]) / 2
     results_df["regulation"] = results_df.apply(
         lambda row: classify_regulation(row, fc_threshold, pval_threshold),
@@ -307,6 +366,7 @@ def create_ma_plot(
     
     fig = go.Figure()
     
+    # Add data points
     for reg_type in ["Not significant", "Not tested", "Down-regulated", "Up-regulated"]:
         subset = results_df[results_df["regulation"] == reg_type]
         if not subset.empty:
@@ -327,12 +387,26 @@ def create_ma_plot(
                              "<extra></extra>",
             ))
     
-    fig.add_hline(y=fc_threshold, line_dash="dash", line_color="red")
-    fig.add_hline(y=-fc_threshold, line_dash="dash", line_color="red")
+    # Add theoretical FC lines for each species
+    theo_colors = {"HUMAN": "#0066CC", "YEAST": "#FF6600", "ECOLI": "#00CC66"}
+    
+    for species, theo_fc in theo_fc_species.items():
+        fig.add_hline(
+            y=theo_fc,
+            line_dash="dash",
+            line_color=theo_colors.get(species, "#666666"),
+            line_width=2,
+            annotation_text=f"{species} (theo: {theo_fc:.2f})",
+            annotation_position="right",
+        )
+    
+    # Add FC threshold lines
+    fig.add_hline(y=fc_threshold, line_dash="dash", line_color="red", line_width=1.5, opacity=0.5)
+    fig.add_hline(y=-fc_threshold, line_dash="dash", line_color="red", line_width=1.5, opacity=0.5)
     fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
     
     fig.update_layout(
-        title="MA Plot",
+        title="MA Plot with Theoretical Fold Changes",
         xaxis_title="Mean log2 Abundance",
         yaxis_title="log2 Fold Change",
         plot_bgcolor="#FFFFFF",
@@ -483,13 +557,9 @@ def create_combined_distplot_boxplot(
     return fig
 
 
-
 # ========== START OF PAGE ==========
 
 st.markdown("## Differential Expression Analysis")
-
-# [Rest of your page code continues below...]
-
 
 protein_model: MSData | None = st.session_state.get("protein_model")
 protein_idx = st.session_state.get("protein_index_col")
@@ -504,7 +574,6 @@ numeric_cols = protein_model.numeric_cols
 condition_groups = build_condition_groups(numeric_cols)
 
 # ========== USE FILTERED DATA ==========
-# Check for filtered data from previous page
 filtered_data = st.session_state.get("last_filtered_data")
 filter_params = st.session_state.get("last_filtered_params")
 
@@ -513,7 +582,6 @@ if filtered_data is not None and not filtered_data.empty:
     working_data = filtered_data.copy()
     st.info(f"✅ Using filtered dataset: {len(working_data):,} proteins")
 else:
-    # Fallback to full raw data
     use_filtered = False
     working_data = protein_model.raw_filled[numeric_cols].copy()
     st.warning("⚠️ Using full dataset (no filtered data from Filtering page). Go to Filtering and click 'Store for Analysis' first.")
@@ -555,7 +623,6 @@ st.markdown("---")
 with st.sidebar:
     st.markdown("## 🎛️ Analysis Settings")
     
-    # Condition selection
     st.markdown("### Condition Comparison")
     
     available_conditions = sorted(condition_groups.keys())
@@ -583,7 +650,6 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Transformation
     st.markdown("### Transformation")
     transform_key = st.selectbox(
         "Select transformation",
@@ -604,7 +670,6 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Statistical thresholds
     st.markdown("### Statistical Thresholds")
     
     fc_threshold = st.number_input(
@@ -637,7 +702,6 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Minimum valid values
     st.markdown("### Data Requirements")
     
     min_valid = st.number_input(
@@ -651,14 +715,11 @@ with st.sidebar:
 
 # ========== MAIN ANALYSIS ==========
 
-# Get transformed data for selected transformation
 transform_data_selected = get_transform_data(protein_model, transform_key)
 
-# Apply filter if using filtered data
 if use_filtered:
     transform_data_selected = transform_data_selected.loc[working_data.index]
 
-# Get columns for each group
 group1_cols = condition_groups[group1]
 group2_cols = condition_groups[group2]
 
@@ -713,7 +774,6 @@ if "de_results" in st.session_state:
     results_df = st.session_state.de_results.copy()
     params = st.session_state.de_params
     
-    # Classify results
     pval_col = "fdr" if use_fdr else "pvalue"
     results_df["regulation"] = results_df.apply(
         lambda row: classify_regulation(
@@ -744,7 +804,6 @@ if "de_results" in st.session_state:
     st.markdown("### 🎯 Theoretical Fold Changes (Optional)")
     st.caption("Enter species composition (%) for each condition. Percentages must sum to 100.")
     
-    # Store composition in session state
     if "de_composition" not in st.session_state:
         st.session_state.de_composition = {
             "A": {"HUMAN": 0, "YEAST": 0, "ECOLI": 0},
@@ -791,23 +850,20 @@ if "de_results" in st.session_state:
             st.caption("❌ Fix percentages before calculating")
     
     if calc_theo and a_sum == 100 and b_sum == 100:
-        # Store composition
         st.session_state.de_composition["A"] = {"HUMAN": a_human, "YEAST": a_yeast, "ECOLI": a_ecoli}
         st.session_state.de_composition["B"] = {"HUMAN": b_human, "YEAST": b_yeast, "ECOLI": b_ecoli}
         
-        # Calculate theoretical FC for each species
-        # log2FC = log2(B_abundance / A_abundance)
         theo_fc_species = {}
         for species, pct_a in [("HUMAN", a_human), ("YEAST", a_yeast), ("ECOLI", a_ecoli)]:
             pct_b = st.session_state.de_composition["B"][species]
             if pct_a > 0 and pct_b > 0:
                 log2fc = np.log2(pct_b / pct_a)
             elif pct_b > 0:
-                log2fc = 10.0  # Large increase from 0
+                log2fc = 10.0
             elif pct_a > 0:
-                log2fc = -10.0  # Large decrease to 0
+                log2fc = -10.0
             else:
-                log2fc = 0.0  # Both 0
+                log2fc = 0.0
             theo_fc_species[species] = log2fc
         
         st.session_state.de_theo_fc_species = theo_fc_species
@@ -832,12 +888,10 @@ if "de_results" in st.session_state:
         
         # Calculate error rates
         if st.button("📈 Calculate Error Rates from Composition", key="calc_error_rates"):
-            # Get protein-to-species mapping
             protein_model = st.session_state.get("protein_model")
             if protein_model and hasattr(protein_model, 'raw'):
                 species_col = protein_model.species_col
                 if species_col and species_col in protein_model.raw.columns:
-                    # Map each protein to theoretical FC based on species
                     true_fc_dict = {}
                     for protein_id, species in protein_model.raw[species_col].items():
                         true_fc_dict[protein_id] = st.session_state.de_theo_fc_species.get(species, 0.0)
@@ -862,55 +916,82 @@ if "de_results" in st.session_state:
         
         metrics = st.session_state.de_error_metrics
         
-        # Composition summary
-        st.markdown("#### Input Composition")
-        comp_summary = []
-        for condition in ["A", "B"]:
-            comp = st.session_state.de_composition[condition]
-            comp_summary.append({
-                "Condition": condition,
-                "Human %": comp["HUMAN"],
-                "Yeast %": comp["YEAST"],
-                "E.coli %": comp["ECOLI"]
-            })
-        st.dataframe(pd.DataFrame(comp_summary), use_container_width=True, hide_index=True)
+        protein_model = st.session_state.get("protein_model")
+        if protein_model and hasattr(protein_model, 'raw'):
+            species_col = protein_model.species_col
+            if species_col and species_col in protein_model.raw.columns:
+                species_col_data = protein_model.raw[species_col].to_dict()
+                
+                true_fc_dict = {}
+                for protein_id, species in species_col_data.items():
+                    true_fc_dict[protein_id] = st.session_state.de_theo_fc_species.get(species, 0.0)
+                
+                species_metrics_df = calculate_species_rmse(
+                    results_df.copy(),
+                    true_fc_dict,
+                    species_col_data,
+                    fc_threshold,
+                    pval_threshold
+                )
         
-        st.markdown("#### Theoretical FC by Species")
-        theo_summary = []
-        for species in ["HUMAN", "YEAST", "ECOLI"]:
-            fc = st.session_state.de_theo_fc_species.get(species, 0.0)
-            theo_summary.append({
-                "Species": species,
-                "log2FC": f"{fc:.3f}",
-                "Expected Direction": "Up" if fc > 0 else "Down" if fc < 0 else "No change"
-            })
-        st.dataframe(pd.DataFrame(theo_summary), use_container_width=True, hide_index=True)
+        # Compact layout: 3 columns
+        col_comp, col_theo, col_perf = st.columns(3)
         
-        # Confusion matrix
-        col_cm1, col_cm2 = st.columns(2)
+        with col_comp:
+            st.markdown("**Input Composition**")
+            comp_data = []
+            for condition in ["A", "B"]:
+                comp = st.session_state.de_composition[condition]
+                comp_data.append([
+                    condition,
+                    comp["HUMAN"],
+                    comp["YEAST"],
+                    comp["ECOLI"]
+                ])
+            comp_df = pd.DataFrame(comp_data, columns=["Cond", "H%", "Y%", "E%"])
+            st.dataframe(comp_df, use_container_width=True, hide_index=True)
+        
+        with col_theo:
+            st.markdown("**Theoretical FC by Species**")
+            theo_data = []
+            for species in ["HUMAN", "YEAST", "ECOLI"]:
+                fc = st.session_state.de_theo_fc_species.get(species, 0.0)
+                direction = "↑" if fc > 0.2 else "↓" if fc < -0.2 else "→"
+                theo_data.append([species, f"{fc:.2f}", direction])
+            theo_df = pd.DataFrame(theo_data, columns=["Species", "log2FC", "Dir"])
+            st.dataframe(theo_df, use_container_width=True, hide_index=True)
+        
+        with col_perf:
+            st.markdown("**Overall Performance**")
+            perf_data = [
+                ["Sensitivity", f"{metrics['sensitivity']:.1%}"],
+                ["Specificity", f"{metrics['specificity']:.1%}"],
+                ["Precision", f"{metrics['precision']:.1%}"],
+                ["FPR", f"{metrics['FPR']:.1%}"],
+            ]
+            perf_df = pd.DataFrame(perf_data, columns=["Metric", "Value"])
+            st.dataframe(perf_df, use_container_width=True, hide_index=True)
+        
+        st.markdown("---")
+        
+        # Confusion matrix and per-species metrics
+        col_cm1, col_cm2, col_cm3 = st.columns([1, 1.5, 2])
         
         with col_cm1:
-            st.markdown("#### Confusion Matrix")
-            cm_df = pd.DataFrame({
-                "Predicted Positive": [metrics["TP"], metrics["FP"]],
-                "Predicted Negative": [metrics["FN"], metrics["TN"]],
-            }, index=["Actual Positive", "Actual Negative"])
-            st.dataframe(cm_df, use_container_width=True)
+            st.markdown("**Confusion Matrix**")
+            cm_data = [
+                ["TP", metrics["TP"]],
+                ["FP", metrics["FP"]],
+                ["TN", metrics["TN"]],
+                ["FN", metrics["FN"]],
+            ]
+            cm_df = pd.DataFrame(cm_data, columns=["", "Count"])
+            st.dataframe(cm_df, use_container_width=True, hide_index=True)
         
         with col_cm2:
-            st.markdown("#### Performance Metrics")
-            perf_df = pd.DataFrame({
-                "Metric": ["Sensitivity", "Specificity", "Precision", "FPR", "FNR"],
-                "Value": [
-                    f"{metrics['sensitivity']:.1%}",
-                    f"{metrics['specificity']:.1%}",
-                    f"{metrics['precision']:.1%}",
-                    f"{metrics['FPR']:.1%}",
-                    f"{metrics['FNR']:.1%}",
-                ]
-            })
-            st.dataframe(perf_df, hide_index=True, use_container_width=True)
-
+            st.markdown("**Per-Species RMSE**")
+            st.dataframe(species_metrics_df, use_container_width=True, hide_index=True)
+    
     st.markdown("---")
     
     # Visualization tabs
@@ -928,10 +1009,11 @@ if "de_results" in st.session_state:
     
     with tab_ma:
         st.markdown("### MA Plot")
-        fig_ma = create_ma_plot(
+        fig_ma = create_ma_plot_with_theoretical(
             results_df.copy(),
             fc_threshold,
-            pval_threshold
+            pval_threshold,
+            st.session_state.get("de_theo_fc_species", {})
         )
         st.plotly_chart(fig_ma, use_container_width=True)
     
@@ -948,7 +1030,6 @@ if "de_results" in st.session_state:
     with tab_table:
         st.markdown("### Results Table")
         
-        # Filter options
         col_f1, col_f2 = st.columns(2)
         
         with col_f1:
@@ -967,7 +1048,6 @@ if "de_results" in st.session_state:
                 key="de_table_sort"
             )
         
-        # Apply filter
         if show_filter == "Significant only":
             display_df = results_df[results_df["regulation"].isin(["Up-regulated", "Down-regulated"])]
         elif show_filter == "Up-regulated":
@@ -977,7 +1057,6 @@ if "de_results" in st.session_state:
         else:
             display_df = results_df
         
-        # Sort
         if sort_by == "P-value":
             display_df = display_df.sort_values(pval_col)
         elif sort_by == "log2FC":
@@ -986,7 +1065,6 @@ if "de_results" in st.session_state:
             display_df["mean_abundance"] = (display_df["mean_group1"] + display_df["mean_group2"]) / 2
             display_df = display_df.sort_values("mean_abundance", ascending=False)
         
-        # Display table
         display_cols = [
             "log2fc",
             "pvalue",
