@@ -1,27 +1,69 @@
-# ========== USE FILTERED DATA ==========
-# Check for filtered data from previous page
-if "last_filtered_data" in st.session_state and st.session_state.last_filtered_data is not None:
-    transform_data = st.session_state.last_filtered_data.copy()
-    filter_params = st.session_state.last_filtered_params
-    st.info(f"✅ Using filtered dataset: {len(transform_data):,} proteins")
-else:
-    # Fallback to full raw data
-    transform_data = get_transform_data(protein_model, "log2")
-    filter_params = None
-    st.warning("⚠️ Using full dataset (no filtered data from Filtering page). Go to Filtering page and store data first.")
+import streamlit as st
+import pandas as pd
+import numpy as np
+from dataclasses import dataclass
+from typing import List, Dict, Tuple
+from scipy import stats
+from scipy.stats import ttest_ind
+import plotly.graph_objects as go
+import plotly.express as px
+import plotly.figure_factory as ff
+
+from components import inject_custom_css, render_header, render_navigation, render_footer, COLORS
+
+st.set_page_config(
+    page_title="Differential Expression | Thermo Fisher Scientific",
+    page_icon="🔬",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+inject_custom_css()
+render_header()
+
+
+# [All your dataclass and helper functions here - unchanged]
+# (TransformsCache, FilteredSubgroups, MSData, TRANSFORMS, helper functions, etc.)
+
+
+st.markdown("## Differential Expression Analysis")
+
+protein_model: MSData | None = st.session_state.get("protein_model")
+protein_idx = st.session_state.get("protein_index_col")
+
+if protein_model is None:
+    st.warning("No protein data cached. Please upload data on the Data Upload page first.")
+    render_navigation(back_page="pages/4_Filtering.py", next_page=None)
+    render_footer()
+    st.stop()
 
 numeric_cols = protein_model.numeric_cols
 condition_groups = build_condition_groups(numeric_cols)
 
+# ========== USE FILTERED DATA ==========
+# Check for filtered data from previous page
+filtered_data = st.session_state.get("last_filtered_data")
+filter_params = st.session_state.get("last_filtered_params")
+
+if filtered_data is not None and not filtered_data.empty:
+    use_filtered = True
+    working_data = filtered_data.copy()
+    st.info(f"✅ Using filtered dataset: {len(working_data):,} proteins")
+else:
+    # Fallback to full raw data
+    use_filtered = False
+    working_data = protein_model.raw_filled[numeric_cols].copy()
+    st.warning("⚠️ Using full dataset (no filtered data from Filtering page). Go to Filtering and click 'Store for Analysis' first.")
+
 # ========== TOP: Dataset Overview ==========
 st.markdown("### 📊 Dataset Overview")
 
-cv_data = compute_cv_per_condition(transform_data, numeric_cols)
+cv_data = compute_cv_per_condition(working_data, numeric_cols)
 
 col_o1, col_o2, col_o3, col_o4 = st.columns(4)
 
 with col_o1:
-    st.metric("Total Proteins", f"{len(transform_data):,}")
+    st.metric("Total Proteins", f"{len(working_data):,}")
 
 with col_o2:
     if not cv_data.empty:
@@ -41,7 +83,7 @@ with col_o3:
 with col_o4:
     st.metric("Conditions", len(condition_groups))
 
-if filter_params:
+if filter_params and use_filtered:
     st.caption(f"Filter info: {', '.join(filter_params.get('active_filters', []))}")
 
 st.markdown("---")
@@ -148,9 +190,10 @@ with st.sidebar:
 
 # Get transformed data for selected transformation
 transform_data_selected = get_transform_data(protein_model, transform_key)
-if "last_filtered_data" in st.session_state and st.session_state.last_filtered_data is not None:
-    # Apply same filter to transformed data
-    transform_data_selected = transform_data_selected.loc[st.session_state.last_filtered_data.index]
+
+# Apply filter if using filtered data
+if use_filtered:
+    transform_data_selected = transform_data_selected.loc[working_data.index]
 
 # Get columns for each group
 group1_cols = condition_groups[group1]
