@@ -37,6 +37,7 @@ class ProteinData:
     index_col: str = "Protein ID"
     file_path: str = ""
     file_format: str = "csv"
+    missing_rate: float =0.0
     
     @property
     def n_proteins(self) -> int:
