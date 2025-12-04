@@ -130,7 +130,9 @@ def perform_ttest_analysis(
         
         mean1 = g1_vals.mean()
         mean2 = g2_vals.mean()
-        log2fc = mean2 - mean1
+        
+        # Limma convention: log2(A) - log2(B) = log2(A/B)
+        log2fc = mean1 - mean2  # CHANGED: was mean2 - mean1
         
         try:
             t_stat, pval = ttest_ind(g1_vals, g2_vals, equal_var=False)
@@ -164,6 +166,7 @@ def perform_ttest_analysis(
         results_df["fdr"] = np.nan
     
     return results_df
+
 
 
 def classify_regulation(row: pd.Series, fc_threshold: float, pval_threshold: float) -> str:
@@ -646,9 +649,7 @@ with st.sidebar:
     )
     
     st.caption(f"**Comparison:** {group2} vs {group1}")
-    st.caption(f"**Interpretation:** Positive log2FC = higher in {group2}")
-    
-    st.markdown("---")
+    st.caption(f"**Interpretation:** Positive log2FC = higher in {group1} (reference)")  # CHANGED
     
     st.markdown("### Transformation")
     transform_key = st.selectbox(
