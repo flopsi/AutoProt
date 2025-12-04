@@ -122,7 +122,14 @@ def detect_species_column(df: pd.DataFrame) -> Optional[str]:
     
     return None
 
+def clean_species_name(name: str) -> str:
+    if pd.isna(name):
+        return name
+    return str(name).strip().strip('_').upper()
 
+# Then in detect_species_column(), after finding species column:
+df[species_col] = df[species_col].apply(clean_species_name)
+return species_col
 # ============================================================================
 # VALIDATION & FORMATTING
 # ============================================================================
