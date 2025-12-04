@@ -528,134 +528,130 @@ if st.session_state.filter_state["configured"]:
     
     st.markdown("---")
     
-    # ========== INTENSITY DISTRIBUTION HISTOGRAMS ==========
-    st.markdown("### 📊 Intensity Distribution by Sample")
-    
-    # Get transformed data
-    transform_data = get_transform_data(protein_model, transform_key)
-    
-    # Create histograms with range slider
-    n_cols = 3
-    n_rows = (len(numeric_cols) + n_cols - 1) // n_cols
-    
-    for row_idx in range(n_rows):
-        cols = st.columns(n_cols)
-        for col_idx in range(n_cols):
-            sample_idx = row_idx * n_cols + col_idx
+# ========== INTENSITY DISTRIBUTION HISTOGRAMS ==========
+st.markdown("### 📊 Intensity Distribution by Sample")
+
+# Get transformed data
+transform_data = get_transform_data(protein_model, transform_key)
+
+# Create histograms with range slider
+n_cols = 3
+n_rows = (len(numeric_cols) + n_cols - 1) // n_cols
+
+for row_idx in range(n_rows):
+    cols = st.columns(n_cols)
+    for col_idx in range(n_cols):
+        sample_idx = row_idx * n_cols + col_idx
+        
+        if sample_idx >= len(numeric_cols):
+            break
+        
+        sample = numeric_cols[sample_idx]
+        
+        with cols[col_idx]:
+            sample_data = (
+                transform_data[sample].dropna()
+                if sample in transform_data.columns
+                else pd.Series(dtype=float)
+            )
             
-            if sample_idx >= len(numeric_cols):
-                break
-            
-            sample = numeric_cols[sample_idx]
-            
-            with cols[col_idx]:
-                sample_data = (
-                    transform_data[sample].dropna()
-                    if sample in transform_data.columns
-                    else pd.Series(dtype=float)
+            if not sample_data.empty:
+                mean_val = sample_data.mean()
+                std_val = sample_data.std()
+                
+                # Calculate SD bounds for visual guide
+                lower_bound = mean_val - (sd_min * std_val)
+                upper_bound = mean_val + (sd_max * std_val)
+                
+                # Count in/out of range
+                in_range = ((sample_data >= lower_bound) & (sample_data <= upper_bound)).sum()
+                out_range = len(sample_data) - in_range
+                
+                # Create figure with range slider
+                fig = go.Figure()
+                
+                # Single histogram trace
+                fig.add_trace(go.Histogram(
+                    x=sample_data,
+                    nbinsx=50,
+                    marker_color="rgba(135, 206, 235, 0.7)",
+                    name="Intensity",
+                    showlegend=False,
+                ))
+                
+                # Add mean line
+                fig.add_vline(
+                    x=mean_val,
+                    line_dash="solid",
+                    line_color="red",
+                    line_width=2,
+                    annotation_text=f"μ={mean_val:.1f}",
+                    annotation_position="top",
                 )
                 
-                if not sample_data.empty:
-                    mean_val = sample_data.mean()
-                    std_val = sample_data.std()
-                    
-                    # Calculate SD bounds for visual guide
-                    lower_bound = mean_val - (sd_min * std_val)
-                    upper_bound = mean_val + (sd_max * std_val)
-                    
-                    # Count in/out of range
-                    in_range = ((sample_data >= lower_bound) & (sample_data <= upper_bound)).sum()
-                    out_range = len(sample_data) - in_range
-                    
-                    # Create figure with range slider
-                    fig = go.Figure()
-                    
-                    # Single histogram trace
-                    fig.add_trace(go.Histogram(
-                        x=sample_data,
-                        nbinsx=50,
-                        marker_color="rgba(135, 206, 235, 0.7)",
-                        name="Intensity",
-                        showlegend=False,
-                    ))
-                    
-                    # Add mean line
-                    fig.add_vline(
-                        x=mean_val,
-                        line_dash="solid",
-                        line_color="red",
-                        line_width=2,
-                        annotation_text=f"μ={mean_val:.1f}",
-                        annotation_position="top",
-                    )
-                    
-                    # Add ±1σ shaded area
+                # Add ±1σ shaded area
+                fig.add_vrect(
+                    x0=mean_val - std_val,
+                    x1=mean_val + std_val,
+                    fillcolor="red",
+                    opacity=0.1,
+                    layer="below",
+                    line_width=0,
+                )
+                
+                # Add SD range bounds as VISUAL GUIDE (orange dashed lines)
+                # These show the filter preview, not actual filter status
+                if apply_sd:
+                    # RED rectangle to show active filter
                     fig.add_vrect(
-                        x0=mean_val - std_val,
-                        x1=mean_val + std_val,
+                        x0=lower_bound,
+                        x1=upper_bound,
                         fillcolor="red",
-                        opacity=0.1,
+                        opacity=0.15,
                         layer="below",
-                        line_width=0,
+                        line_width=2,
+                        line_color="red",
+                        line_dash="dash",
                     )
-                    
-                    # Add SD range bounds as VISUAL GUIDE (orange dashed lines)
-                    # These show the filter preview, not actual filter status
-                    if apply_sd:
-                        # RED rectangle to show active filter
-                        fig.add_vrect(
-                            x0=lower_bound,
-                            x1=upper_bound,
-                            fillcolor="red",
-                            opacity=0.15,
-                            layer="below",
-                            line_width=2,
-                            line_color="red",
-                            line_dash="dash",
-                        )
-                    else:
-                        # ORANGE dashed lines for visual reference (inactive)
-                        fig.add_vline(
-                            x=lower_bound,
-                            line_dash="dash",
-                            line_color="orange",
-                            line_width=2,
-                        )
-                        fig.add_vline(
-                            x=upper_bound,
-                            line_dash="dash",
-                            line_color="orange",
-                            line_width=2,
-                        )
-                    
-                    fig.update_layout(
-                        title=f"{sample} (n={len(sample_data)})",
-                        xaxis_title=TRANSFORMS[transform_key],
-                        yaxis_title="Count",
-                        height=400,
-                        plot_bgcolor="#FFFFFF",
-                        paper_bgcolor="rgba(0,0,0,0)",
-                        font=dict(family="Arial", size=10, color="#54585A"),
-                        showlegend=False,
-                        margin=dict(l=40, r=40, t=60, b=80),
-                        xaxis=dict(
-                            rangeslider=dict(visible=True),
-                            type="linear"
-                        )
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True, key=f"hist_{sample}_{sample_idx}")
-                    
-                    # Show stats
-                    if apply_sd:
-                        st.caption(f"🔴 **Filter active** | ✅ Kept: {in_range} ({in_range/len(sample_data)*100:.1f}%) | ❌ Filtered: {out_range} ({out_range/len(sample_data)*100:.1f}%)")
-                    else:
-                        st.caption(f"📊 In range: {in_range} | Preview: {out_range} would be filtered")
-                    
-                    st.caption(f"μ={mean_val:.1f}, σ={std_val:.1f} | Range: [{lower_bound:.1f}, {upper_bound:.1f}]")
                 else:
-                    st.info("No data")
-    
+                    # ORANGE dashed lines for visual reference (inactive)
+                    fig.add_vline(
+                        x=lower_bound,
+                        line_dash="dash",
+                        line_color="orange",
+                        line_width=2,
+                    )
+                    fig.add_vline(
+                        x=upper_bound,
+                        line_dash="dash",
+                        line_color="orange",
+                        line_width=2,
+                    )
+                
+                fig.update_layout(
+                    title=f"{sample} (n={len(sample_data)})",
+                    xaxis_title=TRANSFORMS[transform_key],
+                    yaxis_title="Count",
+                    height=400,
+                    plot_bgcolor="#FFFFFF",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(family="Arial", size=10, color="#54585A"),
+                    showlegend=False,
+                    margin=dict(l=40, r=40, t=60, b=80),
+                )
+                
+                st.plotly_chart(fig, use_container_width=True, key=f"hist_{sample}_{sample_idx}")
+                
+                # Show stats
+                if apply_sd:
+                    st.caption(f"🔴 **Filter active** | ✅ Kept: {in_range} ({in_range/len(sample_data)*100:.1f}%) | ❌ Filtered: {out_range} ({out_range/len(sample_data)*100:.1f}%)")
+                else:
+                    st.caption(f"📊 In range: {in_range} | Preview: {out_range} would be filtered")
+                
+                st.caption(f"μ={mean_val:.1f}, σ={std_val:.1f} | Range: [{lower_bound:.1f}, {upper_bound:.1f}]")
+            else:
+                st.info("No data")
+
     st.markdown("---")
     
     # ========== STORE FILTERED DATASET ==========
