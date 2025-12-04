@@ -108,7 +108,7 @@ DEFAULT_PVAL_THRESHOLD = 0.05      # p-value cutoff
 DEFAULT_MIN_VALID = 2              # Min values per group for t-test
 
 # Species to track
-SPECIES_LIST = ["human", "yeast", "E.coli", "mouse"]
+SPECIES_LIST = ["HUMAN", "YEAST", "ECOLI", "MOUSE"]
 
 # Transform options
 TRANSFORMS = ["log2", "log10", "sqrt", "cbrt", "yeo_johnson", "quantile"]
