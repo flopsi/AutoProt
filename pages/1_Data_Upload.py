@@ -437,18 +437,97 @@ if species_mapping and species_col:
     
     chart_df = pd.DataFrame(chart_data)
     
-    # Altair stacked bar chart (Vega-Lite)
-    chart = alt.Chart(chart_df).mark_bar().encode(
-        x='Sample:N',
-        y='Count:Q',
-        color='Species:N'
-    ).properties(
-        width=600,
-        height=400,
-        title='Species Distribution Across Samples'
-    )
+# Species Breakdown by Sample (Stacked Bar Chart)
+if species_mapping and species_col:
+    st.subheader("Species Breakdown by Sample")
     
-    st.altair_chart(chart, use_container_width=True)
+    # Import theme from constants
+    from helpers.constants import get_theme
+    
+    # Get current theme
+    theme_name = st.session_state.get("theme", "light")
+    theme = get_theme(theme_name)
+    
+    # Prepare data: count proteins per sample per species
+    chart_data = []
+    for sample in numeric_cols:
+        species_in_sample = df[df[sample] > 1.0][species_col].value_counts()
+        for species, count in species_in_sample.items():
+            chart_data.append({
+                'Sample': sample,
+                'Species': species,
+                'Count': count
+            })
+    
+    if chart_data:
+        chart_df = pd.DataFrame(chart_data)
+        
+        # Create species color mapping from theme
+        species_color_map = {
+            'HUMAN': theme['color_human'],
+            'YEAST': theme['color_yeast'],
+            'ECOLI': theme['color_ecoli'],
+        }
+        
+        # Plotly stacked bar with theme colors
+        import plotly.express as px
+        
+        fig = px.bar(
+            chart_df,
+            x='Sample',
+            y='Count',
+            color='Species',
+            title='Proteins per Sample by Species',
+            labels={'Count': 'Number of Proteins'},
+            barmode='stack',
+            color_discrete_map=species_color_map,
+            height=400
+        )
+        
+        # Apply theme styling
+        fig.update_xaxes(
+            tickangle=-45,
+            showgrid=True,
+            gridcolor=theme['grid'],
+            gridwidth=1
+        )
+        
+        fig.update_yaxes(
+            showgrid=True,
+            gridcolor=theme['grid'],
+            gridwidth=1
+        )
+        
+        fig.update_layout(
+            plot_bgcolor=theme['bg_primary'],
+            paper_bgcolor=theme['paper_bg'],
+            font=dict(
+                family="Arial",
+                size=14,
+                color=theme['text_primary']
+            ),
+            title_font=dict(size=16),
+            showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            )
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Total species counts with metrics
+    st.subheader("Total Species Distribution")
+    species_totals = df[species_col].value_counts()
+    
+    cols = st.columns(len(species_totals))
+    for col, (species, count) in zip(cols, species_totals.items()):
+        with col:
+            st.metric(species, f"{count:,}")
+
 
 # ============================================================================
 # STEP 9: CREATE PROTEIN DATA OBJECT & STORE
