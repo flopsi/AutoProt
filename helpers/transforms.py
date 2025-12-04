@@ -47,12 +47,12 @@ def apply_transform(df: pd.DataFrame, numeric_cols: list, method: str = "log2") 
             df_transformed[col] = np.cbrt(df_transformed[col])
     
     elif method == "yeo_johnson":
-        pt = stats.PowerTransformer(method='yeo-johnson', standardize=False)
+        pt = sklearn.preprocessing.PowerTransformer(method='yeo-johnson', standardize=False)
         df_transformed[numeric_cols] = pt.fit_transform(df_transformed[numeric_cols])
     
     elif method == "quantile":
         from sklearn.preprocessing import QuantileTransformer
-        qt = QuantileTransformer(output_distribution='normal')
+        qt = sklearn.preprocessing.QuantileTransformer(output_distribution='normal')
         df_transformed[numeric_cols] = qt.fit_transform(df_transformed[numeric_cols])
     
     # Handle infinite values
