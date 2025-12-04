@@ -22,11 +22,473 @@ inject_custom_css()
 render_header()
 
 
-# [All your dataclass and helper functions here - unchanged]
-# (TransformsCache, FilteredSubgroups, MSData, TRANSFORMS, helper functions, etc.)
+# ========== DATA CLASSES & HELPERS ==========
 
+@dataclass
+class TransformsCache:
+    log2: pd.DataFrame
+    log10: pd.DataFrame
+    sqrt: pd.DataFrame
+    cbrt: pd.DataFrame
+    yeo_johnson: pd.DataFrame
+    quantile: pd.DataFrame
+    condition_wise_cvs: pd.DataFrame
+
+
+@dataclass
+class FilteredSubgroups:
+    human: pd.DataFrame
+    yeast: pd.DataFrame
+    ecoli: pd.DataFrame
+    mouse: pd.DataFrame
+    all_species: pd.DataFrame
+
+    def get(self, species_list: List[str]) -> pd.DataFrame:
+        if not species_list:
+            return self.all_species
+        if set(species_list) == {"HUMAN", "YEAST", "ECOLI", "MOUSE"}:
+            return self.all_species
+        dfs = []
+        for sp in species_list:
+            if sp == "HUMAN" and not self.human.empty:
+                dfs.append(self.human)
+            elif sp == "YEAST" and not self.yeast.empty:
+                dfs.append(self.yeast)
+            elif sp == "ECOLI" and not self.ecoli.empty:
+                dfs.append(self.ecoli)
+            elif sp == "MOUSE" and not self.mouse.empty:
+                dfs.append(self.mouse)
+        return pd.concat(dfs, axis=0) if dfs else pd.DataFrame()
+
+
+@dataclass
+class MSData:
+    raw: pd.DataFrame
+    raw_filled: pd.DataFrame
+    missing_count: int
+    numeric_cols: List[str]
+    transforms: TransformsCache
+    species_subgroups: FilteredSubgroups
+    species_col: str
+
+
+TF_CHART_COLORS = ["#262262", "#EA7600", "#B5BD00", "#A6192E"]
+
+
+def extract_conditions(cols: List[str]) -> Dict[str, str]:
+    return {col: (col[0] if col and col[0].isalpha() else "X") for col in cols}
+
+
+def build_condition_groups(numeric_cols: List[str]) -> Dict[str, List[str]]:
+    condition_map = extract_conditions(numeric_cols)
+    groups: Dict[str, List[str]] = {}
+    for col in numeric_cols:
+        groups.setdefault(condition_map[col], []).append(col)
+    return groups
+
+
+def get_transform_data(model: MSData, transform_key: str) -> pd.DataFrame:
+    return getattr(model.transforms, transform_key, model.transforms.log2)
+
+
+def compute_cv_per_condition(df: pd.DataFrame, numeric_cols: List[str]) -> pd.DataFrame:
+    condition_groups = build_condition_groups(numeric_cols)
+    cv_results = {}
+    for cond, cols in condition_groups.items():
+        if len(cols) < 2:
+            continue
+        mean_vals = df[cols].mean(axis=1)
+        std_vals = df[cols].std(axis=1)
+        cv = (std_vals / mean_vals * 100).replace([np.inf, -np.inf], np.nan)
+        cv_results[f"CV_{cond}"] = cv
+    return pd.DataFrame(cv_results, index=df.index)
+
+
+def perform_ttest_analysis(
+    df: pd.DataFrame,
+    group1_cols: List[str],
+    group2_cols: List[str],
+    min_valid: int = 2,
+) -> pd.DataFrame:
+    results = []
+    
+    for idx, row in df.iterrows():
+        g1_vals = row[group1_cols].dropna()
+        g2_vals = row[group2_cols].dropna()
+        
+        if len(g1_vals) < min_valid or len(g2_vals) < min_valid:
+            results.append({
+                "protein_id": idx,
+                "log2fc": np.nan,
+                "pvalue": np.nan,
+                "mean_group1": np.nan,
+                "mean_group2": np.nan,
+                "n_group1": len(g1_vals),
+                "n_group2": len(g2_vals),
+            })
+            continue
+        
+        mean1 = g1_vals.mean()
+        mean2 = g2_vals.mean()
+        log2fc = mean2 - mean1
+        
+        try:
+            t_stat, pval = ttest_ind(g1_vals, g2_vals, equal_var=False)
+        except Exception:
+            t_stat, pval = np.nan, np.nan
+        
+        results.append({
+            "protein_id": idx,
+            "log2fc": log2fc,
+            "pvalue": pval,
+            "mean_group1": mean1,
+            "mean_group2": mean2,
+            "n_group1": len(g1_vals),
+            "n_group2": len(g2_vals),
+        })
+    
+    results_df = pd.DataFrame(results)
+    results_df.set_index("protein_id", inplace=True)
+    
+    results_df["neg_log10_pval"] = -np.log10(results_df["pvalue"].replace(0, 1e-300))
+    
+    pvals = results_df["pvalue"].dropna().sort_values()
+    n = len(pvals)
+    if n > 0:
+        ranks = np.arange(1, n + 1)
+        fdr_vals = pvals.values * n / ranks
+        fdr_vals = np.minimum.accumulate(fdr_vals[::-1])[::-1]
+        fdr_dict = dict(zip(pvals.index, fdr_vals))
+        results_df["fdr"] = results_df.index.map(fdr_dict)
+    else:
+        results_df["fdr"] = np.nan
+    
+    return results_df
+
+
+def classify_regulation(row: pd.Series, fc_threshold: float, pval_threshold: float) -> str:
+    if pd.isna(row["log2fc"]) or pd.isna(row["pvalue"]):
+        return "Not tested"
+    
+    if row["pvalue"] > pval_threshold:
+        return "Not significant"
+    
+    if row["log2fc"] > fc_threshold:
+        return "Up-regulated"
+    elif row["log2fc"] < -fc_threshold:
+        return "Down-regulated"
+    else:
+        return "Not significant"
+
+
+def calculate_error_rates(
+    results_df: pd.DataFrame,
+    true_fc_dict: Dict[str, float],
+    fc_threshold: float,
+    pval_threshold: float,
+) -> Dict[str, float]:
+    results_df["true_log2fc"] = results_df.index.map(
+        lambda x: true_fc_dict.get(x, 0.0)
+    )
+    
+    results_df["true_regulated"] = results_df["true_log2fc"].apply(
+        lambda x: abs(x) > fc_threshold
+    )
+    
+    results_df["observed_regulated"] = results_df["regulation"].isin(
+        ["Up-regulated", "Down-regulated"]
+    )
+    
+    TP = ((results_df["true_regulated"]) & (results_df["observed_regulated"])).sum()
+    FP = ((~results_df["true_regulated"]) & (results_df["observed_regulated"])).sum()
+    TN = ((~results_df["true_regulated"]) & (~results_df["observed_regulated"])).sum()
+    FN = ((results_df["true_regulated"]) & (~results_df["observed_regulated"])).sum()
+    
+    sensitivity = TP / (TP + FN) if (TP + FN) > 0 else 0.0
+    specificity = TN / (TN + FP) if (TN + FP) > 0 else 0.0
+    fpr = FP / (FP + TN) if (FP + TN) > 0 else 0.0
+    fnr = FN / (FN + TP) if (FN + TP) > 0 else 0.0
+    precision = TP / (TP + FP) if (TP + FP) > 0 else 0.0
+    
+    return {
+        "TP": int(TP),
+        "FP": int(FP),
+        "TN": int(TN),
+        "FN": int(FN),
+        "sensitivity": sensitivity,
+        "specificity": specificity,
+        "FPR": fpr,
+        "FNR": fnr,
+        "precision": precision,
+    }
+
+
+def create_volcano_plot(
+    results_df: pd.DataFrame,
+    fc_threshold: float,
+    pval_threshold: float,
+    title: str = "Volcano Plot",
+) -> go.Figure:
+    results_df["regulation"] = results_df.apply(
+        lambda row: classify_regulation(row, fc_threshold, pval_threshold),
+        axis=1
+    )
+    
+    color_map = {
+        "Up-regulated": "#EA7600",
+        "Down-regulated": "#262262",
+        "Not significant": "#CCCCCC",
+        "Not tested": "#999999",
+    }
+    
+    fig = go.Figure()
+    
+    for reg_type in ["Not significant", "Not tested", "Down-regulated", "Up-regulated"]:
+        subset = results_df[results_df["regulation"] == reg_type]
+        if not subset.empty:
+            fig.add_trace(go.Scatter(
+                x=subset["log2fc"],
+                y=subset["neg_log10_pval"],
+                mode="markers",
+                name=reg_type,
+                marker=dict(
+                    color=color_map[reg_type],
+                    size=6,
+                    opacity=0.7 if reg_type in ["Up-regulated", "Down-regulated"] else 0.3,
+                ),
+                text=subset.index,
+                hovertemplate="<b>%{text}</b><br>" +
+                             "log2FC: %{x:.2f}<br>" +
+                             "-log10(p): %{y:.2f}<br>" +
+                             "<extra></extra>",
+            ))
+    
+    fig.add_hline(
+        y=-np.log10(pval_threshold),
+        line_dash="dash",
+        line_color="red",
+        annotation_text=f"p={pval_threshold}",
+    )
+    fig.add_vline(x=fc_threshold, line_dash="dash", line_color="red")
+    fig.add_vline(x=-fc_threshold, line_dash="dash", line_color="red")
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title="log2 Fold Change",
+        yaxis_title="-log10(p-value)",
+        plot_bgcolor="#FFFFFF",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Arial", color="#54585A"),
+        height=600,
+        hovermode="closest",
+        legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
+    )
+    
+    return fig
+
+
+def create_ma_plot(
+    results_df: pd.DataFrame,
+    fc_threshold: float,
+    pval_threshold: float,
+) -> go.Figure:
+    results_df["mean_abundance"] = (results_df["mean_group1"] + results_df["mean_group2"]) / 2
+    results_df["regulation"] = results_df.apply(
+        lambda row: classify_regulation(row, fc_threshold, pval_threshold),
+        axis=1
+    )
+    
+    color_map = {
+        "Up-regulated": "#EA7600",
+        "Down-regulated": "#262262",
+        "Not significant": "#CCCCCC",
+        "Not tested": "#999999",
+    }
+    
+    fig = go.Figure()
+    
+    for reg_type in ["Not significant", "Not tested", "Down-regulated", "Up-regulated"]:
+        subset = results_df[results_df["regulation"] == reg_type]
+        if not subset.empty:
+            fig.add_trace(go.Scatter(
+                x=subset["mean_abundance"],
+                y=subset["log2fc"],
+                mode="markers",
+                name=reg_type,
+                marker=dict(
+                    color=color_map[reg_type],
+                    size=6,
+                    opacity=0.7 if reg_type in ["Up-regulated", "Down-regulated"] else 0.3,
+                ),
+                text=subset.index,
+                hovertemplate="<b>%{text}</b><br>" +
+                             "Mean: %{x:.2f}<br>" +
+                             "log2FC: %{y:.2f}<br>" +
+                             "<extra></extra>",
+            ))
+    
+    fig.add_hline(y=fc_threshold, line_dash="dash", line_color="red")
+    fig.add_hline(y=-fc_threshold, line_dash="dash", line_color="red")
+    fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1)
+    
+    fig.update_layout(
+        title="MA Plot",
+        xaxis_title="Mean log2 Abundance",
+        yaxis_title="log2 Fold Change",
+        plot_bgcolor="#FFFFFF",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Arial", color="#54585A"),
+        height=600,
+        hovermode="closest",
+        legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
+    )
+    
+    return fig
+
+
+def create_combined_distplot_boxplot(
+    results_df: pd.DataFrame,
+    fc_threshold: float,
+    pval_threshold: float,
+) -> go.Figure:
+    from plotly.subplots import make_subplots
+    
+    results_df["regulation"] = results_df.apply(
+        lambda row: classify_regulation(row, fc_threshold, pval_threshold),
+        axis=1
+    )
+    
+    regulation_groups = [
+        ("Down-regulated", "Group 1", TF_CHART_COLORS[0]),
+        ("Not significant", "Group 2", TF_CHART_COLORS[1]),
+        ("Up-regulated", "Group 3", TF_CHART_COLORS[2]),
+        ("Not tested", "Group 4", TF_CHART_COLORS[3]),
+    ]
+    
+    hist_data = []
+    group_labels = []
+    colors = []
+    
+    for reg_type, label, color in regulation_groups:
+        data = results_df[results_df["regulation"] == reg_type]["log2fc"].dropna()
+        if len(data) > 0:
+            hist_data.append(data.values)
+            group_labels.append(label)
+            colors.append(color)
+    
+    if not hist_data:
+        fig = go.Figure()
+        fig.add_annotation(text="No data available", showarrow=False)
+        return fig
+    
+    fig = make_subplots(
+        rows=2, cols=2,
+        row_heights=[0.1, 0.9],
+        column_widths=[0.7, 0.3],
+        specs=[
+            [{"type": "scatter"}, {"type": "box"}],
+            [{"type": "histogram"}, {"type": "box"}]
+        ],
+        horizontal_spacing=0.05,
+        vertical_spacing=0.02,
+    )
+    
+    for i, (data, label, color) in enumerate(zip(hist_data, group_labels, colors)):
+        fig.add_trace(
+            go.Histogram(
+                x=data,
+                name=label,
+                marker_color=color,
+                opacity=0.6,
+                nbinsx=30,
+                legendgroup=label,
+                showlegend=True,
+            ),
+            row=2, col=1
+        )
+        
+        hist, bin_edges = np.histogram(data, bins=50, density=True)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        
+        from scipy.ndimage import gaussian_filter1d
+        smoothed = gaussian_filter1d(hist, sigma=2)
+        
+        fig.add_trace(
+            go.Scatter(
+                x=bin_centers,
+                y=smoothed,
+                name=label,
+                line=dict(color=color, width=2),
+                legendgroup=label,
+                showlegend=False,
+            ),
+            row=2, col=1
+        )
+        
+        fig.add_trace(
+            go.Scatter(
+                x=data,
+                y=[i] * len(data),
+                mode="markers",
+                marker=dict(
+                    color=color,
+                    symbol="line-ns-open",
+                    size=10,
+                    line=dict(width=1),
+                ),
+                name=label,
+                legendgroup=label,
+                showlegend=False,
+            ),
+            row=1, col=1
+        )
+        
+        fig.add_trace(
+            go.Box(
+                y=data,
+                name=label,
+                marker_color=color,
+                legendgroup=label,
+                showlegend=False,
+                boxmean='sd'
+            ),
+            row=2, col=2
+        )
+    
+    fig.add_vline(x=fc_threshold, line_dash="dash", line_color="red", line_width=2, row=2, col=1)
+    fig.add_vline(x=-fc_threshold, line_dash="dash", line_color="red", line_width=2, row=2, col=1)
+    fig.add_vline(x=0, line_dash="solid", line_color="black", line_width=1, row=2, col=1)
+    
+    fig.add_hline(y=fc_threshold, line_dash="dash", line_color="red", line_width=2, row=2, col=2)
+    fig.add_hline(y=-fc_threshold, line_dash="dash", line_color="red", line_width=2, row=2, col=2)
+    fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1, row=2, col=2)
+    
+    fig.update_xaxes(title_text="log2 Fold Change", row=2, col=1)
+    fig.update_yaxes(title_text="Density", row=2, col=1)
+    fig.update_yaxes(title_text="log2 Fold Change", row=2, col=2)
+    fig.update_xaxes(showticklabels=False, row=1, col=1)
+    fig.update_yaxes(showticklabels=False, row=1, col=1)
+    
+    fig.update_layout(
+        title="Distribution of log2 Fold Changes",
+        height=700,
+        plot_bgcolor="#FFFFFF",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Arial", color="#54585A"),
+        showlegend=True,
+        legend=dict(x=1.05, y=1),
+        barmode='overlay'
+    )
+    
+    return fig
+
+
+# ========== START OF PAGE ==========
 
 st.markdown("## Differential Expression Analysis")
+
+# [Rest of your page code continues below...]
+
 
 protein_model: MSData | None = st.session_state.get("protein_model")
 protein_idx = st.session_state.get("protein_index_col")
