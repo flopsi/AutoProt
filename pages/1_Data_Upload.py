@@ -427,8 +427,12 @@ if species_mapping:
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.bar_chart(species_counts)
-    
+        st.bar_chart(
+            species_counts,
+            x = "Sample".
+            y = species_counts["HUMAN","YEAST","ECOLI"],
+            color = color_species
+        )
     with col2:
         for species, count in species_counts.items():
             st.metric(species, f"{count:,}")
