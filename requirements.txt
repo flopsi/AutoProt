@@ -5,26 +5,26 @@ Minimal dependencies approach
 """
 
 # Core Data & Computation
-pandas==2.0.3
-numpy==1.24.3
-scipy==1.11.1
+pandas>=2.0.3
+numpy>=1.24.3
+scipy>=1.11.1
 
 # Visualization (plotly only - drop matplotlib)
-plotly==5.16.1
+plotly>=5.16.1
 
 # Streamlit framework
-streamlit==1.28.1
+streamlit>=1.28.1
 
 # For ML transforms
-scikit-learn==1.3.0
+scikit-learn>=1.3.0
 
 # Excel support
-openpyxl==3.1.2
+openpyxl>=3.1.2
 
 # Optional: for advanced file formats (Phase 2)
-# pyarrow==13.0.0  # For Parquet support
-# xlrd==2.0.1      # For older Excel formats
+# pyarrow>=13.0.0  # For Parquet support
+# xlrd>=2.0.1      # For older Excel formats
 
 # Development/Testing
-pytest==7.4.0
-pytest-cov==4.1.0
+pytest>=7.4.0
+pytest-cov>=4.1.0
