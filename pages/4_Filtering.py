@@ -130,7 +130,6 @@ def apply_filters(
     
     filtered = df.copy()
 
-    # Filter 1: Species (if enabled)
     if apply_species and selected_species:
         filtered = model.species_subgroups.get(selected_species)
     elif apply_species:
@@ -139,14 +138,12 @@ def apply_filters(
     if filtered.empty:
         return filtered
 
-    # Filter 2: Min peptides (if enabled)
     if apply_min_pep and "Peptide_Count" in filtered.columns and min_peptides > 1:
         filtered = filtered[filtered["Peptide_Count"] >= min_peptides]
 
     if filtered.empty:
         return filtered
 
-    # Filter 3: CV cutoff (if enabled)
     if apply_cv and cv_cutoff < 1000:
         cv_data = compute_cv_per_condition(filtered[numeric_cols], numeric_cols)
         if not cv_data.empty:
@@ -156,7 +153,6 @@ def apply_filters(
     if filtered.empty:
         return filtered
 
-    # Filter 4: Max missing per condition (if enabled)
     if apply_missing and max_missing_ratio < 1.0:
         condition_groups = build_condition_groups(numeric_cols)
         max_missing_allowed = {
@@ -180,7 +176,6 @@ def apply_filters(
     if filtered.empty:
         return filtered
 
-    # Filter 5: SD filter (if enabled)
     if apply_sd and sd_range is not None:
         transform_data = get_transform_data(model, transform_key).loc[filtered.index, numeric_cols]
         
@@ -261,176 +256,120 @@ if protein_model is None:
 numeric_cols = protein_model.numeric_cols
 df_raw = protein_model.raw_filled[numeric_cols].copy()
 
-# ========== SIDEBAR: ALL FILTER CONTROLS ==========
+# ========== SIDEBAR: ALL FILTER CONTROLS (ALWAYS VISIBLE, INACTIVE) ==========
 with st.sidebar:
     st.markdown("## 🎛️ Filter Configuration")
+    st.caption("Adjust filters below. Red squares on plots show active filters as visual guides.")
+    
+    st.markdown("---")
     
     # ========== FILTER 1: SPECIES ==========
-    st.markdown("### 1️⃣ Species Selection")
+    st.markdown("### 1️⃣ Species")
     
-    show_species = st.radio(
-        "Species",
-        options=["Hide", "Show"],
-        key="radio_species",
-        label_visibility="collapsed",
+    col_sp1, col_sp2, col_sp3, col_sp4 = st.columns(4)
+    with col_sp1:
+        species_human = st.checkbox("Human", value=True, key="filter_species_human")
+    with col_sp2:
+        species_ecoli = st.checkbox("E.coli", value=True, key="filter_species_ecoli")
+    with col_sp3:
+        species_yeast = st.checkbox("Yeast", value=True, key="filter_species_yeast")
+    with col_sp4:
+        species_mouse = st.checkbox("Mouse", value=False, key="filter_species_mouse")
+    
+    apply_species = st.checkbox(
+        "Apply filter",
+        value=False,
+        key="checkbox_apply_species"
     )
-    
-    if show_species == "Show":
-        col_sp1, col_sp2, col_sp3, col_sp4 = st.columns(4)
-        with col_sp1:
-            species_human = st.checkbox("Human", value=True, key="filter_species_human")
-        with col_sp2:
-            species_ecoli = st.checkbox("E.coli", value=True, key="filter_species_ecoli")
-        with col_sp3:
-            species_yeast = st.checkbox("Yeast", value=True, key="filter_species_yeast")
-        with col_sp4:
-            species_mouse = st.checkbox("Mouse", value=False, key="filter_species_mouse")
-        
-        apply_species = st.checkbox(
-            "Apply species filter",
-            value=False,
-            key="checkbox_apply_species"
-        )
-    else:
-        species_human = True
-        species_ecoli = True
-        species_yeast = True
-        species_mouse = False
-        apply_species = False
     
     st.markdown("---")
     
     # ========== FILTER 2: MIN PEPTIDES ==========
     st.markdown("### 2️⃣ Min Peptides")
     
-    show_min_pep = st.radio(
-        "Min Peptides",
-        options=["Hide", "Show"],
-        key="radio_min_pep",
-        label_visibility="collapsed",
+    min_peptides = st.number_input(
+        "Min peptides",
+        min_value=1,
+        max_value=10,
+        value=1,
+        step=1,
+        key="filter_min_peptides",
     )
     
-    if show_min_pep == "Show":
-        min_peptides = st.number_input(
-            "Min peptides",
-            min_value=1,
-            max_value=10,
-            value=1,
-            step=1,
-            key="filter_min_peptides",
-        )
-        
-        apply_min_pep = st.checkbox(
-            "Apply min peptides filter",
-            value=False,
-            key="checkbox_apply_min_pep"
-        )
-    else:
-        min_peptides = 1
-        apply_min_pep = False
+    apply_min_pep = st.checkbox(
+        "Apply filter",
+        value=False,
+        key="checkbox_apply_min_pep"
+    )
     
     st.markdown("---")
     
     # ========== FILTER 3: CV CUTOFF ==========
     st.markdown("### 3️⃣ CV% Cutoff")
     
-    show_cv = st.radio(
-        "CV Cutoff",
-        options=["Hide", "Show"],
-        key="radio_cv",
-        label_visibility="collapsed",
+    cv_cutoff = st.number_input(
+        "Max CV%",
+        min_value=0,
+        max_value=100,
+        value=30,
+        step=5,
+        key="filter_cv",
     )
     
-    if show_cv == "Show":
-        cv_cutoff = st.number_input(
-            "Max CV%",
-            min_value=0,
-            max_value=100,
-            value=30,
-            step=5,
-            key="filter_cv",
-        )
-        
-        apply_cv = st.checkbox(
-            "Apply CV filter",
-            value=False,
-            key="checkbox_apply_cv"
-        )
-    else:
-        cv_cutoff = 1000.0
-        apply_cv = False
+    apply_cv = st.checkbox(
+        "Apply filter",
+        value=False,
+        key="checkbox_apply_cv"
+    )
     
     st.markdown("---")
     
     # ========== FILTER 4: MISSING DATA ==========
     st.markdown("### 4️⃣ Max Missing %")
     
-    show_missing = st.radio(
-        "Missing Data",
-        options=["Hide", "Show"],
-        key="radio_missing",
-        label_visibility="collapsed",
+    max_missing_pct = st.number_input(
+        "Max missing %",
+        min_value=0,
+        max_value=100,
+        value=34,
+        step=5,
+        key="filter_missing",
     )
     
-    if show_missing == "Show":
-        max_missing_pct = st.number_input(
-            "Max missing %",
-            min_value=0,
-            max_value=100,
-            value=34,
-            step=5,
-            key="filter_missing",
-        )
-        
-        apply_missing = st.checkbox(
-            "Apply missing filter",
-            value=False,
-            key="checkbox_apply_missing"
-        )
-    else:
-        max_missing_pct = 100.0
-        apply_missing = False
+    apply_missing = st.checkbox(
+        "Apply filter",
+        value=False,
+        key="checkbox_apply_missing"
+    )
     
     st.markdown("---")
     
     # ========== FILTER 5: SD RANGE ==========
-    st.markdown("### 5️⃣ SD Range Filter")
+    st.markdown("### 5️⃣ SD Range")
     
-    show_sd = st.radio(
-        "SD Range",
-        options=["Hide", "Show"],
-        key="radio_sd",
-        label_visibility="collapsed",
+    sd_min = st.number_input(
+        "Min SD (σ below)",
+        min_value=0.0,
+        max_value=10.0,
+        value=2.0,
+        step=0.5,
+        key="sd_min_input",
     )
     
-    if show_sd == "Show":
-        sd_min = st.number_input(
-            "Min SD (σ below)",
-            min_value=0.0,
-            max_value=10.0,
-            value=2.0,
-            step=0.5,
-            key="sd_min_input",
-        )
-        
-        sd_max = st.number_input(
-            "Max SD (σ above)",
-            min_value=0.0,
-            max_value=10.0,
-            value=2.0,
-            step=0.5,
-            key="sd_max_input",
-        )
-        
-        apply_sd = st.checkbox(
-            "Apply SD filter",
-            value=False,
-            key="checkbox_apply_sd"
-        )
-    else:
-        sd_min = 2.0
-        sd_max = 2.0
-        apply_sd = False
+    sd_max = st.number_input(
+        "Max SD (σ above)",
+        min_value=0.0,
+        max_value=10.0,
+        value=2.0,
+        step=0.5,
+        key="sd_max_input",
+    )
+    
+    apply_sd = st.checkbox(
+        "Apply filter",
+        value=False,
+        key="checkbox_apply_sd"
+    )
     
     st.markdown("---")
     
@@ -517,6 +456,11 @@ with st.sidebar:
                 "sd_range": sd_range,
                 "transform_key": transform_key,
                 "active_filters": active_filters,
+                "apply_species": apply_species,
+                "apply_min_pep": apply_min_pep,
+                "apply_cv": apply_cv,
+                "apply_missing": apply_missing,
+                "apply_sd": apply_sd,
             },
             "initial_stats": initial_stats,
             "filtered_data": filtered_df,
@@ -584,46 +528,11 @@ if st.session_state.filter_state["configured"]:
     
     st.markdown("---")
     
-    # ========== INTENSITY DISTRIBUTION WITH RANGE INPUTS ==========
-    st.markdown("### Intensity Distribution by Sample")
+    # ========== INTENSITY DISTRIBUTION HISTOGRAMS ==========
+    st.markdown("### 📊 Intensity Distribution by Sample")
     
     # Get transformed data
     transform_data = get_transform_data(protein_model, transform_key)
-    
-    # SD range inputs - ALWAYS VISIBLE
-    st.markdown("#### Standard Deviation Range")
-    
-    col_sd1, col_sd2, col_sd3 = st.columns([1, 1, 2])
-    
-    with col_sd1:
-        sd_min_display = st.number_input(
-            "Min SD (σ below mean)",
-            min_value=0.0,
-            max_value=10.0,
-            value=2.0,
-            step=0.5,
-            key="sd_min_display",
-        )
-    
-    with col_sd2:
-        sd_max_display = st.number_input(
-            "Max SD (σ above mean)",
-            min_value=0.0,
-            max_value=10.0,
-            value=2.0,
-            step=0.5,
-            key="sd_max_display",
-        )
-    
-    with col_sd3:
-        st.markdown("")
-        st.markdown("")
-        if apply_sd:
-            st.success(f"✅ Filter active: μ - {sd_min_display}σ to μ + {sd_max_display}σ")
-        else:
-            st.info(f"📊 Reference only: μ - {sd_min_display}σ to μ + {sd_max_display}σ")
-    
-    sd_range_display = (sd_min_display, sd_max_display)
     
     # Create histograms with range slider
     n_cols = 3
@@ -650,9 +559,9 @@ if st.session_state.filter_state["configured"]:
                     mean_val = sample_data.mean()
                     std_val = sample_data.std()
                     
-                    # Calculate SD bounds
-                    lower_bound = mean_val - (sd_range_display[0] * std_val)
-                    upper_bound = mean_val + (sd_range_display[1] * std_val)
+                    # Calculate SD bounds for visual guide
+                    lower_bound = mean_val - (sd_min * std_val)
+                    upper_bound = mean_val + (sd_max * std_val)
                     
                     # Count in/out of range
                     in_range = ((sample_data >= lower_bound) & (sample_data <= upper_bound)).sum()
@@ -661,25 +570,13 @@ if st.session_state.filter_state["configured"]:
                     # Create figure with range slider
                     fig = go.Figure()
                     
-                    # Histogram with color coding
-                    in_range_data = sample_data[(sample_data >= lower_bound) & (sample_data <= upper_bound)]
-                    out_range_data = sample_data[(sample_data < lower_bound) | (sample_data > upper_bound)]
-                    
-                    if not out_range_data.empty:
-                        fig.add_trace(go.Histogram(
-                            x=out_range_data,
-                            name="Outside SD range",
-                            nbinsx=50,
-                            marker_color="rgba(255, 107, 107, 0.7)",
-                            showlegend=True,
-                        ))
-                    
+                    # Single histogram trace
                     fig.add_trace(go.Histogram(
-                        x=in_range_data,
-                        name="Within SD range",
+                        x=sample_data,
                         nbinsx=50,
                         marker_color="rgba(135, 206, 235, 0.7)",
-                        showlegend=True,
+                        name="Intensity",
+                        showlegend=False,
                     ))
                     
                     # Add mean line
@@ -702,19 +599,34 @@ if st.session_state.filter_state["configured"]:
                         line_width=0,
                     )
                     
-                    # Add SD range bounds (orange dashed lines)
-                    fig.add_vline(
-                        x=lower_bound,
-                        line_dash="dash",
-                        line_color="orange",
-                        line_width=2,
-                    )
-                    fig.add_vline(
-                        x=upper_bound,
-                        line_dash="dash",
-                        line_color="orange",
-                        line_width=2,
-                    )
+                    # Add SD range bounds as VISUAL GUIDE (orange dashed lines)
+                    # These show the filter preview, not actual filter status
+                    if apply_sd:
+                        # RED rectangle to show active filter
+                        fig.add_vrect(
+                            x0=lower_bound,
+                            x1=upper_bound,
+                            fillcolor="red",
+                            opacity=0.15,
+                            layer="below",
+                            line_width=2,
+                            line_color="red",
+                            line_dash="dash",
+                        )
+                    else:
+                        # ORANGE dashed lines for visual reference (inactive)
+                        fig.add_vline(
+                            x=lower_bound,
+                            line_dash="dash",
+                            line_color="orange",
+                            line_width=2,
+                        )
+                        fig.add_vline(
+                            x=upper_bound,
+                            line_dash="dash",
+                            line_color="orange",
+                            line_width=2,
+                        )
                     
                     fig.update_layout(
                         title=f"{sample} (n={len(sample_data)})",
@@ -724,8 +636,7 @@ if st.session_state.filter_state["configured"]:
                         plot_bgcolor="#FFFFFF",
                         paper_bgcolor="rgba(0,0,0,0)",
                         font=dict(family="Arial", size=10, color="#54585A"),
-                        showlegend=True,
-                        legend=dict(x=0.7, y=0.95),
+                        showlegend=False,
                         margin=dict(l=40, r=40, t=60, b=80),
                         xaxis=dict(
                             rangeslider=dict(visible=True),
@@ -735,19 +646,19 @@ if st.session_state.filter_state["configured"]:
                     
                     st.plotly_chart(fig, use_container_width=True, key=f"hist_{sample}_{sample_idx}")
                     
-                    # Show filter stats
+                    # Show stats
                     if apply_sd:
-                        st.caption(f"✅ **Kept:** {in_range} ({in_range/len(sample_data)*100:.1f}%) | ❌ **Filtered:** {out_range} ({out_range/len(sample_data)*100:.1f}%)")
+                        st.caption(f"🔴 **Filter active** | ✅ Kept: {in_range} ({in_range/len(sample_data)*100:.1f}%) | ❌ Filtered: {out_range} ({out_range/len(sample_data)*100:.1f}%)")
                     else:
-                        st.caption(f"📊 **In range:** {in_range} | 🔍 **Would filter:** {out_range}")
+                        st.caption(f"📊 In range: {in_range} | Preview: {out_range} would be filtered")
                     
                     st.caption(f"μ={mean_val:.1f}, σ={std_val:.1f} | Range: [{lower_bound:.1f}, {upper_bound:.1f}]")
                 else:
-                    st.info("No data after filtering")
+                    st.info("No data")
     
     st.markdown("---")
     
-    # ========== STORE FILTERED DATASET (Non-expensive, can be called multiple times) ==========
+    # ========== STORE FILTERED DATASET ==========
     col_store1, col_store2 = st.columns([1, 3])
     
     with col_store1:
