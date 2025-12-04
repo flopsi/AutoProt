@@ -529,7 +529,6 @@ protein_data = ProteinData(
     index_col=protein_id_col,
     file_path=uploaded_file.name,
     file_format=file_format,
-    missing_rate=missing_rate,
 )
 
 # Store in session state
