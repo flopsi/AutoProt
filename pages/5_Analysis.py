@@ -423,138 +423,211 @@ def create_ma_plot_with_theoretical(
     return fig
 
 
-def create_combined_distplot_boxplot(
+# Color constants
+COLOR_HUMAN = "#199d76"
+COLOR_YEAST = "#d85f02"
+COLOR_ECOLI = "#7570b2"
+SPECIES_COLORS = {
+    "HUMAN": COLOR_HUMAN,
+    "YEAST": COLOR_YEAST,
+    "ECOLI": COLOR_ECOLI,
+}
+
+
+def create_species_distribution_plot(
     results_df: pd.DataFrame,
+    species_col_data: Dict,
     fc_threshold: float,
     pval_threshold: float,
 ) -> go.Figure:
+    """Create species-colored distribution with histogram, KDE, and boxplot."""
     from plotly.subplots import make_subplots
+    from scipy.ndimage import gaussian_filter1d
     
     results_df["regulation"] = results_df.apply(
         lambda row: classify_regulation(row, fc_threshold, pval_threshold),
         axis=1
     )
     
-    regulation_groups = [
-        ("Down-regulated", "Group 1", TF_CHART_COLORS[0]),
-        ("Not significant", "Group 2", TF_CHART_COLORS[1]),
-        ("Up-regulated", "Group 3", TF_CHART_COLORS[2]),
-        ("Not tested", "Group 4", TF_CHART_COLORS[3]),
-    ]
+    # Group by species
+    species_data = {}
+    for species in ["HUMAN", "YEAST", "ECOLI"]:
+        species_proteins = [pid for pid, sp in species_col_data.items() if sp == species]
+        if species_proteins:
+            data = results_df.loc[results_df.index.intersection(species_proteins), "log2fc"].dropna()
+            if len(data) > 0:
+                species_data[species] = data.values
     
-    hist_data = []
-    group_labels = []
-    colors = []
-    
-    for reg_type, label, color in regulation_groups:
-        data = results_df[results_df["regulation"] == reg_type]["log2fc"].dropna()
-        if len(data) > 0:
-            hist_data.append(data.values)
-            group_labels.append(label)
-            colors.append(color)
-    
-    if not hist_data:
+    if not species_data:
         fig = go.Figure()
-        fig.add_annotation(text="No data available", showarrow=False)
+        fig.add_annotation(text="No species data available", showarrow=False)
         return fig
     
+    # Create subplots: left (histogram+KDE+rug), right (boxplots+violin)
     fig = make_subplots(
-        rows=2, cols=2,
-        row_heights=[0.1, 0.9],
-        column_widths=[0.7, 0.3],
-        specs=[
-            [{"type": "scatter"}, {"type": "box"}],
-            [{"type": "histogram"}, {"type": "box"}]
-        ],
-        horizontal_spacing=0.05,
-        vertical_spacing=0.02,
+        rows=1, cols=2,
+        column_widths=[0.65, 0.35],
+        specs=[[{"type": "histogram"}, {"type": "box"}]],
+        horizontal_spacing=0.12,
     )
     
-    for i, (data, label, color) in enumerate(zip(hist_data, group_labels, colors)):
+    species_order = ["HUMAN", "YEAST", "ECOLI"]
+    
+    for i, species in enumerate(species_order):
+        if species not in species_data:
+            continue
+        
+        data = species_data[species]
+        color = SPECIES_COLORS[species]
+        
+        # Histogram (left)
         fig.add_trace(
             go.Histogram(
                 x=data,
-                name=label,
+                name=species,
                 marker_color=color,
                 opacity=0.6,
-                nbinsx=30,
-                legendgroup=label,
+                nbinsx=40,
+                legendgroup=species,
                 showlegend=True,
             ),
-            row=2, col=1
+            row=1, col=1
         )
         
-        hist, bin_edges = np.histogram(data, bins=50, density=True)
+        # KDE curve (left)
+        hist, bin_edges = np.histogram(data, bins=60, density=True)
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-        
-        from scipy.ndimage import gaussian_filter1d
         smoothed = gaussian_filter1d(hist, sigma=2)
         
         fig.add_trace(
             go.Scatter(
                 x=bin_centers,
                 y=smoothed,
-                name=label,
-                line=dict(color=color, width=2),
-                legendgroup=label,
-                showlegend=False,
-            ),
-            row=2, col=1
-        )
-        
-        fig.add_trace(
-            go.Scatter(
-                x=data,
-                y=[i] * len(data),
-                mode="markers",
-                marker=dict(
-                    color=color,
-                    symbol="line-ns-open",
-                    size=10,
-                    line=dict(width=1),
-                ),
-                name=label,
-                legendgroup=label,
+                name=f"{species} (KDE)",
+                line=dict(color=color, width=3),
+                legendgroup=species,
                 showlegend=False,
             ),
             row=1, col=1
         )
         
+        # Rug plot (left) - thin vertical marks at bottom
+        fig.add_trace(
+            go.Scatter(
+                x=data,
+                y=[0] * len(data),
+                mode="markers",
+                marker=dict(
+                    color=color,
+                    symbol="line-ns-open",
+                    size=12,
+                    line=dict(width=1.5),
+                ),
+                name=f"{species} (rug)",
+                legendgroup=species,
+                showlegend=False,
+                hoverinfo="skip",
+            ),
+            row=1, col=1
+        )
+        
+        # Boxplot (right)
         fig.add_trace(
             go.Box(
                 y=data,
-                name=label,
+                name=species,
                 marker_color=color,
-                legendgroup=label,
+                legendgroup=species,
                 showlegend=False,
-                boxmean='sd'
+                boxmean="sd",
+                opacity=0.7,
             ),
-            row=2, col=2
+            row=1, col=2
         )
     
-    fig.add_vline(x=fc_threshold, line_dash="dash", line_color="red", line_width=2, row=2, col=1)
-    fig.add_vline(x=-fc_threshold, line_dash="dash", line_color="red", line_width=2, row=2, col=1)
-    fig.add_vline(x=0, line_dash="solid", line_color="black", line_width=1, row=2, col=1)
+    # Add threshold lines
+    fig.add_vline(x=fc_threshold, line_dash="dash", line_color="red", line_width=2, opacity=0.7, row=1, col=1)
+    fig.add_vline(x=-fc_threshold, line_dash="dash", line_color="red", line_width=2, opacity=0.7, row=1, col=1)
+    fig.add_vline(x=0, line_dash="solid", line_color="black", line_width=1, row=1, col=1)
     
-    fig.add_hline(y=fc_threshold, line_dash="dash", line_color="red", line_width=2, row=2, col=2)
-    fig.add_hline(y=-fc_threshold, line_dash="dash", line_color="red", line_width=2, row=2, col=2)
-    fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1, row=2, col=2)
+    fig.add_hline(y=fc_threshold, line_dash="dash", line_color="red", line_width=2, opacity=0.7, row=1, col=2)
+    fig.add_hline(y=-fc_threshold, line_dash="dash", line_color="red", line_width=2, opacity=0.7, row=1, col=2)
+    fig.add_hline(y=0, line_dash="solid", line_color="black", line_width=1, row=1, col=2)
     
-    fig.update_xaxes(title_text="log2 Fold Change", row=2, col=1)
-    fig.update_yaxes(title_text="Density", row=2, col=1)
-    fig.update_yaxes(title_text="log2 Fold Change", row=2, col=2)
-    fig.update_xaxes(showticklabels=False, row=1, col=1)
-    fig.update_yaxes(showticklabels=False, row=1, col=1)
+    fig.update_xaxes(title_text="log2 Fold Change", row=1, col=1)
+    fig.update_yaxes(title_text="Density", row=1, col=1)
+    fig.update_yaxes(title_text="log2 Fold Change", row=1, col=2)
     
     fig.update_layout(
-        title="Distribution of log2 Fold Changes",
-        height=700,
+        title="Species Distribution of log2 Fold Changes",
+        height=600,
         plot_bgcolor="#FFFFFF",
         paper_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Arial", color="#54585A"),
         showlegend=True,
-        legend=dict(x=1.05, y=1),
-        barmode='overlay'
+        legend=dict(x=0.02, y=0.98),
+        barmode='overlay',
+        hovermode="x unified",
+    )
+    
+    return fig
+
+
+def create_density_plot(
+    results_df: pd.DataFrame,
+    fc_threshold: float,
+    pval_threshold: float,
+) -> go.Figure:
+    """Create simple density plot of all log2FC."""
+    from scipy.ndimage import gaussian_filter1d
+    
+    results_df["regulation"] = results_df.apply(
+        lambda row: classify_regulation(row, fc_threshold, pval_threshold),
+        axis=1
+    )
+    
+    data = results_df["log2fc"].dropna().values
+    
+    if len(data) == 0:
+        fig = go.Figure()
+        fig.add_annotation(text="No data available", showarrow=False)
+        return fig
+    
+    # Compute KDE
+    hist, bin_edges = np.histogram(data, bins=80, density=True)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    from scipy.ndimage import gaussian_filter1d
+    smoothed = gaussian_filter1d(hist, sigma=2)
+    
+    fig = go.Figure()
+    
+    # Density curve
+    fig.add_trace(
+        go.Scatter(
+            x=bin_centers,
+            y=smoothed,
+            fill="tozeroy",
+            name="Density",
+            line=dict(color="#54585A", width=2),
+            fillcolor="rgba(84, 88, 90, 0.3)",
+        )
+    )
+    
+    # Add threshold lines
+    fig.add_vline(x=fc_threshold, line_dash="dash", line_color="red", line_width=2, opacity=0.7)
+    fig.add_vline(x=-fc_threshold, line_dash="dash", line_color="red", line_width=2, opacity=0.7)
+    fig.add_vline(x=0, line_dash="solid", line_color="black", line_width=1)
+    
+    fig.update_layout(
+        title="Overall Density of log2 Fold Changes",
+        xaxis_title="log2 Fold Change",
+        yaxis_title="Density",
+        height=400,
+        plot_bgcolor="#FFFFFF",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Arial", color="#54585A"),
+        showlegend=False,
+        hovermode="x unified",
     )
     
     return fig
@@ -1001,8 +1074,35 @@ if "de_results" in st.session_state:
     
     st.markdown("---")
     
+    st.markdown("---")
+    
     # Visualization tabs
-    tab_volcano, tab_ma, tab_dist, tab_table = st.tabs(["Volcano Plot", "MA Plot", "Distribution + Boxplot", "Results Table"])
+    tab_species, tab_density, tab_volcano, tab_table = st.tabs(["Species Distribution", "Density Plot", "Volcano Plot", "Results Table"])
+    
+    with tab_species:
+        st.markdown("### Species Distribution")
+        if "protein_model" in st.session_state:
+            protein_model = st.session_state.get("protein_model")
+            if protein_model and hasattr(protein_model, 'raw'):
+                species_col = protein_model.species_col
+                if species_col and species_col in protein_model.raw.columns:
+                    species_col_data = protein_model.raw[species_col].to_dict()
+                    fig_species = create_species_distribution_plot(
+                        results_df.copy(),
+                        species_col_data,
+                        fc_threshold,
+                        pval_threshold
+                    )
+                    st.plotly_chart(fig_species, use_container_width=True)
+    
+    with tab_density:
+        st.markdown("### Density Plot")
+        fig_density = create_density_plot(
+            results_df.copy(),
+            fc_threshold,
+            pval_threshold
+        )
+        st.plotly_chart(fig_density, use_container_width=True)
     
     with tab_volcano:
         st.markdown("### Volcano Plot")
@@ -1013,26 +1113,6 @@ if "de_results" in st.session_state:
             title=f"Volcano Plot: {params['group2']} vs {params['group1']}"
         )
         st.plotly_chart(fig_volcano, use_container_width=True)
-    
-    with tab_ma:
-        st.markdown("### MA Plot")
-        fig_ma = create_ma_plot_with_theoretical(
-            results_df.copy(),
-            fc_threshold,
-            pval_threshold,
-            st.session_state.get("de_theo_fc_species", {})
-        )
-        st.plotly_chart(fig_ma, use_container_width=True)
-    
-    with tab_dist:
-        st.markdown("### Distribution + Boxplot")
-        st.caption("Left: Histogram with KDE curves | Right: Boxplots with mean ± SD")
-        fig_combined = create_combined_distplot_boxplot(
-            results_df.copy(),
-            fc_threshold,
-            pval_threshold
-        )
-        st.plotly_chart(fig_combined, use_container_width=True)
     
     with tab_table:
         st.markdown("### Results Table")
@@ -1101,6 +1181,7 @@ if "de_results" in st.session_state:
         st.dataframe(styled_df, use_container_width=True, height=600)
         
         st.caption(f"Showing {len(display_df):,} of {len(results_df):,} proteins")
+
     
     st.markdown("---")
     
