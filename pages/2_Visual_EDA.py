@@ -15,7 +15,6 @@ from plotly.subplots import make_subplots
 from helpers.constants import get_theme, TRANSFORMS
 from helpers.transforms import apply_transform
 from helpers.audit import log_event
-
 # ============================================================================
 # PAGE CONFIGURATION
 # ============================================================================
