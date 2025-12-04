@@ -554,46 +554,47 @@ st.markdown("---")
 col_store1, col_store2 = st.columns([1, 3])
 
 with col_store1:
-    if st.button("💾 Store for Analysis", type="primary", key="store_filtered"):
-        if not filtered_df.empty:
-            st.session_state.last_filtered_data = filtered_df.copy()
-            st.session_state.last_filtered_params = {
-                "selected_species": selected_species,
-                "min_peptides": min_peptides,
-                "cv_cutoff": cv_cutoff_val,
-                "missing_ratio": max_missing_ratio,
-                "use_sd_filter": enable_sd,
-                "sd_range": sd_range,
-                "transform_key": transform_key,
-                "n_proteins": len(filtered_df),
-                "active_filters": active_filters,
-            }
-            st.success(f"✅ Stored {len(filtered_df):,} proteins for analysis!")
-        else:
-            st.error("❌ No proteins after filtering. Adjust filters to proceed.")
+    if st.session_state.filter_state["configured"]:
+        filtered_df = st.session_state.filter_state["filtered_data"]
+        filter_params = st.session_state.filter_state["filter_params"]
+        filtered_stats = st.session_state.filter_state["filtered_stats"]
+
+        if st.button("💾 Store for Analysis", type="primary", key="store_filtered_btn"):
+            if not filtered_df.empty:
+                st.session_state.last_filtered_data = filtered_df.copy()
+                st.session_state.last_filtered_params = filter_params
+                st.success(f"✅ Stored {len(filtered_df):,} proteins for analysis!")
+            else:
+                st.error("❌ No proteins after filtering.")
+    else:
+        st.button("💾 Store for Analysis", type="primary",
+                  key="store_filtered_placeholder", disabled=True)
 
 with col_store2:
-    if not filtered_df.empty:
+    if st.session_state.filter_state["configured"]:
+        filtered_stats = st.session_state.filter_state["filtered_stats"]
         st.metric("Proteins Ready", f"{filtered_stats['n_proteins']:,}")
 
 st.markdown("---")
 
 # ========== EXPORT FILTERED DATA ==========
-if not filtered_df.empty:
-    col_exp1, col_exp2 = st.columns([1, 1])
-    
-    with col_exp1:
-        if st.button("💾 Export Filtered Data", key="export_filtered"):
+if st.session_state.filter_state["configured"]:
+    filtered_df = st.session_state.filter_state["filtered_data"]
+    if not filtered_df.empty:
+        col_exp1, col_exp2 = st.columns([1, 1])
+
+        with col_exp1:
             csv = filtered_df.to_csv(index=True)
             st.download_button(
-                label="Download CSV",
+                label="💾 Export Filtered Data",
                 data=csv,
                 file_name="filtered_proteins.csv",
                 mime="text/csv",
+                key="download_filtered_csv",
             )
-    
-    with col_exp2:
-        st.caption("Export current filtered dataset as CSV")
+
+        with col_exp2:
+            st.caption("Export current filtered dataset as CSV")
 
 render_navigation(back_page="pages/3_Preprocessing.py", next_page=None)
 render_footer()
