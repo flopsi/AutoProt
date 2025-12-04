@@ -570,16 +570,7 @@ for row_idx in range(n_rows):
                 # Create figure with range slider
                 fig = go.Figure()
                 
-                # Single histogram trace
-                fig.add_trace(go.Histogram(
-                    x=sample_data,
-                    nbinsx=50,
-                    marker_color="rgba(135, 206, 235, 0.7)",
-                    name="Intensity",
-                    showlegend=False,
-                ))
-                
-                # Add mean line
+
                 fig.add_vline(
                     x=mean_val,
                     line_dash="solid",
