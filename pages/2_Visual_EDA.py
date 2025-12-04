@@ -34,7 +34,7 @@ if "protein_data" not in st.session_state:
 protein_data = st.session_state.protein_data
 df = protein_data.raw.copy()
 numeric_cols = protein_data.numeric_cols
-protein_id_col = protein_data.protein_id_col
+
 
 # ============================================================================
 # SIDEBAR: SETTINGS
