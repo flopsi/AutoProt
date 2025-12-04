@@ -1,39 +1,43 @@
 """
 pages/1_Data_Upload.py
-Upload and explore proteomics data
-Detects columns, species, and shows initial visualization
+Upload → Detect columns → Species annotation → Show raw histogram
 """
 
 import streamlit as st
 import pandas as pd
-import numpy as np
-from helpers.file_io import read_csv, read_tsv, read_excel, detect_numeric_columns, detect_protein_id_column, detect_species_column, validate_numeric_data
-from helpers.dataclasses import ProteinData
+from helpers.constants import get_theme
+from helpers.file_io import read_csv, read_excel
 from helpers.plots import create_density_plot
 from helpers.audit import log_event
-from helpers.peptide_protein import detect_data_level, aggregate_peptides_by_id
 
 # ============================================================================
-# PAGE CONFIGURATION
+# SESSION STATE INITIALIZATION
 # ============================================================================
 
-st.set_page_config(page_title="Data Upload", layout="wide")
+def init_species_keywords():
+    """Initialize default species keywords if not present"""
+    if 'species_keywords' not in st.session_state:
+        st.session_state.species_keywords = [
+            {'keyword': 'HUMAN', 'species': 'Human'},     # ✓ Clean name
+            {'keyword': 'YEAST', 'species': 'Yeast'},
+            {'keyword': 'ECOLI', 'species': 'E. coli'}
+        ]
+    
+    if 'species_column' not in st.session_state:
+        st.session_state.species_column = None
+    
+    if 'species_mapping' not in st.session_state:
+        st.session_state.species_mapping = {}
+
+# Call at page load
+init_species_keywords()
 
 # ============================================================================
-# SIDEBAR: THEME & HELP
+# SIDEBAR: Theme Selection
 # ============================================================================
 
 with st.sidebar:
-    st.title("📊 Upload Settings")
-    
-    theme = st.session_state.get("theme", "light")
-    
-    st.info("""
-    **Supported Formats:**
-    - CSV (.csv)
-    - TSV (.tsv, .txt)
-    - Excel (.xlsx)
-    """)
+    theme = st.selectbox("🎨 Theme", options=["light", "dark", "colorblind", "journal"], index=0)
 
 # ============================================================================
 # MAIN CONTENT
@@ -41,310 +45,104 @@ with st.sidebar:
 
 st.title("📊 Data Upload")
 
-st.markdown("""
-Upload your proteomics data file. The system will:
-1. Detect data format and structure
-2. Identify protein/peptide IDs and species info
-3. Validate data quality
-4. Show initial visualization
-""")
+# Upload file
+uploaded_file = st.file_uploader("Upload CSV/TSV/Excel file")
 
-# ============================================================================
-# FILE UPLOADER
-# ============================================================================
-
-st.subheader("1️⃣ Upload File")
-
-uploaded_file = st.file_uploader(
-    "Choose a proteomics data file",
-    type=["csv", "tsv", "txt", "xlsx"],
-    help="Supports CSV, TSV, and Excel formats"
-)
-
-if uploaded_file is None:
-    st.warning("⚠️ Please upload a data file to continue")
-    st.stop()
-
-# ============================================================================
-# READ FILE
-# ============================================================================
-
-st.subheader("2️⃣ Loading Data...")
-
-progress_bar = st.progress(0)
-
-try:
-    # Detect file format and read
-    filename = uploaded_file.name.lower()
-    
-    if filename.endswith('.xlsx'):
+if uploaded_file:
+    # Read file
+    if uploaded_file.name.endswith('.xlsx'):
         df = read_excel(uploaded_file)
-        file_format = "Excel"
-    elif filename.endswith('.tsv') or filename.endswith('.txt'):
-        df = read_tsv(uploaded_file)
-        file_format = "TSV"
     else:
         df = read_csv(uploaded_file)
-        file_format = "CSV"
     
-    progress_bar.progress(25)
+    st.write(f"✅ Loaded {len(df)} rows × {len(df.columns)} columns")
     
-    st.success(f"✅ Loaded {file_format} file: {len(df):,} rows × {len(df.columns)} columns")
+    # ============================================================================
+    # SPECIES ANNOTATION
+    # ============================================================================
     
-except Exception as e:
-    st.error(f"❌ Error reading file: {str(e)}")
-    st.stop()
-
-# ============================================================================
-# DETECT COLUMNS
-# ============================================================================
-
-st.subheader("3️⃣ Detecting Data Structure...")
-
-# Numeric columns
-numeric_cols = detect_numeric_columns(df)
-st.write(f"📊 Found {len(numeric_cols)} numeric columns")
-
-if len(numeric_cols) < 4:
-    st.error(f"❌ Need at least 4 numeric columns for analysis, found {len(numeric_cols)}")
-    st.stop()
-
-progress_bar.progress(50)
-
-# Protein ID column
-protein_id_col = detect_protein_id_column(df)
-st.write(f"🔍 Detected protein/peptide ID column: **{protein_id_col}**")
-
-# Species column
-species_col = detect_species_column(df)
-if species_col:
-    st.write(f"🧬 Detected species column: **{species_col}**")
-else:
-    st.write("🧬 No species column detected (optional)")
-
-# Data level detection
-data_level, reasoning = detect_data_level(df, protein_id_col)
-st.write(f"📈 Data level: **{data_level.upper()}** ({reasoning})")
-
-progress_bar.progress(75)
-
-# ============================================================================
-# OPTIONAL: MANUAL COLUMN SELECTION
-# ============================================================================
-
-with st.expander("🔧 Advanced: Manual Column Selection"):
-    st.markdown("Override auto-detected columns if needed:")
+    st.subheader("Species Annotation")
     
-    col1, col2 = st.columns(2)
+    # Select protein ID column
+    text_cols = [col for col in df.columns if df[col].dtype == 'object']
     
-    with col1:
-        protein_id_col = st.selectbox(
-            "Protein/Peptide ID column",
-            options=df.columns,
-            index=list(df.columns).index(protein_id_col) if protein_id_col in df.columns else 0,
-            key="protein_col_manual"
-        )
-    
-    with col2:
-        species_options = ["(None)"] + list(df.columns)
+    if text_cols:
         species_col = st.selectbox(
-            "Species column",
-            options=species_options,
-            index=0,
-            key="species_col_manual"
+            "Select column containing protein IDs",
+            options=text_cols,
+            help="This column should contain protein identifiers (e.g., Q9Y6K9_HUMAN)"
         )
-        if species_col == "(None)":
-            species_col = None
-
-# ============================================================================
-# VALIDATE DATA
-# ============================================================================
-
-st.subheader("4️⃣ Data Validation")
-
-is_valid, validation_msg = validate_numeric_data(df, numeric_cols)
-
-if is_valid:
-    st.success(f"✅ {validation_msg}")
-else:
-    st.error(f"❌ {validation_msg}")
-    st.stop()
-
-progress_bar.progress(90)
-
-# ============================================================================
-# CREATE PROTEIN DATA OBJECT
-# ============================================================================
-
-# Map species if available
-species_mapping = {}
-if species_col and species_col in df.columns:
-    species_mapping = dict(zip(df[protein_id_col], df[species_col]))
-
-# If peptide data, optionally aggregate
-if data_level == "peptide":
-    st.subheader("5️⃣ Peptide Data Detected - Aggregation Options")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        should_aggregate = st.checkbox(
-            "Aggregate to protein level?",
-            value=True,
-            help="Sum peptide intensities by protein ID"
-        )
-    
-    with col2:
-        agg_method = st.selectbox(
-            "Aggregation method",
-            options=["sum", "mean", "median", "max"],
-            index=0,
-            disabled=not should_aggregate,
-            help="How to combine peptide intensities"
-        )
-    
-    if should_aggregate:
-        st.info("Aggregating peptides to protein level...")
-        try:
-            df_aggregated, agg_metadata = aggregate_peptides_by_id(
-                df,
-                peptide_id_col=protein_id_col,
-                protein_id_col="Protein ID",
-                numeric_cols=numeric_cols,
-                method=agg_method
-            )
-            
-            df = df_aggregated.reset_index()
-            protein_id_col = "Protein ID"
-            
-            st.success(f"✅ Aggregated {agg_metadata['n_peptides_original']:,} peptides → {agg_metadata['n_proteins']} proteins")
-            st.write(f"   Average: {agg_metadata['avg_peptides_per_protein']:.1f} peptides/protein")
         
-        except Exception as e:
-            st.error(f"❌ Aggregation failed: {str(e)}")
-            st.stop()
-
-# Create ProteinData object
-protein_data = ProteinData(
-    raw=df,
-    numeric_cols=numeric_cols,
-    species_col=species_col,
-    species_mapping=species_mapping,
-    index_col=protein_id_col,
-    file_path=uploaded_file.name,
-    file_format=file_format,
-)
-
-# Store in session
-st.session_state.protein_data = protein_data
-
-progress_bar.progress(100)
-
-# ============================================================================
-# DISPLAY SUMMARY
-# ============================================================================
-
-st.subheader("6️⃣ Data Summary")
-
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-    st.metric("Proteins/Peptides", f"{protein_data.n_proteins:,}")
-
-with col2:
-    st.metric("Samples", protein_data.n_samples)
-
-with col3:
-    st.metric("Conditions", protein_data.n_conditions)
-
-with col4:
-    st.metric("Missing %", f"{protein_data.missing_rate:.1f}%")
-
-# ============================================================================
-# DATA PREVIEW
-# ============================================================================
-
-st.subheader("7️⃣ Data Preview")
-
-with st.expander("🔍 View First 10 Rows"):
-    st.dataframe(
-        df.head(10),
-        use_container_width=True,
-        height=300
-    )
-
-# ============================================================================
-# INITIAL PLOT: RAW INTENSITY DISTRIBUTION
-# ============================================================================
-
-st.subheader("8️⃣ Initial Visualization - Raw Intensity Distribution")
-
-st.markdown("""
-The plot below shows the distribution of raw intensities across all samples.
-Each sample's median, quartiles, and range are displayed.
-""")
-
-try:
-    # Create density plot from raw data
-    fig = create_density_plot(
-        df[numeric_cols].mean(axis=1),
-        fc_threshold=1.0,
-        theme_name=theme
-    )
+        st.session_state.species_column = species_col
+        
+        # Configure keywords (expandable)
+        with st.expander("⚙️ Configure Species Keywords"):
+            st.caption("Define keywords to identify species in protein IDs")
+            
+            for i, kw in enumerate(st.session_state.species_keywords):
+                col1, col2 = st.columns(2)
+                with col1:
+                    keyword = st.text_input(
+                        f"Keyword {i+1}",
+                        value=kw['keyword'],
+                        key=f"kw_{i}"
+                    )
+                with col2:
+                    species = st.text_input(
+                        f"Species {i+1}",
+                        value=kw['species'],
+                        key=f"sp_{i}"
+                    )
+                st.session_state.species_keywords[i] = {'keyword': keyword, 'species': species}
+        
+        # Assign species function
+        def assign_species(val: str, keywords: list) -> str:
+            """Assign species based on keywords - returns clean species name"""
+            if pd.isna(val):
+                return 'Unknown'
+            
+            val_str = str(val).upper()
+            
+            # Build mapping: keyword -> species name
+            mapping = {
+                kw['keyword']: kw['species'] 
+                for kw in keywords 
+                if kw.get('keyword') and kw.get('species')
+            }
+            
+            # Check each keyword
+            for keyword, species_name in mapping.items():
+                if keyword.upper() in val_str:
+                    return species_name  # ✓ Returns 'Human', NOT '_HUMAN'
+            
+            return 'Unknown'
+        
+        # Apply species assignment
+        species_series = df[species_col].apply(
+            lambda x: assign_species(x, st.session_state.species_keywords)
+        )
+        
+        # Store in session
+        st.session_state.species_mapping = species_series.to_dict()
+        
+        # Show distribution
+        species_counts = species_series.value_counts()
+        
+        st.markdown("**Species Distribution:**")
+        st.bar_chart(species_counts)  # ✓ Now shows "Human", "Yeast", "E. coli"
+        
+        # Show metrics
+        cols = st.columns(len(species_counts))
+        for i, (species, count) in enumerate(species_counts.items()):
+            with cols[i]:
+                pct = (count / len(species_series)) * 100
+                st.metric(species, f"{count} ({pct:.1f}%)")
+        
+        # Log
+        log_event(
+            "Species Annotation",
+            f"Annotated {len(species_series)} proteins",
+            {"species_detected": species_counts.to_dict()}
+        )
     
-    st.plotly_chart(fig, use_container_width=True)
-
-except Exception as e:
-    st.error(f"❌ Error creating plot: {str(e)}")
-
-# ============================================================================
-# SPECIES BREAKDOWN (IF AVAILABLE)
-# ============================================================================
-
-if species_mapping:
-    st.subheader("Species Breakdown")
-    
-    species_counts = pd.Series(species_mapping).value_counts()
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.bar_chart(species_counts)
-    
-    with col2:
-        for species, count in species_counts.items():
-            st.metric(species, count)
-
-# ============================================================================
-# AUDIT LOGGING
-# ============================================================================
-
-log_event(
-    "Data Upload",
-    f"Uploaded {uploaded_file.name}",
-    {
-        "filename": uploaded_file.name,
-        "file_format": file_format,
-        "n_proteins": protein_data.n_proteins,
-        "n_samples": protein_data.n_samples,
-        "n_conditions": protein_data.n_conditions,
-        "missing_rate": float(protein_data.missing_rate),
-        "data_level": data_level,
-    }
-)
-
-# ============================================================================
-# SUCCESS MESSAGE & NEXT STEPS
-# ============================================================================
-
-st.success("✅ Data loaded successfully!")
-
-st.markdown("""
-### ✨ Next Steps
-
-1. **Visual EDA** (2_Visual_EDA.py) - Explore data distribution
-2. **Statistical EDA** (3_Statistical_EDA.py) - Check quality metrics
-3. **Preprocessing** (4_Preprocessing.py) - Transform & filter
-4. **Analysis** (6_Analysis.py) - Differential expression
-
-Use the sidebar navigation to continue.
-""")
+    st.success("✅ Data uploaded and annotated!")
