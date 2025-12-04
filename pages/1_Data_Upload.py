@@ -418,25 +418,10 @@ with col4:
     st.metric("Missing Values %", f"{missing_rate:.1f}%")
 
 
-
-import altair as alt
-
 if species_mapping and species_col:
     st.subheader("Species Breakdown by Sample")
     
-    # Prepare data
-    chart_data = []
-    for sample in numeric_cols:
-        species_in_sample = df[df[sample] > 1.0][species_col].value_counts()
-        for species, count in species_in_sample.items():
-            chart_data.append({
-                'Sample': sample,
-                'Species': species,
-                'Count': count
-            })
-    
-    chart_df = pd.DataFrame(chart_data)
-    
+
 # Species Breakdown by Sample (Stacked Bar Chart)
 if species_mapping and species_col:
     st.subheader("Species Breakdown by Sample")
