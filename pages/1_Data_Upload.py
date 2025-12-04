@@ -222,7 +222,7 @@ edited_cols = st.data_editor(
         ),
     },
     hide_index=True,
-    use_container_width=True,
+    width=True,
     key="column_selector_table"
 )
 
@@ -291,7 +291,7 @@ if should_rename:
                 "Original": list(rename_dict.keys()),
                 "New": list(rename_dict.values())
             })
-            st.dataframe(mapping_df, use_container_width=True)
+            st.dataframe(mapping_df, width=True)
 
 # ============================================================================
 # STEP 6: IDENTIFY METADATA COLUMNS
@@ -367,19 +367,17 @@ st.success(f"✅ Keeping {len(columns_to_keep)} columns")
 # STEP 7: PREVIEW DATA (10 ROWS)
 # ============================================================================
 
-st.subheader("7️⃣ Data Preview (First 10 Rows)")
-
 # Format for display - replace remaining NaN with empty string
 df_display = df.head(10).copy()
 for col in df_display.columns:
-    if df_display[col].dtype in ['float64', 'float32']:
+    if pd.api.types.is_float_dtype(df_display[col]):
         df_display[col] = df_display[col].apply(
             lambda x: '' if pd.isna(x) else f"{x:.2f}"
         )
     else:
         df_display[col] = df_display[col].astype(str).replace('nan', '')
 
-st.dataframe(df_display, use_container_width=True, height=350)
+st.dataframe(df_display, width="stretch", height=350)
 
 # ============================================================================
 # STEP 8: BASIC STATISTICS
@@ -503,7 +501,7 @@ if species_mapping and species_col:
             )
         )
         
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width=True)
     
     # Total species counts with metrics
     st.subheader("Total Species Distribution")
