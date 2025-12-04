@@ -672,7 +672,31 @@ for row_idx in range(n_rows):
     
     st.markdown("---")
     
-    # ========== EXPORT FILTERED DATA ==========
+  # ========== STORE FILTERED DATASET ==========
+col_store1, col_store2 = st.columns([1, 3])
+
+with col_store1:
+    if st.session_state.filter_state["configured"]:
+        if st.button("💾 Store for Analysis", type="primary", key="store_filtered_btn"):
+            if not st.session_state.filter_state["filtered_data"].empty:
+                st.session_state.last_filtered_data = st.session_state.filter_state["filtered_data"].copy()
+                st.session_state.last_filtered_params = st.session_state.filter_state["filter_params"]
+                st.success(f"✅ Stored {len(st.session_state.filter_state['filtered_data']):,} proteins for analysis!")
+            else:
+                st.error("❌ No proteins after filtering.")
+    else:
+        st.button("💾 Store for Analysis", type="primary", key="store_filtered_placeholder", disabled=True)
+
+with col_store2:
+    if st.session_state.filter_state["configured"]:
+        filtered_stats = st.session_state.filter_state["filtered_stats"]
+        if filtered_stats["n_proteins"] > 0:
+            st.metric("Proteins Ready", f"{filtered_stats['n_proteins']:,}")
+
+st.markdown("---")
+
+
+  # ========== EXPORT FILTERED DATA ==========
     if not filtered_df.empty:
         col_exp1, col_exp2 = st.columns([1, 1])
         
