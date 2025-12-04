@@ -483,6 +483,7 @@ def create_combined_distplot_boxplot(
     return fig
 
 
+
 # ========== START OF PAGE ==========
 
 st.markdown("## Differential Expression Analysis")
@@ -739,69 +740,120 @@ if "de_results" in st.session_state:
     
     st.markdown("---")
     
-    # ========== THEORETICAL FOLD CHANGES - SIMPLE INPUT ==========
+    # ========== THEORETICAL FOLD CHANGES - CONDITION-BASED COMPOSITION ==========
     st.markdown("### 🎯 Theoretical Fold Changes (Optional)")
-    st.caption("Enter expected log2 fold changes for spike-in proteins to calculate error rates")
+    st.caption("Enter species composition (%) for each condition. Percentages must sum to 100.")
     
-    col_theo1, col_theo2, col_theo3 = st.columns(3)
+    # Store composition in session state
+    if "de_composition" not in st.session_state:
+        st.session_state.de_composition = {
+            "A": {"HUMAN": 0, "YEAST": 0, "ECOLI": 0},
+            "B": {"HUMAN": 0, "YEAST": 0, "ECOLI": 0},
+        }
     
-    with col_theo1:
-        theo_protein_id = st.text_input(
-            "Protein ID",
-            placeholder="e.g., HUMAN_P12345",
-            key="theo_protein_id"
-        )
+    # Input section
+    st.markdown("#### Condition A (Reference)")
+    col_a1, col_a2, col_a3 = st.columns(3)
+    with col_a1:
+        a_human = st.number_input("Human %", min_value=0, max_value=100, value=st.session_state.de_composition["A"]["HUMAN"], step=1, key="a_human")
+    with col_a2:
+        a_yeast = st.number_input("Yeast %", min_value=0, max_value=100, value=st.session_state.de_composition["A"]["YEAST"], step=1, key="a_yeast")
+    with col_a3:
+        a_ecoli = st.number_input("E.coli %", min_value=0, max_value=100, value=st.session_state.de_composition["A"]["ECOLI"], step=1, key="a_ecoli")
     
-    with col_theo2:
-        theo_log2fc = st.number_input(
-            "log2 Fold Change",
-            min_value=-10.0,
-            max_value=10.0,
-            value=0.0,
-            step=0.5,
-            key="theo_log2fc"
-        )
+    a_sum = a_human + a_yeast + a_ecoli
+    if a_sum != 100:
+        st.warning(f"⚠️ Condition A sum: {a_sum}% (must be 100%)")
     
-    with col_theo3:
-        add_theo = st.button("➕ Add", key="add_theo")
+    st.markdown("#### Condition B (Treatment)")
+    col_b1, col_b2, col_b3 = st.columns(3)
+    with col_b1:
+        b_human = st.number_input("Human %", min_value=0, max_value=100, value=st.session_state.de_composition["B"]["HUMAN"], step=1, key="b_human")
+    with col_b2:
+        b_yeast = st.number_input("Yeast %", min_value=0, max_value=100, value=st.session_state.de_composition["B"]["YEAST"], step=1, key="b_yeast")
+    with col_b3:
+        b_ecoli = st.number_input("E.coli %", min_value=0, max_value=100, value=st.session_state.de_composition["B"]["ECOLI"], step=1, key="b_ecoli")
     
-    # Store theoretical values in session state
-    if "de_theoretical" not in st.session_state:
-        st.session_state.de_theoretical = {}
+    b_sum = b_human + b_yeast + b_ecoli
+    if b_sum != 100:
+        st.warning(f"⚠️ Condition B sum: {b_sum}% (must be 100%)")
     
-    if add_theo and theo_protein_id.strip():
-        st.session_state.de_theoretical[theo_protein_id.strip()] = theo_log2fc
-        st.success(f"✅ Added {theo_protein_id}: log2FC={theo_log2fc:.1f}")
+    # Calculate button
+    col_calc1, col_calc2 = st.columns([1, 3])
     
-    # Display added theoretical values
-    if st.session_state.de_theoretical:
-        st.markdown("#### Added Theoretical Values")
+    with col_calc1:
+        calc_theo = st.button("📊 Calculate Theoretical FC", key="calc_theo")
+    
+    with col_calc2:
+        if a_sum == 100 and b_sum == 100:
+            st.caption("✅ Both conditions sum to 100%")
+        else:
+            st.caption("❌ Fix percentages before calculating")
+    
+    if calc_theo and a_sum == 100 and b_sum == 100:
+        # Store composition
+        st.session_state.de_composition["A"] = {"HUMAN": a_human, "YEAST": a_yeast, "ECOLI": a_ecoli}
+        st.session_state.de_composition["B"] = {"HUMAN": b_human, "YEAST": b_yeast, "ECOLI": b_ecoli}
+        
+        # Calculate theoretical FC for each species
+        # log2FC = log2(B_abundance / A_abundance)
+        theo_fc_species = {}
+        for species, pct_a in [("HUMAN", a_human), ("YEAST", a_yeast), ("ECOLI", a_ecoli)]:
+            pct_b = st.session_state.de_composition["B"][species]
+            if pct_a > 0 and pct_b > 0:
+                log2fc = np.log2(pct_b / pct_a)
+            elif pct_b > 0:
+                log2fc = 10.0  # Large increase from 0
+            elif pct_a > 0:
+                log2fc = -10.0  # Large decrease to 0
+            else:
+                log2fc = 0.0  # Both 0
+            theo_fc_species[species] = log2fc
+        
+        st.session_state.de_theo_fc_species = theo_fc_species
+        st.success("✅ Theoretical FC calculated!")
+    
+    # Display calculated theoretical FC
+    if "de_theo_fc_species" in st.session_state:
+        st.markdown("#### Calculated Theoretical log2 Fold Changes")
         
         theo_display = []
-        for pid, fc in st.session_state.de_theoretical.items():
-            theo_display.append({"Protein ID": pid, "log2FC": f"{fc:.2f}"})
+        for species in ["HUMAN", "YEAST", "ECOLI"]:
+            fc = st.session_state.de_theo_fc_species.get(species, 0.0)
+            ratio = 2 ** fc
+            theo_display.append({
+                "Species": species,
+                "log2FC": f"{fc:.3f}",
+                "Fold Change": f"{ratio:.2f}x"
+            })
         
         theo_df = pd.DataFrame(theo_display)
-        
-        col_theo_table, col_theo_clear = st.columns([3, 1])
-        
-        with col_theo_table:
-            st.dataframe(theo_df, use_container_width=True, hide_index=True)
-        
-        with col_theo_clear:
-            if st.button("🗑️ Clear All", key="clear_theo"):
-                st.session_state.de_theoretical = {}
-                st.rerun()
+        st.dataframe(theo_df, use_container_width=True, hide_index=True)
         
         # Calculate error rates
-        if st.button("📊 Calculate Error Rates", key="calc_error_rates"):
-            error_metrics = calculate_error_rates(
-                results_df.copy(),
-                st.session_state.de_theoretical,
-                fc_threshold,
-                pval_threshold
-            )
-            st.session_state.de_error_metrics = error_metrics
+        if st.button("📈 Calculate Error Rates from Composition", key="calc_error_rates"):
+            # Get protein-to-species mapping
+            protein_model = st.session_state.get("protein_model")
+            if protein_model and hasattr(protein_model, 'raw'):
+                species_col = protein_model.species_col
+                if species_col and species_col in protein_model.raw.columns:
+                    # Map each protein to theoretical FC based on species
+                    true_fc_dict = {}
+                    for protein_id, species in protein_model.raw[species_col].items():
+                        true_fc_dict[protein_id] = st.session_state.de_theo_fc_species.get(species, 0.0)
+                    
+                    error_metrics = calculate_error_rates(
+                        results_df.copy(),
+                        true_fc_dict,
+                        fc_threshold,
+                        pval_threshold
+                    )
+                    st.session_state.de_error_metrics = error_metrics
+                    st.success("✅ Error rates calculated!")
+                else:
+                    st.error("Species column not found in protein data")
+            else:
+                st.error("Protein model not available")
     
     # Display error rates if calculated
     if "de_error_metrics" in st.session_state:
@@ -809,6 +861,30 @@ if "de_results" in st.session_state:
         st.markdown("### 📈 Error Rate Analysis")
         
         metrics = st.session_state.de_error_metrics
+        
+        # Composition summary
+        st.markdown("#### Input Composition")
+        comp_summary = []
+        for condition in ["A", "B"]:
+            comp = st.session_state.de_composition[condition]
+            comp_summary.append({
+                "Condition": condition,
+                "Human %": comp["HUMAN"],
+                "Yeast %": comp["YEAST"],
+                "E.coli %": comp["ECOLI"]
+            })
+        st.dataframe(pd.DataFrame(comp_summary), use_container_width=True, hide_index=True)
+        
+        st.markdown("#### Theoretical FC by Species")
+        theo_summary = []
+        for species in ["HUMAN", "YEAST", "ECOLI"]:
+            fc = st.session_state.de_theo_fc_species.get(species, 0.0)
+            theo_summary.append({
+                "Species": species,
+                "log2FC": f"{fc:.3f}",
+                "Expected Direction": "Up" if fc > 0 else "Down" if fc < 0 else "No change"
+            })
+        st.dataframe(pd.DataFrame(theo_summary), use_container_width=True, hide_index=True)
         
         # Confusion matrix
         col_cm1, col_cm2 = st.columns(2)
@@ -834,7 +910,7 @@ if "de_results" in st.session_state:
                 ]
             })
             st.dataframe(perf_df, hide_index=True, use_container_width=True)
-    
+
     st.markdown("---")
     
     # Visualization tabs
