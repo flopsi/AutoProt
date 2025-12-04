@@ -493,7 +493,7 @@ try:
         log2_transform([numeric_cols].mean(axis=1),
         fc_threshold=1.0,
         theme_name=theme
-    )
+    ))
     
     st.plotly_chart(fig, use_container_width=True)
 
