@@ -11,7 +11,8 @@ from helpers.file_io import read_csv, read_tsv, read_excel
 from helpers.dataclasses import ProteinData
 from helpers.audit import log_event
 import altair as alt
-
+    # Import theme from constants
+from helpers.constants import get_theme
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
@@ -417,8 +418,7 @@ with col3:
 with col4:
     st.metric("Missing Values %", f"{missing_rate:.1f}%")
 
-    # Import theme from constants
-    from helpers.constants import get_theme
+
     
     # Get current theme
     theme_name = st.session_state.get("theme", "dark")
@@ -428,8 +428,7 @@ with col4:
 if species_mapping and species_col:
     st.subheader("Species Breakdown by Sample")
     
-    # Import theme from constants
-    from helpers.constants import get_theme
+
     
     # Get current theme
     theme_name = st.session_state.get("theme", "light")
@@ -530,6 +529,7 @@ protein_data = ProteinData(
     index_col=protein_id_col,
     file_path=uploaded_file.name,
     file_format=file_format,
+    missing_rate=missing_rate,
 )
 
 # Store in session state
