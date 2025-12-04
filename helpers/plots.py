@@ -187,6 +187,7 @@ def create_species_distribution(
     )
     
     # ---- Add traces for each species ----
+# ---- Add traces for each species ----
     for i, species in enumerate(["HUMAN", "YEAST", "ECOLI"]):
         if species not in species_data:
             continue
@@ -194,11 +195,14 @@ def create_species_distribution(
         data = species_data[species]
         color = species_colors[species]
         
+        # ✓ FIX: Use clean species name (without underscore) for display
+        display_name = species  # This will show "HUMAN", "YEAST", "ECOLI"
+        
         # Histogram (left)
         fig.add_trace(
             go.Histogram(
                 x=data,
-                name=display_name,
+                name=display_name,  # ✓ Changed from species to display_name
                 marker_color=color,
                 opacity=0.6,
                 nbinsx=40,
@@ -217,7 +221,7 @@ def create_species_distribution(
             go.Scatter(
                 x=bin_centers,
                 y=smoothed,
-                name=f"{species} KDE",
+                name=f"{display_name} KDE",  # ✓ Changed
                 line=dict(color=color, width=3),
                 legendgroup=species,
                 showlegend=False,
@@ -229,7 +233,7 @@ def create_species_distribution(
         fig.add_trace(
             go.Box(
                 y=data,
-                name=species,
+                name=display_name,  # ✓ Changed
                 marker_color=color,
                 legendgroup=species,
                 showlegend=False,
@@ -238,6 +242,7 @@ def create_species_distribution(
             ),
             row=1, col=2
         )
+
     
     # Add threshold lines
     fig.add_vline(x=fc_threshold, line_dash="dash", line_color="red", line_width=1.5, opacity=0.5, row=1, col=1)
