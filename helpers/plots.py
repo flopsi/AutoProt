@@ -135,17 +135,6 @@ def create_species_distribution(
 ) -> go.Figure:
     """
     Create species-colored distribution with histogram, KDE, and boxplot.
-    Left: histogram + KDE curves. Right: boxplots.
-    
-    Args:
-        results_df: Results with 'log2fc', 'pvalue'
-        species_mapping: Protein ID → species
-        fc_threshold: For classification
-        pval_threshold: For classification
-        theme_name: Theme
-        
-    Returns:
-        Plotly figure
     """
     theme = get_theme(theme_name)
     results_df = results_df.copy()
@@ -171,12 +160,18 @@ def create_species_distribution(
         "ECOLI": theme["color_ecoli"],
     }
     
+    # ✓ FIX: Normalize species names by removing leading underscores
     for species in ["HUMAN", "YEAST", "ECOLI"]:
-        proteins = [pid for pid, sp in species_mapping.items() if sp == species]
+        # Match both "HUMAN" and "_HUMAN"
+        proteins = [
+            pid for pid, sp in species_mapping.items() 
+            if sp.lstrip('_').upper() == species  # Remove leading _ and compare
+        ]
         if proteins:
             data = results_df.loc[results_df.index.intersection(proteins), "log2fc"].dropna()
             if len(data) > 0:
                 species_data[species] = data.values
+
     
     if not species_data:
         fig = go.Figure()
