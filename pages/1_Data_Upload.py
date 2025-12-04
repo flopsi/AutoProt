@@ -424,6 +424,17 @@ with col4:
     theme_name = st.session_state.get("theme", "dark")
     theme = get_theme(theme_name)
     
+# Species Breakdown by Sample (Stacked Bar Chart)
+if species_mapping and species_col:
+    st.subheader("Species Breakdown by Sample")
+    
+    # Import theme from constants
+    from helpers.constants import get_theme
+    
+    # Get current theme
+    theme_name = st.session_state.get("theme", "light")
+    theme = get_theme(theme_name)
+    
     # Prepare data: count proteins per sample per species
     chart_data = []
     for sample in numeric_cols:
@@ -503,7 +514,6 @@ with col4:
     for col, (species, count) in zip(cols, species_totals.items()):
         with col:
             st.metric(species, f"{count:,}")
-
 
 # ============================================================================
 # STEP 9: CREATE PROTEIN DATA OBJECT & STORE
