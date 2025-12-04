@@ -143,6 +143,31 @@ except Exception as e:
 # Clean column names immediately
 df.columns = [clean_column_name(col) for col in df.columns]
 
+# Auto-trim shared left prefix from long run-specific columns
+def longest_common_prefix(strs):
+    if not strs:
+        return ""
+    s1, s2 = min(strs), max(strs)
+    for i, (c1, c2) in enumerate(zip(s1, s2)):
+        if c1 != c2:
+            return s1[:i]
+    return s1
+
+# Only consider "long" columns as candidates (likely per-run)
+long_cols = [c for c in df.columns if len(c) > 40]
+prefix = longest_common_prefix(long_cols)
+
+# Require reasonably long prefix so we don’t nuke short names
+if prefix and len(prefix) >= 20:
+    st.info(f"🧹 Removing shared prefix from {len(long_cols)} columns:\n\n`{prefix}`")
+    new_cols = []
+    for c in df.columns:
+        if c in long_cols and c.startswith(prefix):
+            new_cols.append(c[len(prefix):].lstrip("_").lstrip("."))
+        else:
+            new_cols.append(c)
+    df.columns = new_cols
+
 # ============================================================================
 # STEP 3: FILL NaN AND 0 WITH 1
 # ============================================================================
@@ -153,7 +178,7 @@ st.subheader("3️⃣ Data Cleaning")
 n_nan_before = df.isna().sum().sum()
 n_zero_before = (df == 0).sum().sum()
 
-st.info(f"Replacing NaN and 0 values with 1.0 for log transformation compatibility...")
+st.info("Replacing NaN and 0 values with 1.0 for log transformation compatibility...")
 
 # Detect numeric columns first
 numeric_cols_detected = detect_numeric_columns(df)
