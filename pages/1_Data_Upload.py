@@ -12,6 +12,7 @@ from helpers.dataclasses import ProteinData
 from helpers.plots import create_density_plot
 from helpers.audit import log_event
 from helpers.peptide_protein import detect_data_level, aggregate_peptides_by_id
+from helpers.transform import log2_trasnsform
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -489,7 +490,7 @@ The plot shows the distribution of raw intensities across all samples.
 
 try:
     fig = create_density_plot(
-        df[numeric_cols].mean(axis=1),
+        log2_transform.df[numeric_cols].mean(axis=1),
         fc_threshold=1.0,
         theme_name=theme
     )
