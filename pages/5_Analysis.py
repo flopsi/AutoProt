@@ -716,13 +716,19 @@ with st.sidebar:
 
 # ========== MAIN ANALYSIS ==========
 
+# ========== MAIN ANALYSIS ==========
+
 transform_data_selected = get_transform_data(protein_model, transform_key)
 
 if use_filtered:
-    transform_data_selected = transform_data_selected.loc[working_data.index]
+    # Use intersection of indices to avoid KeyError
+    common_idx = transform_data_selected.index.intersection(working_data.index)
+    transform_data_selected = transform_data_selected.loc[common_idx]
+    working_data = working_data.loc[common_idx]
 
 group1_cols = condition_groups[group1]
 group2_cols = condition_groups[group2]
+
 
 st.markdown(f"### Comparison: {group2} vs {group1}")
 
