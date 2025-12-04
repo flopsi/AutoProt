@@ -700,5 +700,5 @@ if configured:
 else:
     st.info("👆 Configure filters in the sidebar and click **Apply All Filters** to see results")
 
-render_navigation(back_page="pages/3_Preprocessing.py", next_page="5_Analysis.py")
+render_navigation(back_page="pages/3_Preprocessing.py", next_page="pages/5_Analysis.py")
 render_footer()
