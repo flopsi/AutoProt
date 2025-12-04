@@ -111,7 +111,9 @@ DEFAULT_MIN_VALID = 2              # Min values per group for t-test
 SPECIES_LIST = ["HUMAN", "YEAST", "ECOLI", "MOUSE"]
 
 # Transform options
-TRANSFORMS = ["log2", "log10", "sqrt", "cbrt", "yeo_johnson", "quantile"]
+# In constants.py, add new transforms:
+TRANSFORMS = ["log2", "log10", "sqrt", "cbrt", "yeo_johnson", "quantile", "robust", "zscore", "minmax"]
+
 
 # ============================================================================
 # UI CONSTANTS
