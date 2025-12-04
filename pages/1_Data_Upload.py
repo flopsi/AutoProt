@@ -133,6 +133,31 @@ except Exception as e:
 # STEP 3: CLEAN COLUMN NAMES
 # ============================================================================
 
+st.subheader("3️⃣ Clean Column Names")
+
+st.markdown("""
+Column names are being cleaned (remove special characters, standardize spacing).
+""")
+
+# Show before/after for first few columns
+col_sample = pd.DataFrame({
+    "Before": df.columns[:min(5, len(df.columns))],
+    "After": [clean_column_name(col) for col in df.columns[:min(5, len(df.columns))]]
+})
+
+with st.expander("👀 View Name Cleaning Examples"):
+    st.dataframe(col_sample, use_container_width=True)
+
+# Apply cleaning
+df.columns = [clean_column_name(col) for col in df.columns]
+st.success("✅ Column names cleaned")
+
+progress_bar.progress(30)
+
+# ============================================================================
+# STEP 4: SELECT QUANTITATIVE COLUMNS
+# ============================================================================
+
 st.subheader("4️⃣ Select Quantitative Columns")
 
 st.markdown("""
@@ -140,49 +165,53 @@ Select which columns contain quantitative measurements (intensities, abundances,
 Non-numeric columns will be excluded from analysis.
 """)
 
+# Show preview of columns
+st.write("**Available columns:**")
+col_info = pd.DataFrame({
+    "Column": df.columns,
+    "Type": [df[col].dtype for col in df.columns],
+    "Sample": [str(df[col].iloc[0])[:50] if len(df) > 0 else "N/A" for col in df.columns]
+})
+st.dataframe(col_info, use_container_width=True)
 
-# Create dataframe with checkboxes
-df_col_select = pd.DataFrame({
-    "Select": [col in default_numeric for col in all_cols],
-    "Column": all_cols,
-    "Type": [str(df[col].dtype) for col in all_cols],
+progress_bar.progress(35)
+
+# df_cols has all columns + dtype/sample preview
+df_cols = pd.DataFrame({
+    "Column": df.columns,
+    "Type": [df[c].dtype for c in df.columns],
+    "Sample": [df[c].iloc[0] if len(df) else None for c in df.columns],
 })
 
-st.info("💡 **Check columns to include in analysis.**")
+# Add checkbox flag: pre‑tick numeric columns
+df_cols["use_for_quant"] = df_cols["Column"].isin(default_numeric)
 
-# Interactive checkbox table
-edited_cols = st.data_editor(
-    df_col_select,
+edited = st.data_editor(
+    df_cols,
     column_config={
-        "Select": st.column_config.CheckboxColumn(
-            "✓ Include",
-            help="Check to include this column"
-        ),
-        "Column": st.column_config.TextColumn(
-            "Column Name",
-            width="large",
-            disabled=True
-        ),
-        "Type": st.column_config.TextColumn(
-            "Data Type",
-            width="small",
-            disabled=True
-        ),
+        "use_for_quant": st.column_config.CheckboxColumn(
+            "Quant?",
+            help="Use this column as quantitative measurement",
+            default=False,
+        )
     },
+    disabled=["Column", "Type", "Sample"],   # only checkbox editable
     hide_index=True,
-    use_container_width=True,
-    key="column_selector_table"
 )
 
-# Extract selected columns
-selected_numeric_cols = edited_cols[edited_cols["Select"]]["Column"].tolist()
+# Derive selected numeric columns from checkbox column
+numeric_cols = edited.loc[edited["use_for_quant"], "Column"].tolist()
 
-if len(selected_numeric_cols) < 4:
-    st.warning(f"⚠️ Need at least 4 columns. You selected {len(selected_numeric_cols)}.")
+if len(numeric_cols) < 4:
+    st.warning(f"Need at least 4 quantitative columns for analysis. You selected {len(numeric_cols)}.")
     st.stop()
 
+
 numeric_cols = selected_numeric_cols
-st.success(f"✅ Selected {len(numeric_cols)} columns")
+
+st.success(f"✅ Selected {len(numeric_cols)} quantitative columns")
+
+progress_bar.progress(40)
 
 # ============================================================================
 # STEP 5: RENAME COLUMNS (OPTIONAL)
