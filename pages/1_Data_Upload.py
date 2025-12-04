@@ -430,7 +430,7 @@ if species_mapping:
         st.bar_chart(
             species_counts,
             x = "Sample".
-            y = species_counts["HUMAN","YEAST","ECOLI"],
+            y = species_counts,
             color = color_species
         )
     with col2:
