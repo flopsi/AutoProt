@@ -112,7 +112,20 @@ SPECIES_LIST = ["HUMAN", "YEAST", "ECOLI", "MOUSE"]
 
 # Transform options
 # In constants.py, add new transforms:
-TRANSFORMS = ["log2", "log10", "sqrt", "cbrt", "yeo_johnson", "quantile", "robust", "zscore", "minmax"]
+# In helpers/constants.py, update TRANSFORMS list:
+
+TRANSFORMS = [
+    "log2", 
+    "log10", 
+    "sqrt", 
+    "cbrt", 
+    "yeo_johnson", 
+    "quantile",
+    "robust",      # NEW
+    "zscore",      # NEW
+    "minmax"       # NEW
+]
+
 
 
 # ============================================================================
