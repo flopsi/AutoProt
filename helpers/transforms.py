@@ -6,6 +6,8 @@ Data transformation functions
 import pandas as pd
 import numpy as np
 from scipy import stats
+from sklearn.preprocessing import QuantileTransformer
+from sklearn.preprocessing import PowerTransformer
 
 def apply_transform(df: pd.DataFrame, numeric_cols: list, method: str = "log2") -> pd.DataFrame:
     """
