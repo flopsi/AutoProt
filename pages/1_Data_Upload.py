@@ -133,60 +133,12 @@ except Exception as e:
 # STEP 3: CLEAN COLUMN NAMES
 # ============================================================================
 
-st.subheader("3️⃣ Clean Column Names")
-
-st.markdown("""
-Column names are being cleaned (remove special characters, standardize spacing).
-""")
-
-# Show before/after for first few columns
-col_sample = pd.DataFrame({
-    "Before": df.columns[:min(5, len(df.columns))],
-    "After": [clean_column_name(col) for col in df.columns[:min(5, len(df.columns))]]
-})
-
-with st.expander("👀 View Name Cleaning Examples"):
-    st.dataframe(col_sample, use_container_width=True)
-
-# Apply cleaning
-df.columns = [clean_column_name(col) for col in df.columns]
-st.success("✅ Column names cleaned")
-
-progress_bar.progress(30)
-
-# ============================================================================
-# STEP 4: SELECT QUANTITATIVE COLUMNS
-# ============================================================================
-
 st.subheader("4️⃣ Select Quantitative Columns")
 
 st.markdown("""
 Select which columns contain quantitative measurements (intensities, abundances, etc.).
 Non-numeric columns will be excluded from analysis.
 """)
-
-# Show preview of columns
-st.write("**Available columns:**")
-col_info = pd.DataFrame({
-    "Column": df.columns,
-    "Type": [df[col].dtype for col in df.columns],
-    "Sample": [str(df[col].iloc[0])[:50] if len(df) > 0 else "N/A" for col in df.columns]
-})
-st.dataframe(col_info, use_container_width=True)
-
-progress_bar.progress(35)
-
-# Multi-select for quantitative columns
-all_cols = list(df.columns)
-default_numeric = detect_numeric_columns(df)
-
-st.info("💡 **Tip:** Click columns to select them. Deselect columns that aren't measurements.")
-
-selected_numeric_cols = st.multiselect(
-    "🔢 Select quantitative columns:",
-    options=all_cols,
-    default=default_numeric,
-)
 
 
 # Create dataframe with checkboxes
