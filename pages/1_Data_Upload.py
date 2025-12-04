@@ -368,6 +368,7 @@ st.success(f"✅ Keeping {len(columns_to_keep)} columns")
 # ============================================================================
 
 # Format for display - replace remaining NaN with empty string
+# Format for display - replace remaining NaN with empty string
 df_display = df.head(10).copy()
 for col in df_display.columns:
     if pd.api.types.is_float_dtype(df_display[col]):
