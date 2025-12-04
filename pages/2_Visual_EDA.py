@@ -110,12 +110,12 @@ with col3:
 
 st.subheader("2️⃣ Individual Sample Distributions")
 
-# Create 3x2 subplot grid
+# Create 3x2 subplot grid with better spacing
 fig = make_subplots(
     rows=2, cols=3,
     subplot_titles=[f"{col}" for col in numeric_cols[:6]],
-    vertical_spacing=0.12,
-    horizontal_spacing=0.08
+    vertical_spacing=0.15,      # Increased from 0.12
+    horizontal_spacing=0.10     # Increased from 0.08
 )
 
 # Add each sample as subplot
@@ -131,9 +131,11 @@ for idx, col in enumerate(numeric_cols[:6]):
         go.Histogram(
             x=values,
             name=col,
-            nbinsx=50,
-            opacity=0.7,
-            marker_color=theme['color_human']
+            nbinsx=40,              # Reduced bins for cleaner look
+            opacity=0.75,           # Slightly more opaque
+            marker_color=theme['color_human'],
+            marker_line_width=0.5,  # Add subtle borders
+            marker_line_color='white'
         ),
         row=row, col=col_pos
     )
@@ -144,30 +146,43 @@ fig.update_layout(
     showlegend=False,
     plot_bgcolor=theme['bg_primary'],
     paper_bgcolor=theme['paper_bg'],
-    font=dict(family="Arial", size=12, color=theme['text_primary']),
-    height=600
+    font=dict(family="Arial", size=11, color=theme['text_primary']),
+    height=650,                    # Increased height for better spacing
+    margin=dict(t=80, b=60, l=60, r=40)  # Better margins
 )
 
-# Update axes
-fig.update_xaxes(title_text=f"{transform_method} Intensity", showgrid=True, gridcolor=theme['grid'])
-fig.update_yaxes(title_text="Count", showgrid=True, gridcolor=theme['grid'])
+# Update axes with better formatting
+fig.update_xaxes(
+    title_text=f"{transform_method} Intensity",
+    showgrid=True,
+    gridcolor=theme['grid'],
+    gridwidth=0.5,
+    title_font_size=10
+)
+fig.update_yaxes(
+    title_text="Count",
+    showgrid=True,
+    gridcolor=theme['grid'],
+    gridwidth=0.5,
+    title_font_size=10
+)
 
 st.plotly_chart(fig, use_container_width=True)
 
 # ============================================================================
-# PLOT 2: RANKED INTENSITY PLOTS (GROUP A & B)
+# PLOT 2: RANKED INTENSITY PLOTS (GROUP A & B) - USE LOG2 VALUES
 # ============================================================================
 
 st.subheader("3️⃣ Ranked Intensity Plots")
 
 st.markdown("""
-Proteins ranked by median intensity. Shows dynamic range and data quality.
+Proteins ranked by median log2 intensity. Shows dynamic range and data quality.
 """)
 
-# Function to calculate ranked intensities
+# Function to calculate ranked intensities (use log2 values directly)
 def get_ranked_intensities(df, cols):
     """Calculate median intensity per protein and rank."""
-    # Get median across samples
+    # Get median across samples (already log2 transformed)
     median_intensities = df[cols].median(axis=1)
     
     # Filter valid proteins (at least one value > 1.0)
@@ -201,12 +216,12 @@ with col1:
     fig_a.update_layout(
         title="Group A: Ranked Protein Intensities",
         xaxis_title="Protein Rank",
-        yaxis_title=f"{transform_method} Intensity",
+        yaxis_title=f"{transform_method} Intensity",  # Already log2
         plot_bgcolor=theme['bg_primary'],
         paper_bgcolor=theme['paper_bg'],
         font=dict(family="Arial", size=12, color=theme['text_primary']),
-        height=400,
-        yaxis_type="log"  # Log scale for y-axis
+        height=450
+        # NO yaxis_type="log" - already log2 transformed
     )
     
     fig_a.update_xaxes(showgrid=True, gridcolor=theme['grid'])
@@ -233,12 +248,12 @@ with col2:
     fig_b.update_layout(
         title="Group B: Ranked Protein Intensities",
         xaxis_title="Protein Rank",
-        yaxis_title=f"{transform_method} Intensity",
+        yaxis_title=f"{transform_method} Intensity",  # Already log2
         plot_bgcolor=theme['bg_primary'],
         paper_bgcolor=theme['paper_bg'],
         font=dict(family="Arial", size=12, color=theme['text_primary']),
-        height=400,
-        yaxis_type="log"
+        height=450
+        # NO yaxis_type="log" - already log2 transformed
     )
     
     fig_b.update_xaxes(showgrid=True, gridcolor=theme['grid'])
