@@ -34,7 +34,6 @@ protein_data = st.session_state.protein_data
 df = protein_data.raw.copy()
 numeric_cols = protein_data.numeric_cols
 
-
 # ============================================================================
 # SIDEBAR: SETTINGS
 # ============================================================================
@@ -61,20 +60,34 @@ with st.sidebar:
     
     st.session_state.theme = theme_name
     
-    # Group assignment
-    st.subheader("Sample Groups")
-    st.info("Assign samples to groups A or B")
+    # Species filter (if species column exists)
+    st.subheader("Species Filter")
     
-    sample_groups = {}
-    for col in numeric_cols:
-        group = st.radio(
-            f"{col}",
-            options=["A", "B"],
-            key=f"group_{col}",
-            horizontal=True,
-            index=0 if "A" in col.upper() else 1
+    species_col = getattr(protein_data, 'species_col', None)
+    
+    if species_col and species_col in df.columns:
+        # Get unique species
+        available_species = df[species_col].dropna().unique().tolist()
+        
+        # Add "All Species" option
+        species_options = ["All Species"] + sorted(available_species)
+        
+        # Multi-select for species
+        selected_species = st.multiselect(
+            "Select species to include",
+            options=species_options,
+            default=["All Species"],
+            help="Filter proteins by species"
         )
-        sample_groups[col] = group
+        
+        # Apply species filter
+        if "All Species" not in selected_species and len(selected_species) > 0:
+            df = df[df[species_col].isin(selected_species)]
+            st.info(f"Filtered to {len(df):,} proteins from {len(selected_species)} species")
+        else:
+            st.info(f"Showing all {len(df):,} proteins")
+    else:
+        st.info("No species column available")
 
 # ============================================================================
 # MAIN CONTENT
@@ -84,6 +97,16 @@ st.title("📊 Visual Exploratory Data Analysis")
 
 # Get theme
 theme = get_theme(theme_name)
+
+# Auto-detect groups from sample names (no manual assignment needed)
+group_a_samples = [col for col in numeric_cols if 'A' in col.upper()]
+group_b_samples = [col for col in numeric_cols if 'B' in col.upper()]
+
+# If auto-detection fails, split in half
+if not group_a_samples or not group_b_samples:
+    mid = len(numeric_cols) // 2
+    group_a_samples = numeric_cols[:mid]
+    group_b_samples = numeric_cols[mid:]
 
 # ============================================================================
 # DATA TRANSFORMATION
@@ -98,11 +121,13 @@ col1, col2, col3 = st.columns(3)
 with col1:
     st.metric("Transform", transform_method)
 with col2:
-    group_a_samples = [c for c, g in sample_groups.items() if g == "A"]
-    group_b_samples = [c for c, g in sample_groups.items() if g == "B"]
     st.metric("Group A", len(group_a_samples))
 with col3:
     st.metric("Group B", len(group_b_samples))
+
+if species_col and species_col in df.columns:
+    st.caption(f"Species filter: {', '.join(selected_species) if 'All Species' not in selected_species else 'All'}")
+
 
 # ============================================================================
 # PLOT 1: 6 INDIVIDUAL DISTRIBUTIONS (3x2 GRID)
