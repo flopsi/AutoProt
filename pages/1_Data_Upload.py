@@ -490,7 +490,7 @@ The plot shows the distribution of raw intensities across all samples.
 
 try:
     fig = create_density_plot(
-        log2_transform.df[numeric_cols].mean(axis=1),
+        df_log2[numeric_cols].mean(axis=1),
         fc_threshold=1.0,
         theme_name=theme
     )
