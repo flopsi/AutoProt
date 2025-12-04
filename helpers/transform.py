@@ -113,7 +113,7 @@ def log2_transform(
     
     print(f"✅ Log2 transformation complete")
     
-    return df_log2
+    return df_transformed
 
 
 def log10_transform(
@@ -147,7 +147,7 @@ def log10_transform(
     
     print(f"✅ Log10 transformation complete")
     
-    return df_log10
+    return df_transformed
 
 
 def normalize_columns(
