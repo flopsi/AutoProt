@@ -431,7 +431,7 @@ if species_mapping and species_col:
     from helpers.constants import get_theme
     
     # Get current theme
-    theme_name = st.session_state.get("theme", "light")
+    theme_name = st.session_state.get("theme", "dark")
     theme = get_theme(theme_name)
     
     # Prepare data: count proteins per sample per species
