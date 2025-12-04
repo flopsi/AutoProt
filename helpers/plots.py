@@ -198,7 +198,7 @@ def create_species_distribution(
         fig.add_trace(
             go.Histogram(
                 x=data,
-                name=species,
+                name=display_name,
                 marker_color=color,
                 opacity=0.6,
                 nbinsx=40,
