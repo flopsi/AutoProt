@@ -10,6 +10,7 @@ import re
 from helpers.file_io import read_csv, read_tsv, read_excel
 from helpers.dataclasses import ProteinData
 from helpers.audit import log_event
+import altair as alt
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -418,24 +419,36 @@ with col4:
 
 
 
-# Species breakdown (if available)
-if species_mapping:
-    st.subheader("Species Breakdown")
+import altair as alt
+
+if species_mapping and species_col:
+    st.subheader("Species Breakdown by Sample")
     
-    species_counts = pd.Series(species_mapping).value_counts()
+    # Prepare data
+    chart_data = []
+    for sample in numeric_cols:
+        species_in_sample = df[df[sample] > 1.0][species_col].value_counts()
+        for species, count in species_in_sample.items():
+            chart_data.append({
+                'Sample': sample,
+                'Species': species,
+                'Count': count
+            })
     
-    col1, col2 = st.columns([2, 1])
+    chart_df = pd.DataFrame(chart_data)
     
-    with col1:
-        st.bar_chart(
-            species_counts,
-            x = "Sample".
-            y = species_counts,
-            color = color_species
-        )
-    with col2:
-        for species, count in species_counts.items():
-            st.metric(species, f"{count:,}")
+    # Altair stacked bar chart (Vega-Lite)
+    chart = alt.Chart(chart_df).mark_bar().encode(
+        x='Sample:N',
+        y='Count:Q',
+        color='Species:N'
+    ).properties(
+        width=600,
+        height=400,
+        title='Species Distribution Across Samples'
+    )
+    
+    st.altair_chart(chart, use_container_width=True)
 
 # ============================================================================
 # STEP 9: CREATE PROTEIN DATA OBJECT & STORE
