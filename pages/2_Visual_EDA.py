@@ -1,239 +1,136 @@
 """
 pages/2_Visual_EDA.py
-Visual exploratory data analysis with normality testing and density plots
+SIMPLE 6-panel intensity plots - no caching, no filtering issues
 """
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-
-from helpers.transforms import compute_all_transforms_cached, TRANSFORM_NAMES, TRANSFORM_DESCRIPTIONS
-from helpers.normality import analyze_all_transformations, find_best_transformation
-from helpers.plots import create_density_histograms
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from helpers.constants import get_theme
-
-# ============================================================================
-# PAGE CONFIGURATION
-# ============================================================================
 
 st.set_page_config(page_title="Visual EDA", layout="wide")
 
-# ============================================================================
-# LOAD DATA
-# ============================================================================
-
 st.title("📊 Visual Exploratory Data Analysis")
 
+# Load data
 protein_data = st.session_state.get("protein_data")
 if not protein_data:
-    st.error("❌ No data loaded. Please upload data first on the Data Upload page.")
+    st.error("❌ No data loaded. Please upload data first.")
     st.stop()
 
-st.success(f"✅ Loaded: {len(protein_data.raw):,} proteins × {len(protein_data.numeric_cols)} samples")
+st.success(f"✅ Loaded: {len(protein_data.raw)} proteins × {len(protein_data.numeric_cols)} samples")
 
-# ============================================================================
-# COMPUTE ALL TRANSFORMS (CACHED)
-# ============================================================================
-
-with st.spinner("Computing transformations..."):
-    all_transforms = compute_all_transforms_cached(
-        df=protein_data.raw,
-        numeric_cols=protein_data.numeric_cols,
-        _hash_key=protein_data.file_path
-    )
-
-st.info(f"💾 Cached {len(all_transforms)} transformations")
-
-# ============================================================================
-# NORMALITY ANALYSIS
-# ============================================================================
-
-st.subheader("1️⃣ Normality Analysis")
-st.caption("Testing which transformation best normalizes intensity distributions")
-
-# Analyze all transformations
-stats_df = analyze_all_transformations(
-    all_transforms=all_transforms,
-    numeric_cols=protein_data.numeric_cols,
-    _hash_key=protein_data.file_path
-)
-
-# Find best transformation
-best_transform, best_W = find_best_transformation(stats_df)
-
-# Format and display table
-display_df = stats_df.copy()
-
-# Highlight best transformation
-def highlight_best(row):
-    if row["Transformation"] == best_transform:
-        return ["background-color: #B5BD00; color: white; font-weight: bold"] * len(row)
-    return [""] * len(row)
-
-styled_df = display_df.style.apply(highlight_best, axis=1).format({
-    "Kurtosis": "{:.3f}",
-    "Skewness": "{:.3f}",
-    "Shapiro_W": "{:.4f}",
-    "Shapiro_p": "{:.2e}",
-    "Normal_Count": "{:.0f}",
-    "Total_Samples": "{:.0f}"
-})
-
-st.dataframe(styled_df, width='stretch', hide_index=True)
-
-# Show recommendation
-st.success(f"✅ **Recommended: {TRANSFORM_NAMES.get(best_transform, best_transform)}** (Shapiro W = {best_W:.4f})")
-
-st.markdown("""
-**Interpretation:**
-- **Shapiro W**: Higher is better (closer to 1.0 = more normal)
-- **Shapiro p**: > 0.05 indicates normal distribution
-- **Kurtosis**: Closer to 0 is better (measures tail heaviness)
-- **Skewness**: Closer to 0 is better (measures asymmetry)
-- **Normal Count**: Number of samples passing normality test (p > 0.05)
-""")
-
-st.divider()
-
-# ============================================================================
-# VISUALIZATION CONTROLS
-# ============================================================================
-
-st.subheader("2️⃣ Distribution Visualization")
-
+# Simple controls
+st.subheader("🎛️ Controls")
 col1, col2 = st.columns(2)
 
 with col1:
-    # Transform selector
-    transform_options = list(all_transforms.keys())
-    selected_transform = st.selectbox(
-        "Select Transformation",
-        options=transform_options,
-        format_func=lambda x: TRANSFORM_NAMES.get(x, x),
-        index=transform_options.index(best_transform) if best_transform in transform_options else 0,
-        help="Choose transformation to visualize"
+    transform = st.selectbox(
+        "Transformation", 
+        ["raw", "log2", "log10", "sqrt"],
+        index=0
     )
-    
-    st.caption(TRANSFORM_DESCRIPTIONS.get(selected_transform, ""))
 
 with col2:
-    # Species filter
-    if protein_data.species_mapping:
-        species_available = sorted(list(set(protein_data.species_mapping.values())))
-        species_available = [s for s in species_available if s and s != 'Unknown']
-        
-        if species_available:
-            selected_species = st.multiselect(
-                "Filter by Species",
-                options=species_available,
-                default=species_available,
-                help="Select species to include"
-            )
-        else:
-            selected_species = None
-            st.info("No species information available")
-    else:
-        selected_species = None
-        st.info("No species information available")
+    max_cols = st.slider("Max samples to plot", 1, min(12, len(protein_data.numeric_cols)), 6)
 
-# ============================================================================
-# PREPARE DATA FOR PLOTTING
-# ============================================================================
+st.divider()
 
-df_to_plot = all_transforms[selected_transform].copy()
+# APPLY TRANSFORMATION (SIMPLE)
+df = protein_data.raw.copy()
+numeric_cols = protein_data.numeric_cols[:max_cols]
 
-# Apply species filter
-if selected_species and protein_data.species_mapping:
-    # Get protein IDs for selected species
-    protein_ids_to_keep = [
-        pid for pid, species in protein_data.species_mapping.items()
-        if species in selected_species
-    ]
-    
-    # Filter dataframe by index
-    df_to_plot = df_to_plot[df_to_plot.index.isin(protein_ids_to_keep)]
-    
-    species_str = ', '.join(selected_species)
-    st.info(f"📊 Plotting **{len(df_to_plot):,} proteins** from: **{species_str}**")
-else:
-    st.info(f"📊 Plotting **{len(df_to_plot):,} proteins** (all species)")
+if transform == "log2":
+    for col in numeric_cols:
+        df[col] = np.log2(df[col].clip(lower=1.0))
+elif transform == "log10":
+    for col in numeric_cols:
+        df[col] = np.log10(df[col].clip(lower=1.0))
+elif transform == "sqrt":
+    for col in numeric_cols:
+        df[col] = np.sqrt(df[col].clip(lower=0))
 
-# Check if we have data
-if len(df_to_plot) == 0:
-    st.error("❌ No data after filtering!")
-    st.stop()
-
-# ============================================================================
-# DENSITY HISTOGRAMS
-# ============================================================================
+# 6-PANEL INTENSITY PLOTS (WORKING VERSION)
+st.subheader("📈 Sample Intensity Distributions")
 
 theme = get_theme(st.session_state.get("theme", "light"))
 
-with st.spinner("Creating plots..."):
-    fig = create_density_histograms(
-        df=df_to_plot,
-        numeric_cols=protein_data.numeric_cols,
-        transform_name=TRANSFORM_NAMES.get(selected_transform, selected_transform),
-        theme=theme,
-        max_plots=6
-    )
+# Create 2x3 grid
+fig = make_subplots(
+    rows=2, 
+    cols=3,
+    subplot_titles=[f"<b>{col}</b>" for col in numeric_cols[:6]],
+    vertical_spacing=0.15,
+    horizontal_spacing=0.10
+)
 
-st.plotly_chart(fig, width='stretch')
-
-# ============================================================================
-# SUMMARY STATISTICS
-# ============================================================================
-
-st.subheader("3️⃣ Summary Statistics")
-
-summary_data = []
-for col in protein_data.numeric_cols[:6]:  # Match plot limit
-    sample_data = df_to_plot[col][df_to_plot[col] > 1.0].dropna()
+# Plot each sample
+for idx, col in enumerate(numeric_cols[:6]):
+    row = (idx // 3) + 1
+    col_pos = (idx % 3) + 1
     
-    if len(sample_data) > 0:
+    # Get values > 1.0 (standard proteomics filter)
+    values = df[col][df[col] > 1.0].dropna()
+    
+    if len(values) == 0:
+        continue
+    
+    # Add histogram
+    fig.add_trace(
+        go.Histogram(
+            x=values,
+            nbinsx=40,
+            opacity=0.75,
+            marker_color=theme.get('primary', '#1f77b4'),
+            name=col,
+            showlegend=False
+        ),
+        row=row, col=col_pos
+    )
+    
+    # Add mean line
+    mean_val = values.mean()
+    fig.add_vline(
+        x=mean_val,
+        line_dash="dash",
+        line_color="red",
+        line_width=2,
+        row=row, col=col_pos
+    )
+    
+    # Update axes
+    fig.update_xaxes(title_text="Intensity", showgrid=True, row=row, col=col_pos)
+    fig.update_yaxes(title_text="Count", showgrid=True, row=row, col=col_pos)
+
+# Layout
+fig.update_layout(
+    height=650,
+    showlegend=False,
+    title_text=f"<b>Intensity Distributions ({transform.upper()})</b>",
+    plot_bgcolor=theme.get('bg_primary', 'white'),
+    paper_bgcolor=theme.get('paper_bg', 'white'),
+    font=dict(family="Arial", size=11)
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+# Simple summary stats
+st.subheader("📊 Summary Statistics")
+summary_data = []
+for col in numeric_cols[:6]:
+    values = df[col][df[col] > 1.0].dropna()
+    if len(values) > 0:
         summary_data.append({
             'Sample': col,
-            'N': int(len(sample_data)),
-            'Mean': float(sample_data.mean()),
-            'Median': float(sample_data.median()),
-            'Std_Dev': float(sample_data.std()),
-            'Min': float(sample_data.min()),
-            'Max': float(sample_data.max())
+            'N': len(values),
+            'Mean': values.mean(),
+            'Std': values.std(),
+            'Min': values.min(),
+            'Max': values.max()
         })
 
 if summary_data:
-    summary_df = pd.DataFrame(summary_data)
-    
-    # Format numeric columns
-    for col in ['Mean', 'Median', 'Std_Dev', 'Min', 'Max']:
-        if col in summary_df.columns:
-            summary_df[col] = summary_df[col].apply(lambda x: f"{x:.2f}")
-    
-    summary_df = summary_df.rename(columns={'Std_Dev': 'Std Dev'})
-    st.dataframe(summary_df, width='stretch')
-else:
-    st.warning("No data for summary statistics")
-
-# ============================================================================
-# FOOTER
-# ============================================================================
-
-st.divider()
-st.markdown("""
-### 💡 Tips
-
-**Normality Testing:**
-- **Shapiro-Wilk test**: Most reliable for sample sizes 20-5000
-- **p > 0.05**: Data likely normally distributed
-- **Higher W value**: Better fit to normal distribution
-
-**Choosing Transformations:**
-- **Log2**: Standard for proteomics fold-change analysis
-- **Yeo-Johnson**: Best for data with zeros and negatives
-- **VST**: Stabilizes variance across intensity range
-
-**Visual Inspection:**
-- **Symmetric bell curve**: Good normality
-- **Red line (mean)** should be centered
-- **Red curve (KDE)**: Smoothed density estimate
-""")
+    summary_df = pd.DataFrame(summary_data).round(2)
+    st.dataframe(summary_df, use_container_width=True)
