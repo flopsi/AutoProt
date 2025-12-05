@@ -8,6 +8,43 @@ import pandas as pd
 import numpy as np
 from scipy.stats import ttest_ind
 from typing import Dict, Tuple
+from scipy import stats
+
+def test_normality_shapiro(
+    series: pd.Series,
+    alpha: float = 0.05,
+) -> dict:
+    """
+    Shapiro–Wilk normality test on a 1D numeric series.
+
+    Returns:
+        {
+            "statistic": float,
+            "p_value": float,
+            "is_normal": bool,
+            "alpha": float,
+            "n": int,
+        }
+    """
+    x = pd.to_numeric(series, errors="coerce").dropna().values
+    n = len(x)
+    if n < 3:
+        return {
+            "statistic": np.nan,
+            "p_value": np.nan,
+            "is_normal": False,
+            "alpha": alpha,
+            "n": n,
+        }
+
+    stat, p = stats.shapiro(x)
+    return {
+        "statistic": float(stat),
+        "p_value": float(p),
+        "is_normal": bool(p > alpha),
+        "alpha": alpha,
+        "n": n,
+    }
 
 # ============================================================================
 # T-TEST & FDR CALCULATION
