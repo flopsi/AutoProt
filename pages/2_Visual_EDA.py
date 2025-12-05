@@ -1,12 +1,10 @@
-# pages/2_Visual_EDA.py
-
 import streamlit as st
 
-from helpers.transforms import apply_transformation, TRANSFORM_NAMES
+from helpers.transforms import cached_apply_transformation, TRANSFORM_NAMES
 from helpers.evaluation import (
     create_raw_row_figure,
     create_transformed_row_figure,
-    evaluate_transformation_metrics,
+    cached_evaluate_transformation_metrics,
 )
 from helpers.comparison import compare_transformations
 
@@ -25,19 +23,20 @@ if not numeric_cols:
     st.error("No numeric intensity columns found.")
     st.stop()
 
+# simple file_hash: use file path or shape string
+file_hash = getattr(protein_data, "file_path", str(df_raw.shape))
+
 st.success(f"{len(df_raw):,} proteins × {len(numeric_cols)} intensity columns")
 
-# ----------------- controls -----------------
+# controls
 st.subheader("1️⃣ Select Transformations")
-
 available_methods = [m for m in TRANSFORM_NAMES.keys() if m != "raw"]
 selected_methods = st.multiselect(
     "Transformations to evaluate",
     options=available_methods,
-    default=["log2"],
+    default=["log2", "log10", "sqrt", "arcsinh", "vst"],
     format_func=lambda x: TRANSFORM_NAMES.get(x, x),
 )
-
 if not selected_methods:
     st.info("Select at least one transformation.")
     st.stop()
@@ -50,19 +49,17 @@ max_cols = st.slider(
 )
 eval_cols = numeric_cols[:max_cols]
 
-# ----------------- raw row (once) -----------------
-st.subheader("Data Diagnostic")
-
-raw_fig = create_raw_row_figure(df_raw=df_raw, raw_cols=eval_cols)
+# raw row (cached inside)
+st.subheader("2️⃣ Raw Data Diagnostics (Reference)")
+raw_fig = create_raw_row_figure(df_raw=df_raw, raw_cols=eval_cols, title="Raw Data", file_hash=file_hash)
 st.plotly_chart(raw_fig, use_container_width=True)
 
-# ----------------- transformed rows -----------------
-
-
-all_metrics = {}
+# transformed rows (cached transforms + metrics)
+st.subheader("3️⃣ Transformation Diagnostics")
 for method in selected_methods:
+    st.markdown(f"#### 🔄 {TRANSFORM_NAMES.get(method, method)}")
 
-    df_trans, trans_cols = apply_transformation(df_raw, eval_cols, method)
+    df_trans, trans_cols = cached_apply_transformation(df_raw, eval_cols, method, file_hash)
     trans_fig = create_transformed_row_figure(
         df_transformed=df_trans,
         trans_cols=trans_cols,
@@ -70,13 +67,14 @@ for method in selected_methods:
     )
     st.plotly_chart(trans_fig, use_container_width=True)
 
-    metrics = evaluate_transformation_metrics(
+    metrics = cached_evaluate_transformation_metrics(
         df_raw=df_raw,
         df_transformed=df_trans,
         raw_cols=eval_cols,
         trans_cols=trans_cols,
+        method=method,
+        file_hash=file_hash,
     )
-    all_metrics[method] = metrics
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -90,13 +88,13 @@ for method in selected_methods:
 
     st.markdown("---")
 
-# ----------------- bottom ranking table -----------------
+# bottom ranking (cached)
 st.subheader("4️⃣ Transformation Ranking")
-
 summary_df, _ = compare_transformations(
     df_raw=df_raw,
     numeric_cols=eval_cols,
     methods=selected_methods,
+    file_hash=file_hash,
 )
 
 if summary_df.empty:
