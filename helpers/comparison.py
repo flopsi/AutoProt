@@ -9,6 +9,42 @@ import numpy as np
 from typing import Dict, List, Tuple
 from helpers.transforms import apply_transformation
 from helpers.evaluation import evaluate_transformation
+from typing import Dict, List, Tuple
+from helpers.transforms import apply_transformation
+from helpers.evaluation import evaluate_transformation_metrics
+
+
+def compare_transformations(
+    df_raw: pd.DataFrame,
+    numeric_cols: List[str],
+    methods: List[str],
+) -> Tuple[pd.DataFrame, Dict[str, Dict]]:
+    """Run evaluation_metrics for each transform and build summary table."""
+    results = []
+    metrics_by_method: Dict[str, Dict] = {}
+
+    for m in methods:
+        df_t, trans_cols = apply_transformation(df_raw, numeric_cols, m)
+        metrics = evaluate_transformation_metrics(df_raw, df_t, numeric_cols, trans_cols)
+        metrics_by_method[m] = metrics
+        results.append(
+            dict(
+                method=m,
+                shapiro_p=metrics["shapiro_trans"],
+                mean_var_corr=metrics["mean_var_corr_trans"],
+            )
+        )
+
+    summary = pd.DataFrame(results)
+    if not summary.empty:
+        # higher p, lower |corr| is better
+        summary["combined_score"] = (
+            summary["shapiro_p"].rank(ascending=False, method="average")
+            + (1 - summary["mean_var_corr"].abs()).rank(ascending=False, method="average")
+        )
+        summary = summary.sort_values("combined_score", ascending=False).reset_index(drop=True)
+    return summary, metrics_by_method
+
 
 def find_best_transformation(summary_df: pd.DataFrame) -> Tuple[str, str]:
     """Find best transformation based on multiple criteria."""
