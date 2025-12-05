@@ -1,29 +1,35 @@
 """
 helpers/transforms.py
-Data transformation functions with full caching support
+Data transformation functions - ENHANCED VERSION
 """
 
-import streamlit as st
 import pandas as pd
 import numpy as np
 from scipy import stats
-from sklearn.preprocessing import PowerTransformer, QuantileTransformer
+from sklearn.preprocessing import (
+    QuantileTransformer, 
+    PowerTransformer, 
+    RobustScaler,
+    StandardScaler,
+    MinMaxScaler
+)
+# Add these imports at the very top if not already there
+import streamlit as st
+from sklearn.preprocessing import PowerTransformer
 from typing import Dict
 
 # ============================================================================
-# CACHED TRANSFORM COMPUTATION
+# ADD THIS NEW FUNCTION (keep all your existing functions below)
 # ============================================================================
 
 @st.cache_data(show_spinner="🔄 Computing all transformations...")
 def compute_all_transforms_cached(
     df: pd.DataFrame, 
     numeric_cols: list,
-    _hash_key: str  # For cache invalidation when new file uploaded
+    _hash_key: str
 ) -> Dict[str, pd.DataFrame]:
     """
     Pre-compute ALL transformations once and cache them.
-    This is the main performance optimization - transforms computed once,
-    reused everywhere.
     
     Parameters:
     -----------
@@ -36,7 +42,7 @@ def compute_all_transforms_cached(
     
     Returns:
     --------
-    dict : {
+    dict: {
         'raw': DataFrame (original data),
         'log2': DataFrame,
         'log10': DataFrame,
@@ -44,7 +50,7 @@ def compute_all_transforms_cached(
         'sqrt': DataFrame,
         'arcsinh': DataFrame,
         'yeo_johnson': DataFrame,
-        'vst': DataFrame (variance-stabilizing)
+        'vst': DataFrame
     }
     """
     results = {}
@@ -52,23 +58,18 @@ def compute_all_transforms_cached(
     # Store raw data
     results['raw'] = df.copy()
     
-    # Extract numeric data for transformations
+    # Extract numeric data
     df_numeric = df[numeric_cols].copy()
     
-    # ========================================================================
-    # LOG2 TRANSFORMATION
-    # ========================================================================
+    # Log2
     df_log2 = df.copy()
     for col in numeric_cols:
-        # Handle zeros and negatives by adding small constant if needed
         vals = df_numeric[col]
         min_val = vals[vals > 0].min() if (vals > 0).any() else 1.0
         df_log2[col] = np.log2(vals.clip(lower=min_val))
     results['log2'] = df_log2
     
-    # ========================================================================
-    # LOG10 TRANSFORMATION
-    # ========================================================================
+    # Log10
     df_log10 = df.copy()
     for col in numeric_cols:
         vals = df_numeric[col]
@@ -76,9 +77,7 @@ def compute_all_transforms_cached(
         df_log10[col] = np.log10(vals.clip(lower=min_val))
     results['log10'] = df_log10
     
-    # ========================================================================
-    # NATURAL LOG (LN) TRANSFORMATION
-    # ========================================================================
+    # Natural log
     df_ln = df.copy()
     for col in numeric_cols:
         vals = df_numeric[col]
@@ -86,36 +85,25 @@ def compute_all_transforms_cached(
         df_ln[col] = np.log(vals.clip(lower=min_val))
     results['ln'] = df_ln
     
-    # ========================================================================
-    # SQUARE ROOT TRANSFORMATION
-    # ========================================================================
+    # Square root
     df_sqrt = df.copy()
     for col in numeric_cols:
-        # sqrt requires non-negative values
-        vals = df_numeric[col]
-        df_sqrt[col] = np.sqrt(vals.clip(lower=0))
+        df_sqrt[col] = np.sqrt(df_numeric[col].clip(lower=0))
     results['sqrt'] = df_sqrt
     
-    # ========================================================================
-    # ARCSINH TRANSFORMATION (inverse hyperbolic sine)
-    # ========================================================================
+    # Arcsinh
     df_arcsinh = df.copy()
     for col in numeric_cols:
-        # arcsinh can handle all real numbers, including negatives
         df_arcsinh[col] = np.arcsinh(df_numeric[col])
     results['arcsinh'] = df_arcsinh
     
-    # ========================================================================
-    # YEO-JOHNSON TRANSFORMATION
-    # ========================================================================
+    # Yeo-Johnson
     df_yj = df.copy()
     pt = PowerTransformer(method='yeo-johnson', standardize=False)
     try:
-        # Transform all numeric columns at once
         transformed = pt.fit_transform(df_numeric)
         df_yj[numeric_cols] = transformed
-    except Exception as e:
-        # Fallback: transform column by column
+    except:
         for col in numeric_cols:
             try:
                 vals = df_numeric[[col]].dropna()
@@ -123,102 +111,23 @@ def compute_all_transforms_cached(
                     transformed = pt.fit_transform(vals)
                     df_yj.loc[vals.index, col] = transformed.flatten()
             except:
-                # If transform fails, keep original
                 df_yj[col] = df_numeric[col]
     results['yeo_johnson'] = df_yj
     
-    # ========================================================================
-    # VST (VARIANCE STABILIZING TRANSFORMATION)
-    # ========================================================================
+    # VST (Variance Stabilizing)
     df_vst = df.copy()
-    # Calculate global median across all intensity columns
     median_intensity = df_numeric.median().median()
     if median_intensity <= 0 or np.isnan(median_intensity):
         median_intensity = 1.0
     
     for col in numeric_cols:
-        # VST: arcsinh(x / (2 * median))
         df_vst[col] = np.arcsinh(df_numeric[col] / (2 * median_intensity))
     results['vst'] = df_vst
     
     return results
 
 
-# ============================================================================
-# INDIVIDUAL TRANSFORM FUNCTIONS (for backwards compatibility)
-# ============================================================================
-
-def apply_log2(df: pd.DataFrame, numeric_cols: list) -> pd.DataFrame:
-    """Apply log2 transformation."""
-    df_out = df.copy()
-    for col in numeric_cols:
-        vals = df[col]
-        min_val = vals[vals > 0].min() if (vals > 0).any() else 1.0
-        df_out[col] = np.log2(vals.clip(lower=min_val))
-    return df_out
-
-
-def apply_log10(df: pd.DataFrame, numeric_cols: list) -> pd.DataFrame:
-    """Apply log10 transformation."""
-    df_out = df.copy()
-    for col in numeric_cols:
-        vals = df[col]
-        min_val = vals[vals > 0].min() if (vals > 0).any() else 1.0
-        df_out[col] = np.log10(vals.clip(lower=min_val))
-    return df_out
-
-
-def apply_ln(df: pd.DataFrame, numeric_cols: list) -> pd.DataFrame:
-    """Apply natural log transformation."""
-    df_out = df.copy()
-    for col in numeric_cols:
-        vals = df[col]
-        min_val = vals[vals > 0].min() if (vals > 0).any() else 1.0
-        df_out[col] = np.log(vals.clip(lower=min_val))
-    return df_out
-
-
-def apply_sqrt(df: pd.DataFrame, numeric_cols: list) -> pd.DataFrame:
-    """Apply square root transformation."""
-    df_out = df.copy()
-    for col in numeric_cols:
-        df_out[col] = np.sqrt(df[col].clip(lower=0))
-    return df_out
-
-
-def apply_arcsinh(df: pd.DataFrame, numeric_cols: list) -> pd.DataFrame:
-    """Apply inverse hyperbolic sine transformation."""
-    df_out = df.copy()
-    for col in numeric_cols:
-        df_out[col] = np.arcsinh(df[col])
-    return df_out
-
-
-def apply_yeo_johnson(df: pd.DataFrame, numeric_cols: list) -> pd.DataFrame:
-    """Apply Yeo-Johnson power transformation."""
-    df_out = df.copy()
-    pt = PowerTransformer(method='yeo-johnson', standardize=False)
-    transformed = pt.fit_transform(df[numeric_cols])
-    df_out[numeric_cols] = transformed
-    return df_out
-
-
-def apply_vst(df: pd.DataFrame, numeric_cols: list) -> pd.DataFrame:
-    """Apply variance-stabilizing transformation."""
-    df_out = df.copy()
-    median_intensity = df[numeric_cols].median().median()
-    if median_intensity <= 0 or np.isnan(median_intensity):
-        median_intensity = 1.0
-    
-    for col in numeric_cols:
-        df_out[col] = np.arcsinh(df[col] / (2 * median_intensity))
-    return df_out
-
-
-# ============================================================================
-# TRANSFORM METADATA
-# ============================================================================
-
+# Add these constants at the end of the file
 TRANSFORM_NAMES = {
     'raw': 'Raw (No Transform)',
     'log2': 'Log2',
@@ -240,3 +149,238 @@ TRANSFORM_DESCRIPTIONS = {
     'yeo_johnson': 'Power transformation that handles zeros and negatives',
     'vst': 'Variance stabilizing - normalizes variance across intensity range'
 }
+
+def apply_transform(df: pd.DataFrame, numeric_cols: list, method: str = "log2") -> pd.DataFrame:
+    """
+    Apply transformation to numeric columns.
+    
+    Args:
+        df: Input dataframe
+        numeric_cols: List of numeric column names
+        method: Transform method
+        
+    Available methods:
+        - log2: Log2 transform (proteomics standard)
+        - log10: Log10 transform
+        - sqrt: Square root
+        - cbrt: Cube root
+        - yeo_johnson: Yeo-Johnson power transform
+        - quantile: Quantile normalization
+        - robust: Robust scaling (median/IQR)
+        - zscore: Z-score standardization
+        - minmax: Min-max scaling [0, 1]
+        
+    Returns:
+        Transformed dataframe
+    """
+    df_transformed = df.copy()
+    
+    # Replace NaN and 0 with 1.0 before transformation
+    for col in numeric_cols:
+        if col in df_transformed.columns:
+            df_transformed[col] = df_transformed[col].fillna(1.0)
+            df_transformed.loc[df_transformed[col] == 0, col] = 1.0
+    
+    # Apply transformation
+    if method == "log2":
+        for col in numeric_cols:
+            df_transformed[col] = np.log2(df_transformed[col])
+    
+    elif method == "log10":
+        for col in numeric_cols:
+            df_transformed[col] = np.log10(df_transformed[col])
+    
+    elif method == "sqrt":
+        for col in numeric_cols:
+            df_transformed[col] = np.sqrt(df_transformed[col])
+    
+    elif method == "cbrt":
+        for col in numeric_cols:
+            df_transformed[col] = np.cbrt(df_transformed[col])
+    
+    elif method == "yeo_johnson":
+        pt = PowerTransformer(method='yeo-johnson', standardize=False)
+        df_transformed[numeric_cols] = pt.fit_transform(df_transformed[numeric_cols])
+    
+    elif method == "quantile":
+        qt = QuantileTransformer(output_distribution='normal')
+        df_transformed[numeric_cols] = qt.fit_transform(df_transformed[numeric_cols])
+    
+    elif method == "robust":
+        # Robust scaling using median and IQR (good for outliers)
+        scaler = RobustScaler()
+        df_transformed[numeric_cols] = scaler.fit_transform(df_transformed[numeric_cols])
+    
+    elif method == "zscore":
+        # Z-score standardization (mean=0, std=1)
+        scaler = StandardScaler()
+        df_transformed[numeric_cols] = scaler.fit_transform(df_transformed[numeric_cols])
+    
+    elif method == "minmax":
+        # Min-max scaling to [0, 1]
+        scaler = MinMaxScaler()
+        df_transformed[numeric_cols] = scaler.fit_transform(df_transformed[numeric_cols])
+    
+    else:
+        raise ValueError(f"Unknown transform method: {method}")
+    
+    # Handle infinite values
+    df_transformed[numeric_cols] = df_transformed[numeric_cols].replace([np.inf, -np.inf], 0)
+    
+    return df_transformed
+
+
+def inverse_transform(df: pd.DataFrame, numeric_cols: list, method: str = "log2") -> pd.DataFrame:
+    """
+    Reverse transformation (useful for back-transforming results).
+    
+    Args:
+        df: Transformed dataframe
+        numeric_cols: List of numeric column names
+        method: Original transform method
+        
+    Returns:
+        Back-transformed dataframe
+        
+    Note: Only works for simple transforms (log, sqrt, cbrt).
+          For sklearn scalers, you need the fitted scaler object.
+    """
+    df_original = df.copy()
+    
+    if method == "log2":
+        for col in numeric_cols:
+            df_original[col] = 2 ** df_original[col]
+    
+    elif method == "log10":
+        for col in numeric_cols:
+            df_original[col] = 10 ** df_original[col]
+    
+    elif method == "sqrt":
+        for col in numeric_cols:
+            df_original[col] = df_original[col] ** 2
+    
+    elif method == "cbrt":
+        for col in numeric_cols:
+            df_original[col] = df_original[col] ** 3
+    
+    else:
+        raise ValueError(f"Inverse transform not supported for {method}. Store fitted scaler for sklearn methods.")
+    
+    return df_original
+
+
+def get_transform_info(method: str) -> dict:
+    """
+    Get information about a transform method.
+    
+    Args:
+        method: Transform method name
+        
+    Returns:
+        Dict with description, use_case, and interpretation
+    """
+    info = {
+        "log2": {
+            "name": "Log2 Transform",
+            "use_case": "Standard for proteomics - fold changes become linear",
+            "interpretation": "Difference of 1 = 2-fold change",
+            "handles_negatives": False,
+            "invertible": True
+        },
+        "log10": {
+            "name": "Log10 Transform",
+            "use_case": "Wide dynamic range, easier to interpret powers of 10",
+            "interpretation": "Difference of 1 = 10-fold change",
+            "handles_negatives": False,
+            "invertible": True
+        },
+        "sqrt": {
+            "name": "Square Root",
+            "use_case": "Gentle transform for count data, stabilizes variance",
+            "interpretation": "Less aggressive than log",
+            "handles_negatives": False,
+            "invertible": True
+        },
+        "cbrt": {
+            "name": "Cube Root",
+            "use_case": "Very gentle transform, handles near-zero values better",
+            "interpretation": "Even less aggressive than sqrt",
+            "handles_negatives": True,
+            "invertible": True
+        },
+        "yeo_johnson": {
+            "name": "Yeo-Johnson Transform",
+            "use_case": "Automatic optimal power transform, handles negatives",
+            "interpretation": "Makes data more normal-like",
+            "handles_negatives": True,
+            "invertible": False
+        },
+        "quantile": {
+            "name": "Quantile Normalization",
+            "use_case": "Force normal distribution, remove batch effects",
+            "interpretation": "Ranks → normal quantiles",
+            "handles_negatives": True,
+            "invertible": False
+        },
+        "robust": {
+            "name": "Robust Scaling",
+            "use_case": "Remove outlier influence using median/IQR",
+            "interpretation": "Centered at median, scaled by IQR",
+            "handles_negatives": True,
+            "invertible": False
+        },
+        "zscore": {
+            "name": "Z-Score Standardization",
+            "use_case": "Compare across different scales, ML preprocessing",
+            "interpretation": "Units of standard deviations from mean",
+            "handles_negatives": True,
+            "invertible": False
+        },
+        "minmax": {
+            "name": "Min-Max Scaling",
+            "use_case": "Scale to [0, 1] range, ML preprocessing",
+            "interpretation": "0 = minimum, 1 = maximum",
+            "handles_negatives": True,
+            "invertible": False
+        }
+    }
+    
+    return info.get(method, {
+        "name": method, 
+        "use_case": "Unknown", 
+        "interpretation": "N/A",
+        "handles_negatives": False,
+        "invertible": False
+    })
+
+
+def recommend_transform(df: pd.DataFrame, numeric_cols: list) -> str:
+    """
+    Recommend a transform based on data properties.
+    
+    Args:
+        df: Input dataframe
+        numeric_cols: List of numeric column names
+        
+    Returns:
+        Recommended transform method
+    """
+    # Check for negative values
+    has_negatives = (df[numeric_cols] < 0).any().any()
+    
+    # Check dynamic range
+    valid_data = df[numeric_cols].replace(1.0, np.nan).dropna()
+    if len(valid_data) > 0:
+        dynamic_range = valid_data.max().max() / valid_data.min().min()
+    else:
+        dynamic_range = 1
+    
+    # Recommend based on properties
+    if has_negatives:
+        return "robust"  # Handles negatives well
+    elif dynamic_range > 1000:
+        return "log2"  # Large dynamic range
+    elif dynamic_range > 100:
+        return "sqrt"  # Moderate dynamic range
+    else:
+        return "zscore"  # Small dynamic range
