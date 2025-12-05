@@ -135,7 +135,7 @@ def create_raw_row_figure(
             yref="y1",
             text="±2σ",
             showarrow=False,
-            font=dict(color="#1f77b4", size=9),
+            font=dict(color="#white", size=9),
         )
 
     fig.update_xaxes(title_text="Intensity", row=1, col=1)
@@ -248,7 +248,7 @@ def create_transformed_row_figure(
         fig.add_vrect(
             x0=x0,
             x1=x1,
-            fillcolor="#ff7f0e",
+            fillcolor="#whie",
             opacity=0.15,
             line_width=0,
             row=1,
@@ -258,7 +258,7 @@ def create_transformed_row_figure(
         # Mean line
         fig.add_vline(
             x=mu,
-            line_color="darkred",
+            line_color="white",
             line_width=2,
             line_dash="dash",
             row=1,
@@ -273,7 +273,7 @@ def create_transformed_row_figure(
             yref="y1",
             text=f"μ={mu:.2f}",
             showarrow=False,
-            font=dict(color="darkred", size=10),
+            font=dict(color="white", size=10),
         )
         fig.add_annotation(
             x=x1,
@@ -282,7 +282,7 @@ def create_transformed_row_figure(
             yref="y1",
             text="±2σ",
             showarrow=False,
-            font=dict(color="#ff7f0e", size=9),
+            font=dict(color="#white", size=9),
         )
 
     fig.update_xaxes(title_text="Transformed Intensity", row=1, col=1)
