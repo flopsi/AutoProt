@@ -60,7 +60,14 @@ theme = get_theme(theme_name)
 
 st.title("📊 Visual EDA")
 
-df_transformed = apply_transform(df, numeric_cols, method=transform_method)
+if transform_method == "raw":
+    df_for_plots = protein_data.raw.copy()
+else:
+    df_for_plots = apply_transform(
+        protein_data.raw,
+        protein_data.numeric_cols,
+        method=transform_method,
+    )
 
 # Auto-detect groups
 group_a = [c for c in numeric_cols if 'A' in c.upper()] or numeric_cols[:len(numeric_cols)//2]
