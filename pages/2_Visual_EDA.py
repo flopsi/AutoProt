@@ -1,535 +1,378 @@
-"""
-pages/2_Visual_EDA.py
-Visual exploratory data analysis with distribution plots and normality testing
-"""
-
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from scipy.stats import gaussian_kde
+from scipy import stats
+from sklearn.preprocessing import PowerTransformer, QuantileTransformer
 
-from helpers.transforms import compute_all_transforms_cached, TRANSFORM_NAMES, TRANSFORM_DESCRIPTIONS
-from helpers.statistics import test_normality_all_samples
-from helpers.constants import get_theme
+from components import inject_custom_css, render_header, render_navigation, render_footer, COLORS
+from dataclasses import dataclass
+from typing import List
 
-# ============================================================================
-# LOAD DATA
-# ============================================================================
-
-st.title("📊 Visual Exploratory Data Analysis")
-
-protein_data = st.session_state.get("protein_data")
-if not protein_data:
-    st.error("❌ No data loaded. Please upload data first on the Data Upload page.")
-    st.stop()
-
-st.success(f"✅ Loaded: {len(protein_data.raw)} proteins × {len(protein_data.numeric_cols)} samples")
-
-# Debug: Show what we have
-with st.expander("🔍 Debug Info"):
-    st.write("**Protein Data Object:**")
-    st.write(f"- Numeric columns: {protein_data.numeric_cols}")
-    st.write(f"- Species column: {protein_data.species_col}")
-    st.write(f"- Index column: {protein_data.index_col}")
-    st.write(f"- Raw data shape: {protein_data.raw.shape}")
-    st.write(f"- Raw data columns: {list(protein_data.raw.columns)}")
-    
-    # Show first few rows
-    st.write("**First 3 rows of raw data:**")
-    st.dataframe(protein_data.raw.head(3))
-
-# ============================================================================
-# COMPUTE ALL TRANSFORMS (CACHED - RUNS ONCE)
-# ============================================================================
-
-with st.spinner("Computing transformations..."):
-    all_transforms = compute_all_transforms_cached(
-        df=protein_data.raw,
-        numeric_cols=protein_data.numeric_cols,
-        _hash_key=protein_data.file_path  # Cache key
-    )
-
-st.info(f"💾 Cached {len(all_transforms)} transformations for instant switching")
-
-# Debug: Check transforms
-with st.expander("🔍 Transform Debug"):
-    for transform_name, transform_df in all_transforms.items():
-        st.write(f"**{transform_name}**: shape {transform_df.shape}")
-        st.write(f"Sample values from first numeric column:")
-        if len(protein_data.numeric_cols) > 0:
-            first_col = protein_data.numeric_cols[0]
-            st.write(transform_df[first_col].head(5))
-
-# ============================================================================
-# USER CONTROLS
-# ============================================================================
-
-st.subheader("🎛️ Analysis Controls")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    # Transform selector
-    transform_options = list(all_transforms.keys())
-    selected_transform = st.selectbox(
-        "📊 Select Transformation",
-        options=transform_options,
-        format_func=lambda x: TRANSFORM_NAMES.get(x, x),
-        index=0,  # Default: raw
-        help="Choose transformation method to apply to data"
-    )
-    
-    # Show description
-    st.caption(TRANSFORM_DESCRIPTIONS.get(selected_transform, ""))
-
-with col2:
-    # Species filter
-    if protein_data.species_mapping:
-        species_available = list(set(protein_data.species_mapping.values()))
-        species_available = [s for s in species_available if s and s != 'Unknown']
-        
-        if species_available:
-            selected_species = st.multiselect(
-                "🧬 Filter by Species",
-                options=sorted(species_available),
-                default=sorted(species_available),  # All selected by default
-                help="Select species to include in analysis"
-            )
-        else:
-            selected_species = None
-            st.warning("No species information available - showing all data")
-    else:
-        selected_species = None
-        st.warning("No species information available - showing all data")
-
-st.divider()
-
-# ============================================================================
-# PREPARE DATA FOR PLOTTING
-# ============================================================================
-
-# Get the transformed dataframe
-df_to_plot = all_transforms[selected_transform].copy()
-
-st.write(f"**Initial data shape:** {df_to_plot.shape}")
-
-# Apply species filtering if needed
-if selected_species and protein_data.species_mapping:
-    st.write(f"**Attempting to filter for species: {selected_species}**")
-    
-    # Debug: Show species mapping structure
-    with st.expander("🔍 Species Mapping Debug"):
-        st.write(f"**Total proteins in species_mapping:** {len(protein_data.species_mapping)}")
-        st.write("**Sample of species_mapping (first 5):**")
-        sample_mapping = dict(list(protein_data.species_mapping.items())[:5])
-        st.write(sample_mapping)
-        
-        # Count by species
-        species_counts = {}
-        for protein_id, species in protein_data.species_mapping.items():
-            species_counts[species] = species_counts.get(species, 0) + 1
-        st.write("**Proteins per species in mapping:**")
-        st.write(species_counts)
-    
-    # Method 1: If protein_data has a species column in the dataframe
-    if protein_data.species_col and protein_data.species_col in df_to_plot.columns:
-        st.info(f"Using species column: {protein_data.species_col}")
-        df_to_plot = df_to_plot[df_to_plot[protein_data.species_col].isin(selected_species)]
-        st.write(f"**After filtering by species column:** {len(df_to_plot)} proteins")
-    
-    # Method 2: If index contains protein IDs
-    elif df_to_plot.index.name or len(df_to_plot.index) > 0:
-        st.info("Using index for species filtering")
-        
-        # Get protein IDs for selected species
-        protein_ids_to_keep = [
-            protein_id 
-            for protein_id, species in protein_data.species_mapping.items()
-            if species in selected_species
-        ]
-        
-        st.write(f"**Found {len(protein_ids_to_keep)} protein IDs matching species filter**")
-        
-        # Filter by index
-        df_to_plot = df_to_plot[df_to_plot.index.isin(protein_ids_to_keep)]
-        st.write(f"**After filtering by index:** {len(df_to_plot)} proteins")
-    
-    # Method 3: If index_col is a column in the dataframe
-    elif protein_data.index_col and protein_data.index_col in df_to_plot.columns:
-        st.info(f"Using index column: {protein_data.index_col}")
-        
-        # Get protein IDs for selected species
-        protein_ids_to_keep = [
-            protein_id 
-            for protein_id, species in protein_data.species_mapping.items()
-            if species in selected_species
-        ]
-        
-        st.write(f"**Found {len(protein_ids_to_keep)} protein IDs matching species filter**")
-        
-        # Filter by column
-        df_to_plot = df_to_plot[df_to_plot[protein_data.index_col].isin(protein_ids_to_keep)]
-        st.write(f"**After filtering by {protein_data.index_col}:** {len(df_to_plot)} proteins")
-    
-    else:
-        st.warning("⚠️ Cannot determine how to filter by species - showing all data")
-
-else:
-    st.info("**No species filtering applied - using all data**")
-
-# Final check
-n_proteins_filtered = len(df_to_plot)
-
-if n_proteins_filtered == 0:
-    st.error("❌ No data after filtering!")
-    st.error("**Possible issues:**")
-    st.error("1. Species names don't match (check case sensitivity)")
-    st.error("2. Protein IDs in dataframe don't match species_mapping keys")
-    st.error("3. Index/column structure mismatch")
-    
-    # Show debug info
-    st.write("**Debug Info:**")
-    st.write(f"- Selected species: {selected_species}")
-    st.write(f"- Dataframe index name: {df_to_plot.index.name}")
-    st.write(f"- Dataframe index sample: {list(df_to_plot.index[:5])}")
-    st.write(f"- Species mapping keys sample: {list(protein_data.species_mapping.keys())[:5]}")
-    
-    st.stop()
-
-# Show success message
-species_str = ', '.join(selected_species) if selected_species else 'All'
-st.success(f"📊 **Plotting {n_proteins_filtered:,} proteins** from species: **{species_str}**")
-
-
-# ============================================================================
-# NORMALITY TEST TABLE
-# ============================================================================
-
-st.subheader("1️⃣ Normality Test Results")
-st.markdown("""
-**Shapiro-Wilk Test** (p > 0.05 indicates normally distributed data)
-- Tests whether each sample follows a normal distribution
-- Transformation goal: Improve normality for statistical tests
-""")
-
-# Compute normality tests
-normality_df = test_normality_all_samples(
-    df_raw=all_transforms['raw'],
-    df_transformed=all_transforms[selected_transform],
-    numeric_cols=protein_data.numeric_cols,
-    alpha=0.05
+st.set_page_config(
+    page_title="EDA | Thermo Fisher Scientific",
+    page_icon="🔬",
+    layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
-# Format for display
-display_df = normality_df.copy()
-display_df['Raw_P_Value'] = display_df['Raw_P_Value'].apply(lambda x: f"{x:.4f}" if not np.isnan(x) else "N/A")
-display_df['Trans_P_Value'] = display_df['Trans_P_Value'].apply(lambda x: f"{x:.4f}" if not np.isnan(x) else "N/A")
-display_df['Raw_Statistic'] = display_df['Raw_Statistic'].apply(lambda x: f"{x:.4f}" if not np.isnan(x) else "N/A")
-display_df['Trans_Statistic'] = display_df['Trans_Statistic'].apply(lambda x: f"{x:.4f}" if not np.isnan(x) else "N/A")
+inject_custom_css()
+render_header()
 
-# Color code the table
-def highlight_normality(row):
-    colors = []
-    for col in row.index:
-        if col == 'Raw_Normal':
-            colors.append('background-color: #90EE90' if row[col] else 'background-color: #FFB6C6')
-        elif col == 'Trans_Normal':
-            colors.append('background-color: #90EE90' if row[col] else 'background-color: #FFB6C6')
-        elif col == 'Improvement':
-            if '✅' in str(row[col]):
-                colors.append('background-color: #90EE90; font-weight: bold')
-            elif '⚠️' in str(row[col]):
-                colors.append('background-color: #FFB6C6')
-            else:
-                colors.append('')
-        else:
-            colors.append('')
-    return colors
-
-styled_df = display_df.style.apply(highlight_normality, axis=1)
-st.dataframe(styled_df, width="stretch", height=300)
-
-# Summary metrics
-# Summary metrics - FIX st.columns error
-n_normal_raw = normality_df['Raw_Normal'].sum()
-n_normal_trans = normality_df['Trans_Normal'].sum()
-n_improved = len([x for x in normality_df['Improvement'] if '✅' in str(x)])
-
-# Only create columns if we have data
-if len(normality_df) > 0:
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.metric("Samples Tested", len(normality_df))
-    with c2:
-        st.metric("Normal (Raw)", f"{n_normal_raw}/{len(normality_df)}")
-    with c3:
-        st.metric("Normal (Transformed)", f"{n_normal_trans}/{len(normality_df)}")
-    with c4:
-        delta_val = n_improved - n_normal_raw
-        st.metric("Improved", f"{n_improved}", delta=f"{delta_val:+d}")
-else:
-    st.warning("No data to analyze")
+# ----------------- data model (same as upload) -----------------
+@dataclass
+class MSData:
+    original: pd.DataFrame
+    filled: pd.DataFrame
+    log2_filled: pd.DataFrame
+    numeric_cols: List[str]
 
 
-st.divider()
+# Thermo Fisher chart colors
+TF_CHART_COLORS = ["#262262", "#A6192E", "#EA7600", "#F1B434", "#B5BD00", "#9BD3DD"]
 
-# ============================================================================
-# FILTER DATA BY SPECIES
-# ============================================================================
 
-df_to_plot = all_transforms[selected_transform].copy()
+def parse_protein_group(pg_str: str) -> str:
+    if pd.isna(pg_str):
+        return "Unknown"
+    return str(pg_str).split(";")[0].strip()
 
-if selected_species:
-    # Create species series
-    species_series = pd.Series(protein_data.species_mapping)
-    # Filter to selected species
-    mask = species_series.isin(selected_species)
-    protein_ids = species_series[mask].index
-    df_to_plot = df_to_plot[df_to_plot.index.isin(protein_ids)]
-    
-    n_proteins_filtered = len(df_to_plot)
-    species_str = ', '.join(selected_species)
-    st.info(f"📊 Plotting **{n_proteins_filtered:,} proteins** from species: **{species_str}**")
-else:
-    st.info(f"📊 Plotting **{len(df_to_plot):,} proteins** (all species)")
 
-# ============================================================================
-# 6-PANEL DISTRIBUTION PLOTS
-# ============================================================================
+def get_numeric_cols(df: pd.DataFrame) -> list[str]:
+    return [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
 
-st.subheader("2️⃣ Individual Sample Distributions")
-st.markdown("""
-Each plot shows:
-- **Histogram**: Distribution of intensity values
-- **Red dashed line**: Mean value
-- **Shaded region**: ±2 standard deviations (95% of data if normal)
-""")
 
-theme = get_theme(st.session_state.get("theme", "light"))
+def sort_columns_by_condition(cols: list[str]) -> list[str]:
+    def sort_key(col):
+        if "_" in col:
+            parts = col.rsplit("_", 1)
+            return (parts[0], int(parts[1]) if parts[1].isdigit() else 0)
+        # fall back to prefix-letter + digits (A1, B2,...)
+        if len(col) >= 1 and col[0].isalpha():
+            head, tail = col[0], col[1:]
+            return (head, int(tail) if tail.isdigit() else 0)
+        return (col, 0)
+    return sorted(cols, key=sort_key)
 
-# Determine how many samples to plot (max 6 for 2x3 grid)
-n_samples = min(len(protein_data.numeric_cols), 6)
-numeric_cols = protein_data.numeric_cols[:n_samples]
 
-# Create subplot grid
-fig = make_subplots(
-    rows=2, cols=3,
-    subplot_titles=[f"<b>{col}</b>" for col in numeric_cols],
-    vertical_spacing=0.15,
-    horizontal_spacing=0.10
-)
+# --- Transformation functions (unchanged) ---
+def transform_raw(x):
+    return x
 
-# Plot each sample
-for idx, col in enumerate(numeric_cols):
-    row = (idx // 3) + 1
-    col_pos = (idx % 3) + 1
-    
-    # Get filtered data for this sample (drop NaN and values == 1.0)
-    values = df_to_plot[col][df_to_plot[col] > 1.0].dropna().values
-    
-    if len(values) == 0:
-        # Add "No data" annotation if empty
-        fig.add_annotation(
-            text="No data",
-            xref=f"x{idx+1}" if idx > 0 else "x",
-            yref=f"y{idx+1}" if idx > 0 else "y",
-            x=0.5,
-            y=0.5,
-            showarrow=False,
-            row=row,
-            col=col_pos
+
+def transform_log2(x):
+    return np.log2(x + 1)
+
+
+def transform_log10(x):
+    return np.log10(x + 1)
+
+
+def transform_sqrt(x):
+    return np.sqrt(x)
+
+
+def transform_cbrt(x):
+    return np.cbrt(x)
+
+
+def transform_yeojohnson(x):
+    try:
+        pt = PowerTransformer(method="yeo-johnson", standardize=False)
+        return pt.fit_transform(x.reshape(-1, 1)).flatten()
+    except Exception:
+        return x
+
+
+def transform_quantile(x):
+    try:
+        qt = QuantileTransformer(output_distribution="normal", random_state=42)
+        return qt.fit_transform(x.reshape(-1, 1)).flatten()
+    except Exception:
+        return x
+
+
+TRANSFORMATIONS = {
+    "Raw": transform_raw,
+    "Log2": transform_log2,
+    "Log10": transform_log10,
+    "Square root": transform_sqrt,
+    "Cube root": transform_cbrt,
+    "Yeo-Johnson": transform_yeojohnson,
+    "Quantile": transform_quantile,
+}
+
+
+@st.cache_data
+def compute_normality_stats(values: np.ndarray) -> dict:
+    clean = values[np.isfinite(values)]
+    if len(clean) < 20:
+        return {"kurtosis": np.nan, "skewness": np.nan, "W": np.nan, "p": np.nan}
+    if len(clean) > 5000:
+        sample = np.random.choice(clean, 5000, replace=False)
+    else:
+        sample = clean
+    try:
+        W, p = stats.shapiro(sample)
+    except Exception:
+        W, p = np.nan, np.nan
+    return {
+        "kurtosis": stats.kurtosis(clean),
+        "skewness": stats.skew(clean),
+        "W": W,
+        "p": p,
+    }
+
+
+@st.cache_data
+def analyze_transformations(df_json: str, numeric_cols: list[str]) -> pd.DataFrame:
+    df = pd.read_json(df_json)
+    all_values = df[numeric_cols].values.flatten()
+    all_values = all_values[np.isfinite(all_values)]
+    all_values = all_values[all_values > 0]
+    results = []
+    for name, func in TRANSFORMATIONS.items():
+        transformed = func(all_values.copy())
+        stats_dict = compute_normality_stats(transformed)
+        results.append(
+            {
+                "Transformation": name,
+                "Kurtosis": stats_dict["kurtosis"],
+                "Skewness": stats_dict["skewness"],
+                "Shapiro W": stats_dict["W"],
+                "Shapiro p": stats_dict["p"],
+            }
         )
-        continue
-    
-    # Calculate statistics
-    mean_val = np.mean(values)
-    std_val = np.std(values)
-    lower_bound = mean_val - 2 * std_val
-    upper_bound = mean_val + 2 * std_val
-    
-    # Add histogram
-    fig.add_trace(
-        go.Histogram(
-            x=values,
-            name=col,
-            nbinsx=40,
-            opacity=0.75,
-            marker_color=theme['primary'],
-            showlegend=False,
-            hovertemplate="Intensity: %{x:.2f}<br>Count: %{y}<extra></extra>"
-        ),
-        row=row, col=col_pos
-    )
-    
-    # Add mean line (vertical line)
-    # Get histogram to determine y-axis range
-    hist_values, bin_edges = np.histogram(values, bins=40)
-    y_max = max(hist_values) if len(hist_values) > 0 else 1
-    
-    fig.add_trace(
-        go.Scatter(
-            x=[mean_val, mean_val],
-            y=[0, y_max * 1.1],
-            mode='lines',
-            line=dict(dash="dash", color="red", width=2),
-            showlegend=False,
-            hovertemplate=f"Mean: {mean_val:.2f}<extra></extra>",
-            name="Mean"
-        ),
-        row=row, col=col_pos
-    )
-    
-    # Add ±2σ shaded region as a shape
-    # Calculate axis reference names
-    xaxis_ref = f"x{idx+1}" if idx > 0 else "x"
-    yaxis_ref = f"y{idx+1}" if idx > 0 else "y"
-    
-    fig.add_shape(
-        type="rect",
-        xref=xaxis_ref,
-        yref=f"{yaxis_ref} domain",  # Use domain for y (0 to 1)
-        x0=lower_bound,
-        x1=upper_bound,
-        y0=0,
-        y1=1,
-        fillcolor=theme['primary'],
-        opacity=0.2,
-        line_width=0,
-        layer="below"
-    )
-    
-    # Add annotation for mean
-    fig.add_annotation(
-        text=f"μ = {mean_val:.2f}",
-        xref=xaxis_ref,
-        yref=yaxis_ref,
-        x=mean_val,
-        y=y_max * 0.95,
-        showarrow=False,
-        font=dict(size=10, color="red", family="Arial"),
-        bgcolor="rgba(255, 255, 255, 0.8)",
-        borderpad=2
-    )
-    
-    # Add annotation for ±2σ
-    fig.add_annotation(
-        text=f"±2σ",
-        xref=xaxis_ref,
-        yref=yaxis_ref,
-        x=upper_bound,
-        y=y_max * 0.1,
-        showarrow=False,
-        font=dict(size=9, color=theme['primary'], family="Arial"),
-        bgcolor="rgba(255, 255, 255, 0.7)",
-        borderpad=2
+    return pd.DataFrame(results)
+
+
+@st.cache_data
+def create_intensity_heatmap(
+    df_json: str,
+    index_col: str | None,
+    numeric_cols: list[str],
+    transform_name: str = "Log2",
+) -> go.Figure:
+    df = pd.read_json(df_json)
+
+    if index_col and index_col in df.columns:
+        labels = df[index_col].apply(parse_protein_group).tolist()
+    else:
+        labels = [f"Row {i}" for i in range(len(df))]
+
+    sorted_cols = sort_columns_by_condition(numeric_cols)
+    data = df[sorted_cols].values.astype(float)
+
+    transform_func = TRANSFORMATIONS.get(transform_name, transform_log2)
+
+    if transform_name in ["Yeo-Johnson", "Quantile"]:
+        transformed = np.zeros_like(data, dtype=float)
+        for i in range(data.shape[1]):
+            col_data = data[:, i]
+            transformed[:, i] = transform_func(col_data)
+    else:
+        transformed = transform_func(data)
+
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=transformed,
+            x=sorted_cols,
+            y=labels,
+            colorscale="Viridis",
+            showscale=True,
+            colorbar=dict(title=transform_name),
+            hovertemplate="Protein: %{y}<br>Sample: %{x}<br>Value: %{z:.2f}<extra></extra>",
+        )
     )
 
-# Update layout
-fig.update_layout(
-    showlegend=False,
-    plot_bgcolor=theme['bg_primary'],
-    paper_bgcolor=theme['paper_bg'],
-    font=dict(family="Arial", size=11, color=theme['text_primary']),
-    height=650,
-    title_text=f"<b>Sample Distributions - {TRANSFORM_NAMES[selected_transform]}</b>",
-    title_font_size=16,
-    hovermode="closest"
-)
-
-# Update all axes
-fig.update_xaxes(
-    title_text="Intensity",
-    showgrid=True,
-    gridcolor=theme['grid'],
-    gridwidth=1
-)
-fig.update_yaxes(
-    title_text="Count",
-    showgrid=True,
-    gridcolor=theme['grid'],
-    gridwidth=1
-)
-
-st.plotly_chart(fig, width="stretch")
-
-# Show statistics summary below plots
-st.markdown("**Statistics Summary:**")
-stats_cols = st.columns(n_samples)
-for idx, col in enumerate(numeric_cols):
-    values = df_to_plot[col][df_to_plot[col] > 1.0].dropna().values
-    if len(values) > 0:
-        with stats_cols[idx]:
-            mean_val = np.mean(values)
-            std_val = np.std(values)
-            st.caption(f"**{col}**")
-            st.caption(f"μ: {mean_val:.2f}")
-            st.caption(f"σ: {std_val:.2f}")
-            st.caption(f"n: {len(values):,}")
-
-# ============================================================================
-# SUMMARY STATISTICS TABLE
-# ============================================================================
-
-st.subheader("3️⃣ Summary Statistics")
-
-summary_data = []
-for col in protein_data.numeric_cols:
-    sample_data = df_to_plot[col].dropna()
-    
-    if len(sample_data) > 0:
-        summary_data.append({
-            'Sample': col,
-            'N': int(len(sample_data)),
-            'Mean': float(sample_data.mean()),
-            'Median': float(sample_data.median()),
-            'Std_Dev': float(sample_data.std()),
-            'Min': float(sample_data.min()),
-            'Max': float(sample_data.max()),
-            'Q1': float(sample_data.quantile(0.25)),
-            'Q3': float(sample_data.quantile(0.75)),
-            'IQR': float(sample_data.quantile(0.75) - sample_data.quantile(0.25))
-        })
-
-if summary_data:
-    summary_df = pd.DataFrame(summary_data)
-    
-    # Format numeric columns
-    format_cols = ['Mean', 'Median', 'Std_Dev', 'Min', 'Max', 'Q1', 'Q3', 'IQR']
-    for col in format_cols:
-        if col in summary_df.columns:
-            summary_df[col] = summary_df[col].apply(lambda x: f"{x:.2f}")
-    
-    # Rename for display
-    summary_df = summary_df.rename(columns={'Std_Dev': 'Std Dev'})
-    
-    st.dataframe(summary_df, width='stretch')
-else:
-    st.warning("No data available for summary statistics")
+    fig.update_layout(
+        title=f"Intensity distribution ({transform_name})",
+        xaxis_title="Samples",
+        yaxis_title="",
+        height=600,
+        yaxis=dict(tickfont=dict(size=8)),
+        xaxis=dict(tickangle=45),
+        plot_bgcolor="white",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Arial", color="#54585A"),
+    )
+    return fig
 
 
-# ============================================================================
-# FOOTER
-# ============================================================================
+@st.cache_data
+def create_missing_distribution_chart(df_json: str, numeric_cols: list[str], label: str) -> go.Figure:
+    df = pd.read_json(df_json)
+    # In your original code, "missing" was encoded as 1
+    missing_per_row = (df[numeric_cols] == 1).sum(axis=1)
+    total_rows = len(df)
+    max_missing = len(numeric_cols)
 
-st.divider()
-st.markdown("""
-### 💡 Interpretation Tips
+    counts = []
+    labels_x = []
+    for i in range(max_missing + 1):
+        count = (missing_per_row == i).sum()
+        pct = 100 * count / total_rows
+        counts.append(pct)
+        labels_x.append(str(i))
 
-**Normality Tests:**
-- p > 0.05: Data likely normally distributed (good for t-tests)
-- p ≤ 0.05: Data likely not normal (consider non-parametric tests)
+    fig = go.Figure(
+        data=go.Bar(
+            x=labels_x,
+            y=counts,
+            marker_color="#262262",  # NAVY
+            hovertemplate="Missing: %{x}<br>Percent: %{y:.1f}%<extra></extra>",
+        )
+    )
 
-**Distributions:**
-- **Symmetric + bell-shaped**: Good normality
-- **Right-skewed**: Consider log transformation
-- **Left-skewed**: Consider power transformation
-- **Bimodal**: Possible batch effects or subpopulations
+    fig.update_layout(
+        title=f"Missing values per {label}",
+        xaxis_title="Number of missing values",
+        yaxis_title="% of total",
+        height=400,
+        plot_bgcolor="white",
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Arial", color="#54585A"),
+        bargap=0.2,
+    )
+    return fig
 
-**±2σ Region:**
-- Should contain ~95% of data if normally distributed
-- Outliers beyond ±3σ may need investigation
-""")
 
-st.info("💾 **All transformations are cached** - changing plots/filters is instant!")
+st.markdown("## Exploratory data analysis")
+
+protein_model: MSData | None = st.session_state.get("protein_model")
+peptide_model: MSData | None = st.session_state.get("peptide_model")
+protein_idx = st.session_state.get("protein_index_col")
+peptide_idx = st.session_state.get("peptide_index_col")
+
+if protein_model is None and peptide_model is None:
+    st.warning("No data cached. Please upload data on the Data Upload page first.")
+    render_navigation(back_page="pages/1_Data_Upload.py", next_page=None)
+    render_footer()
+    st.stop()
+
+tab_protein, tab_peptide = st.tabs(["Protein data", "Peptide data"])
+
+
+with tab_protein:
+
+    @st.fragment
+    def protein_analysis():
+        if protein_model is not None:
+            df = protein_model.log2_filled  # use filled/log2-cleaned data
+            numeric_cols = protein_model.numeric_cols
+            st.caption(f"**{len(df):,} proteins** × **{len(numeric_cols)} samples**")
+
+            df_json = df.to_json()
+
+            st.markdown("### Normality analysis")
+            st.caption("Testing which transformation best normalizes intensity distributions")
+
+            stats_df = analyze_transformations(df_json, numeric_cols)
+            best_idx = stats_df["Shapiro W"].idxmax()
+            best_transform = stats_df.loc[best_idx, "Transformation"]
+
+            def highlight_best(row):
+                if row["Transformation"] == best_transform:
+                    return ["background-color: #B5BD00; color: white"] * len(row)
+                return [""] * len(row)
+
+            styled_df = stats_df.style.apply(highlight_best, axis=1).format(
+                {
+                    "Kurtosis": "{:.3f}",
+                    "Skewness": "{:.3f}",
+                    "Shapiro W": "{:.4f}",
+                    "Shapiro p": "{:.2e}",
+                }
+            )
+            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            st.success(
+                f"Recommended: **{best_transform}** "
+                f"(Shapiro W = {stats_df.loc[best_idx, 'Shapiro W']:.4f})"
+            )
+
+            selected_transform = st.selectbox(
+                "Select transformation for visualization",
+                options=list(TRANSFORMATIONS.keys()),
+                index=list(TRANSFORMATIONS.keys()).index(best_transform),
+                key="protein_transform",
+            )
+            st.session_state["protein_selected_transform"] = selected_transform
+
+            st.markdown("---")
+            col1, col2 = st.columns(2)
+            with col1:
+                fig_heat = create_intensity_heatmap(
+                    df_json, protein_idx, numeric_cols, selected_transform
+                )
+                st.plotly_chart(fig_heat, use_container_width=True)
+            with col2:
+                fig_bar = create_missing_distribution_chart(df_json, numeric_cols, "protein groups")
+                st.plotly_chart(fig_bar, use_container_width=True)
+        else:
+            st.info("No protein data uploaded yet")
+
+    protein_analysis()
+
+
+with tab_peptide:
+
+    @st.fragment
+    def peptide_analysis():
+        if peptide_model is not None:
+            df = peptide_model.log2_filled
+            numeric_cols = peptide_model.numeric_cols
+            st.caption(f"**{len(df):,} peptides** × **{len(numeric_cols)} samples**")
+
+            df_json = df.to_json()
+
+            st.markdown("### Normality analysis")
+            st.caption("Testing which transformation best normalizes intensity distributions")
+
+            stats_df = analyze_transformations(df_json, numeric_cols)
+            best_idx = stats_df["Shapiro W"].idxmax()
+            best_transform = stats_df.loc[best_idx, "Transformation"]
+
+            def highlight_best(row):
+                if row["Transformation"] == best_transform:
+                    return ["background-color: #B5BD00; color: white"] * len(row)
+                return [""] * len(row)
+
+            styled_df = stats_df.style.apply(highlight_best, axis=1).format(
+                {
+                    "Kurtosis": "{:.3f}",
+                    "Skewness": "{:.3f}",
+                    "Shapiro W": "{:.4f}",
+                    "Shapiro p": "{:.2e}",
+                }
+            )
+            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            st.success(
+                f"Recommended: **{best_transform}** "
+                f"(Shapiro W = {stats_df.loc[best_idx, 'Shapiro W']:.4f})"
+            )
+
+            selected_transform = st.selectbox(
+                "Select transformation for visualization",
+                options=list(TRANSFORMATIONS.keys()),
+                index=list(TRANSFORMATIONS.keys()).index(best_transform),
+                key="peptide_transform",
+            )
+            st.session_state["peptide_selected_transform"] = selected_transform
+
+            st.markdown("---")
+            col1, col2 = st.columns(2)
+            with col1:
+                fig_heat = create_intensity_heatmap(
+                    df_json, peptide_idx, numeric_cols, selected_transform
+                )
+                st.plotly_chart(fig_heat, use_container_width=True)
+            with col2:
+                fig_bar = create_missing_distribution_chart(df_json, numeric_cols, "peptides")
+                st.plotly_chart(fig_bar, use_container_width=True)
+        else:
+            st.info("No peptide data uploaded yet")
+
+    peptide_analysis()
+
+render_navigation(back_page="pages/1_Data_Upload.py", next_page=None)
+render_footer()
