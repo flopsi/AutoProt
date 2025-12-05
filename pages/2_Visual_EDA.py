@@ -139,15 +139,26 @@ styled_df = display_df.style.apply(highlight_normality, axis=1)
 st.dataframe(styled_df, use_container_width=True, height=300)
 
 # Summary metrics
+# Summary metrics - FIX st.columns error
 n_normal_raw = normality_df['Raw_Normal'].sum()
 n_normal_trans = normality_df['Trans_Normal'].sum()
-n_improved = len([x for x in normality_df['Improvement'] if '✅' in x])
+n_improved = len([x for x in normality_df['Improvement'] if '✅' in str(x)])
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Samples Tested", len(normality_df))
-c2.metric("Normal (Raw)", f"{n_normal_raw}/{len(normality_df)}")
-c3.metric("Normal (Transformed)", f"{n_normal_trans}/{len(normality_df)}")
-c4.metric("Improved", f"{n_improved}", delta=f"+{n_improved - n_normal_raw}")
+# Only create columns if we have data
+if len(normality_df) > 0:
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("Samples Tested", len(normality_df))
+    with c2:
+        st.metric("Normal (Raw)", f"{n_normal_raw}/{len(normality_df)}")
+    with c3:
+        st.metric("Normal (Transformed)", f"{n_normal_trans}/{len(normality_df)}")
+    with c4:
+        delta_val = n_improved - n_normal_raw
+        st.metric("Improved", f"{n_improved}", delta=f"{delta_val:+d}")
+else:
+    st.warning("No data to analyze")
+
 
 st.divider()
 
