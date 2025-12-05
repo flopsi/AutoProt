@@ -10,6 +10,7 @@ from sklearn.preprocessing import PowerTransformer
 from typing import Dict, Optional
 import streamlit as st
 from typing import List, Tuple
+from sklearn.preprocessing import QuantileTransformer
 
 TRANSFORM_NAMES = {
     'raw': 'Raw (No Transform)',
@@ -20,7 +21,9 @@ TRANSFORM_NAMES = {
     'arcsinh': 'Arcsinh',
     'boxcox': 'Box-Cox',
     'yeo-johnson': 'Yeo-Johnson',
-    'vst': 'Variance Stabilizing (VST)'
+    'vst': 'Variance Stabilizing (VST)',
+    'quantile': 'Quantile (Rank-based)'
+
 }
 
 TRANSFORM_DESCRIPTIONS = {
@@ -32,7 +35,9 @@ TRANSFORM_DESCRIPTIONS = {
     'arcsinh': 'Inverse hyperbolic sine - handles negatives',
     'boxcox': 'Box-Cox power transformation (positive values only)',
     'yeo-johnson': 'Yeo-Johnson power transformation (handles zeros/negatives)',
-    'vst': 'Variance stabilizing transformation (asinh(x/median))'
+    'vst': 'Variance stabilizing transformation (asinh(x/median))',
+    'quantile': 'Rank-based quantile transformation to an approximately normal distribution',
+}
 }
 
 
@@ -47,7 +52,7 @@ def apply_transformation(df: pd.DataFrame, numeric_cols: list, method: str = 'lo
     numeric_cols : list
         Intensity columns to transform
     method : str
-        'raw', 'log2', 'log10', 'ln', 'sqrt', 'arcsinh', 'boxcox', 'yeo-johnson', 'vst'
+        'raw', 'log2', 'log10', 'ln', 'sqrt', 'arcsinh', 'boxcox', 'yeo-johnson', 'vst',"quantile"
     
     Returns:
     --------
@@ -110,7 +115,27 @@ def apply_transformation(df: pd.DataFrame, numeric_cols: list, method: str = 'lo
         else:
             st.error(f"Unknown transformation: {method}")
             df_out.loc[vals.index, f'{col}_transformed'] = vals
-    
+
+    elif method == 'quantile':
+        # QuantileTransformer: map each column to a normal-like distribution
+        qt = QuantileTransformer(
+            n_quantiles=min(1000, len(df)),
+            output_distribution='normal',
+            random_state=0,
+        )
+        for col in numeric_cols:
+            vals = df_out[col]
+            mask = vals.notna()
+            if mask.sum() < 2:
+                continue
+            # fit/transform only non-NaN values
+            v = vals[mask].to_numpy().reshape(-1, 1)
+            try:
+                v_tr = qt.fit_transform(v).ravel()
+                df_out.loc[mask, f'{col}_transformed'] = v_tr
+            except Exception:
+                df_out.loc[mask, f'{col}_transformed'] = vals[mask]
+
     # Get transformed column names
     transformed_cols = [f'{col}_transformed' for col in numeric_cols if f'{col}_transformed' in df_out.columns]
     
