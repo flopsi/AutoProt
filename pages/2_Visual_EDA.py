@@ -9,10 +9,12 @@ from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 
 from helpers.constants import get_theme, TRANSFORMS
-from helpers.transforms import transform_data
 from helpers.statistics import test_normality_shapiro
 from helpers.plots import plot_heatmap
 from helpers.audit import log_event
+from helpers.constants import get_theme, TRANSFORMS
+from helpers.transforms import apply_transform, get_transform_info, recommend_transform
+
 
 st.set_page_config(page_title="Visual EDA", layout="wide")
 
@@ -57,7 +59,7 @@ theme = get_theme(theme_name)
 
 st.title("📊 Visual EDA")
 
-df_transformed = transform_data(df, numeric_cols, method=transform_method)
+df_transformed = apply_transform(df, numeric_cols, method=transform_method)
 
 # Auto-detect groups
 group_a = [c for c in numeric_cols if 'A' in c.upper()] or numeric_cols[:len(numeric_cols)//2]
