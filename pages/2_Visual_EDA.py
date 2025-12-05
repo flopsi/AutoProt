@@ -172,7 +172,11 @@ st.subheader("🔬 Normality Tests")
 
 results = []
 for col in numeric_cols:
-    values = df_for_plots[col][df_for_plots[col] > 1.0].dropna()
+    if transform_method == "raw":
+        values = protein_data.raw[col].dropna()
+    else:
+        values = df_for_plots[col].dropna()
+
     res = test_normality_shapiro(values)
     results.append({
         "Sample": col,
@@ -181,7 +185,7 @@ for col in numeric_cols:
         "is_normal": res["is_normal"],
         "n": res["n"],
     })
-
+    
 st.dataframe(pd.DataFrame(results), width="stretch")
 
 # ============================================================================
