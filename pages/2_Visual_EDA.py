@@ -41,7 +41,7 @@ available_methods = [m for m in TRANSFORM_NAMES.keys() if m != "raw"]
 selected_methods = st.multiselect(
     "Transformations to evaluate",
     options=available_methods,
-    default=["log2", "log10", "sqrt", "arcsinh", "vst"],
+    default=["log2"],
     format_func=lambda x: TRANSFORM_NAMES.get(x, x),
 )
 
