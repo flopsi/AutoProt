@@ -1,23 +1,26 @@
 # helpers/comparison.py
 
+import streamlit as st
 import pandas as pd
 from typing import Dict, List, Tuple
+from helpers.transforms import cached_apply_transformation
+from helpers.evaluation import cached_evaluate_transformation_metrics
 
-from helpers.transforms import apply_transformation
-from helpers.evaluation import evaluate_transformation_metrics
-
-
+@st.cache_data(show_spinner=False)
 def compare_transformations(
     df_raw: pd.DataFrame,
     numeric_cols: List[str],
     methods: List[str],
+    file_hash: str,
 ) -> Tuple[pd.DataFrame, Dict[str, Dict]]:
     results = []
     metrics_by_method: Dict[str, Dict] = {}
 
     for m in methods:
-        df_t, trans_cols = apply_transformation(df_raw, numeric_cols, m)
-        metrics = evaluate_transformation_metrics(df_raw, df_t, numeric_cols, trans_cols)
+        df_t, trans_cols = cached_apply_transformation(df_raw, numeric_cols, m, file_hash)
+        metrics = cached_evaluate_transformation_metrics(
+            df_raw, df_t, numeric_cols, trans_cols, m, file_hash
+        )
         metrics_by_method[m] = metrics
         results.append(
             dict(
