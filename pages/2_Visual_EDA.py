@@ -3,7 +3,7 @@
 import streamlit as st
 import pandas as pd
 from scipy import stats
-
+from helpers.statistics import test_normality_all_samples
 from helpers.transforms import apply_transformation, TRANSFORM_NAMES
 from helpers.evaluation import (
     create_raw_row_figure,
@@ -52,71 +52,9 @@ eval_cols = numeric_cols[:max_cols]
 # but for plots only one will be active at a time.
 methods_to_evaluate = available_methods
 
-# ----------------------------------------------------------------------
-# 2) Compute normality table for all methods
-# ----------------------------------------------------------------------
-st.subheader("2️⃣ Normality Table (Per Sample, All Transformations)")
+from scipy import stats
+from helpers.statistics import test_normality_all_samples
 
-summary_rows = []
-
-for method in methods_to_evaluate:
-    df_trans, trans_cols = apply_transformation(df_raw, eval_cols, method)
-
-    # Per-sample normality (raw vs transformed) using your helper
-    norm_df = test_normality_all_samples(
-        df_raw=df_raw,
-        df_transformed=df_trans,
-        numeric_cols=eval_cols,
-        alpha=0.05,
-    )
-
-    # Aggregate: average W and p across samples
-    W_raw_mean = norm_df["Raw_Statistic"].mean()
-    p_raw_mean = norm_df["Raw_P_Value"].mean()
-    W_trans_mean = norm_df["Trans_Statistic"].mean()
-    p_trans_mean = norm_df["Trans_P_Value"].mean()
-
-    summary_rows.append(
-        {
-            "method": method,
-            "Method": TRANSFORM_NAMES.get(method, method),
-            "W_raw_mean": W_raw_mean,
-            "p_raw_mean": p_raw_mean,
-            "W_trans_mean": W_trans_mean,
-            "p_trans_mean": p_trans_mean,
-        }
-    )
-
-# Build summary table
-summary_df = pd.DataFrame(summary_rows)
-
-if summary_df.empty:
-    st.warning("No transformations evaluated.")
-    st.stop()
-
-# Combined score: higher W_trans_mean and p_trans_mean is better
-summary_df["combined_score"] = (
-    summary_df["W_trans_mean"].rank(ascending=False)
-    + summary_df["p_trans_mean"].rank(ascending=False)
-)
-
-# Sort by best combined score
-summary_df = summary_df.sort_values("combined_score").reset_index(drop=True)
-
-# Display full table
-display_df = summary_df.copy()
-display_df.index = display_df.index + 1
-display_df = display_df[
-    ["Method", "W_raw_mean", "p_raw_mean", "W_trans_mean", "p_trans_mean", "combined_score"]
-].round(4)
-
-st.dataframe(display_df, width="stretch")
-
-best_row = summary_df.iloc[0]
-st.success(
-    f"🏆 Best by mean Shapiro: **{best_row['Method']}** "
-    f"(W={best_row['W_trans_mean']:.3f}, p={best_row['p_trans_mean']:.2e})"
-)
 
 # ----------------------------------------------------------------------
 # 3) Raw plot (static) + single selected transformation plot
