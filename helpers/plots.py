@@ -12,6 +12,176 @@ from scipy.cluster.hierarchy import dendrogram, linkage
 from sklearn.decomposition import PCA
 from helpers.constants import get_theme, FONT_FAMILY
 
+import plotly.figure_factory as ff
+from scipy.stats import gaussian_kde
+
+def create_density_histograms(
+    df: pd.DataFrame,
+    numeric_cols: list,
+    transform_name: str,
+    theme: dict,
+    max_plots: int = 6
+) -> go.Figure:
+    """
+    Create density histograms (histogram + KDE overlay) for each sample.
+    
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        Data to plot (already transformed)
+    numeric_cols : list
+        List of numeric columns to plot
+    transform_name : str
+        Name of transformation applied
+    theme : dict
+        Theme colors dictionary
+    max_plots : int
+        Maximum number of plots to create (default 6 for 2x3 grid)
+    
+    Returns:
+    --------
+    plotly.graph_objects.Figure
+    """
+    from plotly.subplots import make_subplots
+    
+    # Limit to max_plots
+    cols_to_plot = numeric_cols[:max_plots]
+    n_samples = len(cols_to_plot)
+    
+    # Determine grid
+    if n_samples <= 3:
+        n_rows, n_cols = 1, n_samples
+    else:
+        n_rows, n_cols = 2, 3
+    
+    # Create subplots
+    fig = make_subplots(
+        rows=n_rows,
+        cols=n_cols,
+        subplot_titles=[f"<b>{col}</b>" for col in cols_to_plot],
+        vertical_spacing=0.15,
+        horizontal_spacing=0.10
+    )
+    
+    for idx, col in enumerate(cols_to_plot):
+        row = (idx // n_cols) + 1
+        col_pos = (idx % n_cols) + 1
+        
+        # Get data (filter > 1.0 and drop NaN)
+        values = df[col][df[col] > 1.0].dropna().values
+        
+        if len(values) < 10:
+            # Add "No data" annotation
+            fig.add_annotation(
+                text="Insufficient data",
+                xref=f"x{idx+1}" if idx > 0 else "x",
+                yref=f"y{idx+1}" if idx > 0 else "y",
+                x=0.5,
+                y=0.5,
+                showarrow=False,
+                row=row,
+                col=col_pos
+            )
+            continue
+        
+        # Calculate statistics
+        mean_val = np.mean(values)
+        std_val = np.std(values)
+        
+        # Create histogram
+        hist, bin_edges = np.histogram(values, bins=40)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        bin_width = bin_edges[1] - bin_edges[0]
+        
+        # Add histogram bars
+        fig.add_trace(
+            go.Bar(
+                x=bin_centers,
+                y=hist,
+                width=bin_width * 0.9,
+                marker=dict(
+                    color=theme['primary'],
+                    opacity=0.6,
+                    line=dict(color=theme['text_primary'], width=0.5)
+                ),
+                showlegend=False,
+                name="Histogram",
+                hovertemplate="Intensity: %{x:.2f}<br>Count: %{y}<extra></extra>"
+            ),
+            row=row, col=col_pos
+        )
+        
+        # Add KDE (kernel density estimate) overlay
+        try:
+            kde = gaussian_kde(values)
+            x_range = np.linspace(values.min(), values.max(), 200)
+            kde_values = kde(x_range)
+            
+            # Scale KDE to match histogram height
+            kde_scaled = kde_values * len(values) * bin_width
+            
+            fig.add_trace(
+                go.Scatter(
+                    x=x_range,
+                    y=kde_scaled,
+                    mode='lines',
+                    line=dict(color='red', width=2),
+                    showlegend=False,
+                    name="Density",
+                    hovertemplate="Intensity: %{x:.2f}<br>Density: %{y:.2f}<extra></extra>"
+                ),
+                row=row, col=col_pos
+            )
+        except:
+            pass  # Skip KDE if it fails
+        
+        # Add mean line
+        y_max = max(hist) if len(hist) > 0 else 1
+        fig.add_trace(
+            go.Scatter(
+                x=[mean_val, mean_val],
+                y=[0, y_max],
+                mode='lines',
+                line=dict(dash='dash', color='darkred', width=1.5),
+                showlegend=False,
+                name="Mean",
+                hovertemplate=f"Mean: {mean_val:.2f}<extra></extra>"
+            ),
+            row=row, col=col_pos
+        )
+        
+        # Update axes
+        fig.update_xaxes(
+            title_text="Intensity",
+            showgrid=True,
+            gridcolor=theme['grid'],
+            row=row, col=col_pos
+        )
+        fig.update_yaxes(
+            title_text="Count",
+            showgrid=True,
+            gridcolor=theme['grid'],
+            row=row, col=col_pos
+        )
+    
+    # Update layout
+    fig.update_layout(
+        height=400 * n_rows,
+        title_text=f"<b>Sample Distributions - {transform_name}</b>",
+        title_font_size=16,
+        showlegend=False,
+        plot_bgcolor=theme['bg_primary'],
+        paper_bgcolor=theme['paper_bg'],
+        font=dict(
+            family="Arial",
+            size=11,
+            color=theme['text_primary']
+        ),
+        hovermode="closest"
+    )
+    
+    return fig
+
 # ============================================================================
 # HEATMAP PLOTS
 # ============================================================================
