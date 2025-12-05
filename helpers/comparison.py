@@ -4,8 +4,7 @@ import streamlit as st
 import pandas as pd
 from typing import Dict, List, Tuple
 
-from helpers.transforms import apply_transformation
-from helpers.evaluation import evaluate_transformation_metrics
+from helpers.eda_cache import get_method_results
 
 
 @st.cache_data(show_spinner=False)
@@ -15,18 +14,13 @@ def compare_transformations(
     methods: List[str],
 ) -> Tuple[pd.DataFrame, Dict[str, Dict]]:
     """
-    Run evaluation_metrics for each transform and build summary table.
-
-    Returns:
-        summary_df: columns = [method, shapiro_p, mean_var_corr, combined_score]
-        metrics_by_method: method -> metrics dict
+    Use cached per-method results to build summary table.
     """
     results = []
     metrics_by_method: Dict[str, Dict] = {}
 
     for m in methods:
-        df_t, trans_cols = apply_transformation(df_raw, numeric_cols, m)
-        metrics = evaluate_transformation_metrics(df_raw, df_t, numeric_cols, trans_cols)
+        _, _, metrics = get_method_results(df_raw, numeric_cols, m)
         metrics_by_method[m] = metrics
         results.append(
             dict(
