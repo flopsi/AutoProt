@@ -4,27 +4,34 @@ import pandas as pd
 from typing import List
 
 
-def drop_invalid_intensity_rows(
+def drop_proteins_with_invalid_intensities(
     df: pd.DataFrame,
     intensity_cols: List[str],
-    drop_value: float = 1.0,
+    drop_value: float | None = 1.0,
+    drop_nan: bool = True,
 ) -> pd.DataFrame:
     """
-    Drop rows where ALL selected intensity columns are:
-    - NaN, or
-    - exactly drop_value (default 1.0).
+    Drop rows (proteins) that contain at least one invalid intensity
+    in the given columns.
 
-    Rows with at least one valid intensity are kept.
+    Invalid means:
+      - NaN (if drop_nan=True)
+      - equal to drop_value (if drop_value is not None, default 1.0)
+
+    So if ANY intensity column for a protein is NaN or 1.0, that row is removed.
     """
     if not intensity_cols:
         return df
 
     sub = df[intensity_cols]
 
-    # True where value is NaN or == drop_value
-    invalid_mask = sub.isna() | (sub == drop_value)
+    invalid = False
+    if drop_nan:
+        invalid = sub.isna()
+    if drop_value is not None:
+        invalid = invalid | (sub == drop_value) if isinstance(invalid, pd.DataFrame) else (sub == drop_value)
 
-    # Rows where all intensities are invalid
-    rows_to_drop = invalid_mask.all(axis=1)
+    # rows where any intensity is invalid
+    rows_to_drop = invalid.any(axis=1)
 
     return df.loc[~rows_to_drop].copy()
