@@ -101,7 +101,7 @@ def create_raw_row_figure(
         fig.add_vrect(
             x0=x0,
             x1=x1,
-            fillcolor="white,
+            fillcolor="white",
             opacity=0.15,
             line_width=0,
             row=1,
