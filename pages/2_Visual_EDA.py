@@ -8,6 +8,7 @@ from helpers.evaluation import (
     create_transformed_row_figure,
     evaluate_transformation_metrics,
 )
+from helpers.eda_cache import get_method_results
 from helpers.comparison import compare_transformations
 
 st.set_page_config(page_title="Visual EDA", layout="wide")
@@ -15,7 +16,7 @@ st.set_page_config(page_title="Visual EDA", layout="wide")
 st.title("📊 Visual EDA: Transformation Diagnostics")
 
 # ----------------------------------------------------------------------
-# Load data from session
+# Load data
 # ----------------------------------------------------------------------
 protein_data = st.session_state.get("protein_data")
 if protein_data is None:
@@ -26,13 +27,13 @@ df_raw = protein_data.raw
 numeric_cols = protein_data.numeric_cols
 
 if not numeric_cols:
-    st.error("No numeric intensity columns found in data.")
+    st.error("No numeric intensity columns found.")
     st.stop()
 
 st.success(f"{len(df_raw):,} proteins × {len(numeric_cols)} intensity columns")
 
 # ----------------------------------------------------------------------
-# 1) Controls: which transformations, how many columns
+# 1) Controls
 # ----------------------------------------------------------------------
 st.subheader("1️⃣ Select Transformations")
 
@@ -41,7 +42,7 @@ available_methods = [m for m in TRANSFORM_NAMES.keys() if m != "raw"]
 selected_methods = st.multiselect(
     "Transformations to evaluate",
     options=available_methods,
-    default=["log2"],
+    default=["log2", "log10", "sqrt", "arcsinh", "vst"],
     format_func=lambda x: TRANSFORM_NAMES.get(x, x),
 )
 
@@ -58,7 +59,7 @@ max_cols = st.slider(
 eval_cols = numeric_cols[:max_cols]
 
 # ----------------------------------------------------------------------
-# 2) Raw diagnostics row (reference, shown once)
+# 2) Raw diagnostics row
 # ----------------------------------------------------------------------
 st.subheader("2️⃣ Raw Data Diagnostics (Reference)")
 
@@ -70,20 +71,18 @@ raw_fig = create_raw_row_figure(
 st.plotly_chart(raw_fig, use_container_width=True)
 
 # ----------------------------------------------------------------------
-# 3) One diagnostics row per selected transformation
+# 3) Per-transformation diagnostics (using cached results)
 # ----------------------------------------------------------------------
 st.subheader("3️⃣ Transformation Diagnostics")
-
-all_metrics = {}
 
 for method in selected_methods:
     nice_name = TRANSFORM_NAMES.get(method, method)
     st.markdown(f"#### 🔄 {nice_name}")
 
-    # Apply transformation on the selected columns
-    df_trans, trans_cols = apply_transformation(df_raw, eval_cols, method)
+    # cached: transformed df + trans_cols + metrics
+    df_trans, trans_cols, metrics = get_method_results(df_raw, eval_cols, method)
 
-    # Row of 3 plots for this transformation
+    # plots
     trans_fig = create_transformed_row_figure(
         df_transformed=df_trans,
         trans_cols=trans_cols,
@@ -91,15 +90,7 @@ for method in selected_methods:
     )
     st.plotly_chart(trans_fig, use_container_width=True)
 
-    # Metrics (Shapiro, mean–variance correlations)
-    metrics = evaluate_transformation_metrics(
-        df_raw=df_raw,
-        df_transformed=df_trans,
-        raw_cols=eval_cols,
-        trans_cols=trans_cols,
-    )
-    all_metrics[method] = metrics
-
+    # metrics
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.metric("Shapiro p (Raw)", f"{metrics['shapiro_raw']:.2e}")
@@ -113,7 +104,7 @@ for method in selected_methods:
     st.markdown("---")
 
 # ----------------------------------------------------------------------
-# 4) Bottom ranking table across all selected transformations
+# 4) Bottom ranking table (also using cached results)
 # ----------------------------------------------------------------------
 st.subheader("4️⃣ Transformation Ranking")
 
@@ -127,13 +118,11 @@ if summary_df.empty:
     st.warning("No comparison results.")
 else:
     summary_df = summary_df.copy()
-    # Add readable method names
     summary_df["Method"] = summary_df["method"].map(lambda x: TRANSFORM_NAMES.get(x, x))
-    # Reorder and round
     summary_df = summary_df[["Method", "shapiro_p", "mean_var_corr", "combined_score"]].round(4)
-    summary_df.index = summary_df.index + 1  # rank-like index
+    summary_df.index = summary_df.index + 1
 
-    st.dataframe(summary_df, use_container_width=True)
+    st.dataframe(summary_df, width="stretch")
 
     best = summary_df.iloc[0]
     st.success(
