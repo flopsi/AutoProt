@@ -34,7 +34,7 @@ available_methods = [m for m in TRANSFORM_NAMES.keys() if m != "raw"]
 selected_methods = st.multiselect(
     "Transformations to evaluate",
     options=available_methods,
-    default=["log2", "log10", "sqrt", "arcsinh", "vst"],
+    default=["log2"],
     format_func=lambda x: TRANSFORM_NAMES.get(x, x),
 )
 
@@ -51,17 +51,16 @@ max_cols = st.slider(
 eval_cols = numeric_cols[:max_cols]
 
 # ----------------- raw row (once) -----------------
-st.subheader("2️⃣ Raw Data Diagnostics (Reference)")
+st.subheader("Data Diagnostic")
 
 raw_fig = create_raw_row_figure(df_raw=df_raw, raw_cols=eval_cols)
 st.plotly_chart(raw_fig, use_container_width=True)
 
 # ----------------- transformed rows -----------------
-st.subheader("3️⃣ Transformation Diagnostics")
+
 
 all_metrics = {}
 for method in selected_methods:
-    st.markdown(f"#### 🔄 {TRANSFORM_NAMES.get(method, method)}")
 
     df_trans, trans_cols = apply_transformation(df_raw, eval_cols, method)
     trans_fig = create_transformed_row_figure(
