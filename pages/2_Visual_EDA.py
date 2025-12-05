@@ -150,7 +150,7 @@ fig = create_heatmap_simple(
     protein_data.numeric_cols,
     theme_name=theme_name,
 )
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width=True)
 
 
 # ============================================================================
@@ -162,12 +162,13 @@ st.subheader("🔬 Normality Tests")
 results = []
 for col in numeric_cols:
     values = df_transformed[col][df_transformed[col] > 1.0].dropna()
-    stat, pval = test_normality_shapiro(values)
+    res = test_normality_shapiro(values)
     results.append({
         "Sample": col,
-        "Statistic": stat,
-        "P-Value": pval,
-        "Normal": "✅" if pval > 0.05 else "❌"
+        "Statistic": res["statistic"],
+        "p-value": res["p_value"],
+        "is_normal": res["is_normal"],
+        "n": res["n"],
     })
 
 st.dataframe(pd.DataFrame(results), width="stretch")
