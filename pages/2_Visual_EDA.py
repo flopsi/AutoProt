@@ -109,7 +109,7 @@ for idx, col in enumerate(numeric_cols[:6]):
     row = (idx // 3) + 1
     col_pos = (idx % 3) + 1
     
-    values = df_transformed[col][df_transformed[col] > 1.0]
+    values = df_for_plots[col][df_for_plots[col] > 1.0]
     
     fig.add_trace(
         go.Histogram(
@@ -149,7 +149,7 @@ def get_ranked(df, cols):
 col1, col2 = st.columns(2)
 
 with col1:
-    ranked_a = get_ranked(df_transformed, group_a)
+    ranked_a = get_ranked(df_for_plots, group_a)
     fig_a = go.Figure(go.Scatter(x=list(range(1, len(ranked_a)+1)), y=ranked_a.values, 
                                   mode='lines', line=dict(color=theme['color_human'], width=2)))
     fig_a.update_layout(title="Group A", xaxis_title="Rank", yaxis_title=f"{transform_method} Intensity",
@@ -157,7 +157,7 @@ with col1:
     st.plotly_chart(fig_a, width="stretch")
 
 with col2:
-    ranked_b = get_ranked(df_transformed, group_b)
+    ranked_b = get_ranked(df_for_plots, group_b)
     fig_b = go.Figure(go.Scatter(x=list(range(1, len(ranked_b)+1)), y=ranked_b.values,
                                   mode='lines', line=dict(color=theme['color_yeast'], width=2)))
     fig_b.update_layout(title="Group B", xaxis_title="Rank", yaxis_title=f"{transform_method} Intensity",
@@ -171,7 +171,7 @@ with col2:
 st.subheader("Intensity Heatmap")
 
 fig = create_heatmap_simple(
-    df_transformed,
+    df_for_plots,
     protein_data.numeric_cols,
     theme_name=theme_name,
 )
@@ -186,7 +186,7 @@ st.subheader("🔬 Normality Tests")
 
 results = []
 for col in numeric_cols:
-    values = df_transformed[col][df_transformed[col] > 1.0].dropna()
+    values = df_for_plots[col][df_for_plots[col] > 1.0].dropna()
     res = test_normality_shapiro(values)
     results.append({
         "Sample": col,
