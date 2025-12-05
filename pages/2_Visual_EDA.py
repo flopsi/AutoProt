@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
+import plotly.express as px
 
 from helpers.constants import get_theme, TRANSFORMS
 from helpers.statistics import test_normality_shapiro
@@ -66,6 +67,23 @@ group_a = [c for c in numeric_cols if 'A' in c.upper()] or numeric_cols[:len(num
 group_b = [c for c in numeric_cols if 'B' in c.upper()] or numeric_cols[len(numeric_cols)//2:]
 
 st.metric("Transform", transform_method)
+
+
+st.subheader("Raw intensity distributions (per sample)")
+
+for col in numeric_cols:
+    vals = protein_data.raw[col].dropna()
+    if vals.empty:
+        continue
+    st.caption(col)
+    st.plotly_chart(
+        px.histogram(
+            vals,
+            nbins=50,
+            title=None,
+        ),
+        width="stretch",
+    )
 
 # ============================================================================
 # PLOT 1: 6 INDIVIDUAL DISTRIBUTIONS (Custom - not in helpers)
