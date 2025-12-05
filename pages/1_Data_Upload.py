@@ -569,12 +569,24 @@ if len(species_totals) > 0:
 else:
     st.info("No species data available")
 
-# ============================================================================
-# STEP 9: CREATE PROTEIN DATA OBJECT & STORE
-# ============================================================================
-
 st.subheader("9️⃣ Finalizing...")
 
+# Optional cleaning: drop rows where all intensities are NaN or exactly 1.00
+drop_invalid = st.checkbox(
+    "Drop rows where all selected intensity values are NaN or exactly 1.00",
+    value=False,
+    help="Keeps rows that have at least one valid intensity value. "
+         "Rows where every selected intensity column is NaN or 1.00 are removed."
+)
+
+if drop_invalid:
+    before_rows = len(df)
+    df = drop_invalid_intensity_rows(df, numeric_cols, drop_value=1.0)
+    after_rows = len(df)
+    st.info(f"Removed {before_rows - after_rows} proteins with only NaN/1.00 intensities. "
+            f"Remaining: {after_rows} proteins.")
+
+# Now create the ProteinData object with the (possibly cleaned) df
 protein_data = ProteinData(
     raw=df,
     numeric_cols=numeric_cols,
@@ -594,17 +606,19 @@ log_event(
     {
         "filename": uploaded_file.name,
         "file_format": file_format,
-        "n_proteins": n_proteins,
-        "n_samples": n_samples,
+        "n_proteins": int(n_proteins),
+        "n_samples": int(n_samples),
         "missing_rate": float(missing_rate),
-        "columns_selected": len(numeric_cols),
-        "columns_renamed": len(rename_dict),
-        "nan_replaced": n_nan_before,
-        "zeros_replaced": n_zero_before,
+        "columns_selected": int(len(numeric_cols)),
+        "columns_renamed": int(len(rename_dict)),
+        "nan_replaced": int(n_nan_before),
+        "zeros_replaced": int(n_zero_before),
+        "rows_dropped_all_invalid": int(before_rows - after_rows) if drop_invalid else 0,
     },
 )
 
 st.success("✅ Data loaded and configured successfully!")
+
 
 # ============================================================================
 # STEP 10: NEXT STEPS
