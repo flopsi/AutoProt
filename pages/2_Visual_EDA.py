@@ -2,6 +2,7 @@
 
 import streamlit as st
 import pandas as pd
+from scipy import stats
 
 from helpers.transforms import apply_transformation, TRANSFORM_NAMES
 from helpers.evaluation import (
@@ -9,6 +10,7 @@ from helpers.evaluation import (
     create_transformed_row_figure,
     evaluate_transformation_metrics,
 )
+from helpers.statistics import test_normality_all_samples
 
 st.set_page_config(page_title="Visual EDA", layout="wide")
 
@@ -46,103 +48,82 @@ max_cols = st.slider(
 )
 eval_cols = numeric_cols[:max_cols]
 
-# We will evaluate all methods (so the table is complete)
+# We’ll evaluate all methods (and show all in table),
+# but for plots only one will be active at a time.
 methods_to_evaluate = available_methods
 
 # ----------------------------------------------------------------------
-# 2) Compute stats for all methods (once)
+# 2) Compute normality table for all methods
 # ----------------------------------------------------------------------
-st.subheader("2️⃣ Transformation Statistics")
+st.subheader("2️⃣ Normality Table (Per Sample, All Transformations)")
 
 summary_rows = []
 
 for method in methods_to_evaluate:
-    nice_name = TRANSFORM_NAMES.get(method, method)
-
-    # Transform only eval_cols
     df_trans, trans_cols = apply_transformation(df_raw, eval_cols, method)
 
-    # Metrics (Shapiro W is inside SciPy's output, but we stored p-values and correlations)
-    metrics = evaluate_transformation_metrics(
+    # Per-sample normality (raw vs transformed) using your helper
+    norm_df = test_normality_all_samples(
         df_raw=df_raw,
         df_transformed=df_trans,
-        raw_cols=eval_cols,
-        trans_cols=trans_cols,
+        numeric_cols=eval_cols,
+        alpha=0.05,
     )
 
-    # To also show W-statistic, we recompute Shapiro-W here explicitly on transformed data
-    # (metrics already has p-value; we can get W together)
-    trans_vals = df_trans[trans_cols].to_numpy().ravel()
-    trans_vals = trans_vals[~pd.isna(trans_vals)]
-    if len(trans_vals) >= 3:
-        W_trans, p_trans = stats.shapiro(trans_vals[: min(5000, len(trans_vals))])
-    else:
-        W_trans, p_trans = float("nan"), float("nan")
-
-    raw_vals = df_raw[eval_cols].to_numpy().ravel()
-    raw_vals = raw_vals[~pd.isna(raw_vals)]
-    if len(raw_vals) >= 3:
-        W_raw, p_raw = stats.shapiro(raw_vals[: min(5000, len(raw_vals))])
-    else:
-        W_raw, p_raw = float("nan"), float("nan")
+    # Aggregate: average W and p across samples
+    W_raw_mean = norm_df["Raw_Statistic"].mean()
+    p_raw_mean = norm_df["Raw_P_Value"].mean()
+    W_trans_mean = norm_df["Trans_Statistic"].mean()
+    p_trans_mean = norm_df["Trans_P_Value"].mean()
 
     summary_rows.append(
         {
             "method": method,
-            "Method": nice_name,
-            "W_raw": W_raw,
-            "p_raw": p_raw,
-            "W_trans": W_trans,
-            "p_trans": p_trans,
-            "mean_var_corr_raw": metrics["mean_var_corr_raw"],
-            "mean_var_corr_trans": metrics["mean_var_corr_trans"],
+            "Method": TRANSFORM_NAMES.get(method, method),
+            "W_raw_mean": W_raw_mean,
+            "p_raw_mean": p_raw_mean,
+            "W_trans_mean": W_trans_mean,
+            "p_trans_mean": p_trans_mean,
         }
     )
 
-if not summary_rows:
+# Build summary table
+summary_df = pd.DataFrame(summary_rows)
+
+if summary_df.empty:
     st.warning("No transformations evaluated.")
     st.stop()
 
-df_summary = pd.DataFrame(summary_rows)
-
-# Combined score: higher W_trans and p_trans, lower |mean_var_corr_trans|
-df_summary["combined_score"] = (
-    df_summary["W_trans"].rank(ascending=False)
-    + df_summary["p_trans"].rank(ascending=False)
-    + (1 - df_summary["mean_var_corr_trans"].abs()).rank(ascending=False)
+# Combined score: higher W_trans_mean and p_trans_mean is better
+summary_df["combined_score"] = (
+    summary_df["W_trans_mean"].rank(ascending=False)
+    + summary_df["p_trans_mean"].rank(ascending=False)
 )
 
-df_summary = df_summary.sort_values("combined_score").reset_index(drop=True)
+# Sort by best combined score
+summary_df = summary_df.sort_values("combined_score").reset_index(drop=True)
 
-# Display table
-display_cols = [
-    "Method",
-    "W_raw",
-    "p_raw",
-    "W_trans",
-    "p_trans",
-    "mean_var_corr_raw",
-    "mean_var_corr_trans",
-    "combined_score",
-]
-df_display = df_summary[display_cols].round(4)
-df_display.index = df_display.index + 1  # rank-like index
+# Display full table
+display_df = summary_df.copy()
+display_df.index = display_df.index + 1
+display_df = display_df[
+    ["Method", "W_raw_mean", "p_raw_mean", "W_trans_mean", "p_trans_mean", "combined_score"]
+].round(4)
 
-st.dataframe(df_display, width="stretch")
+st.dataframe(display_df, width="stretch")
 
-best = df_summary.iloc[0]
+best_row = summary_df.iloc[0]
 st.success(
-    f"🏆 Best: **{best['Method']}** "
-    f"(W={best['W_trans']:.3f}, p={best['p_trans']:.2e}, "
-    f"Mean–Var Corr={best['mean_var_corr_trans']:.3f})"
+    f"🏆 Best by mean Shapiro: **{best_row['Method']}** "
+    f"(W={best_row['W_trans_mean']:.3f}, p={best_row['p_trans_mean']:.2e})"
 )
 
 # ----------------------------------------------------------------------
-# 3) Raw plot (always visible) + selection of a single transformation
+# 3) Raw plot (static) + single selected transformation plot
 # ----------------------------------------------------------------------
-st.subheader("3️⃣ Diagnostics Plots")
+st.subheader("3️⃣ Diagnostic Plots")
 
-col_left, col_right = st.columns([1, 1])
+col_left, col_right = st.columns(2)
 
 with col_left:
     st.markdown("**Raw Data (Reference)**")
@@ -151,15 +132,15 @@ with col_left:
         raw_cols=eval_cols,
         title="Raw Data",
     )
-    st.plotly_chart(raw_fig, width="stretch")
+    st.plotly_chart(raw_fig, use_container_width=True)
 
-# Choose exactly one transformation to visualize
-methods_for_radio = df_summary["method"].tolist()
-default_best_index = 0  # first row is best after sorting
+# Radio: exactly one transformation selected for plotting
+methods_for_radio = summary_df["method"].tolist()
+default_index = 0  # best method
 selected_method = st.radio(
     "Select transformation to visualize",
     options=methods_for_radio,
-    index=default_best_index,
+    index=default_index,
     format_func=lambda m: TRANSFORM_NAMES.get(m, m),
 )
 
@@ -167,11 +148,36 @@ with col_right:
     nice_name = TRANSFORM_NAMES.get(selected_method, selected_method)
     st.markdown(f"**{nice_name}**")
 
-    # Reuse the same transform for this method (could cache if needed)
-    df_trans, trans_cols = apply_transformation(df_raw, eval_cols, selected_method)
+    df_trans_selected, trans_cols_selected = apply_transformation(df_raw, eval_cols, selected_method)
     trans_fig = create_transformed_row_figure(
-        df_transformed=df_trans,
-        trans_cols=trans_cols,
+        df_transformed=df_trans_selected,
+        trans_cols=trans_cols_selected,
         title=nice_name,
     )
-    st.plotly_chart(trans_fig, width="stretch")
+    st.plotly_chart(trans_fig, use_container_width=True)
+
+# ----------------------------------------------------------------------
+# 4) Detailed per-sample table for selected transformation
+# ----------------------------------------------------------------------
+st.subheader("4️⃣ Per-Sample Normality (Selected Transformation)")
+
+norm_selected = test_normality_all_samples(
+    df_raw=df_raw,
+    df_transformed=df_trans_selected,
+    numeric_cols=eval_cols,
+    alpha=0.05,
+)
+
+# Make column names nicer
+norm_display = norm_selected.rename(
+    columns={
+        "Sample": "Sample",
+        "N": "N",
+        "Raw_Statistic": "W_raw",
+        "Raw_P_Value": "p_raw",
+        "Trans_Statistic": "W_trans",
+        "Trans_P_Value": "p_trans",
+        "Improvement": "Improvement",
+    }
+)
+st.dataframe(norm_display.round(4), width="stretch")
