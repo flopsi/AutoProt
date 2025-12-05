@@ -1,199 +1,352 @@
 """
-pages/2_EDA.py - Uses your existing helper functions
+pages/2_Visual_EDA.py
+Visual exploratory data analysis with distribution plots and normality testing
 """
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-from plotly.subplots import make_subplots
 import plotly.graph_objects as go
-import plotly.express as px
+from plotly.subplots import make_subplots
+from scipy.stats import gaussian_kde
 
-from helpers.constants import get_theme, TRANSFORMS
-from helpers.statistics import normality_diagnostics
-from helpers.plots_advanced import create_heatmap_simple
-from helpers.audit import log_event
-from helpers.constants import get_theme, TRANSFORMS
-from helpers.transforms import apply_transform, get_transform_info, recommend_transform
+from helpers.transforms import compute_all_transforms_cached, TRANSFORM_NAMES, TRANSFORM_DESCRIPTIONS
+from helpers.statistics import test_normality_all_samples
+from helpers.constants import get_theme
 
+# ============================================================================
+# PAGE CONFIGURATION
+# ============================================================================
 
 st.set_page_config(page_title="Visual EDA", layout="wide")
-
-if "protein_data" not in st.session_state:
-    st.warning("⚠️ Upload data first")
-    st.stop()
 
 # ============================================================================
 # LOAD DATA
 # ============================================================================
 
-protein_data = st.session_state.protein_data
-df = protein_data.raw.copy()
-numeric_cols = protein_data.numeric_cols
+st.title("📊 Visual Exploratory Data Analysis")
+
+protein_data = st.session_state.get("protein_data")
+if not protein_data:
+    st.error("❌ No data loaded. Please upload data first on the Data Upload page.")
+    st.stop()
+
+st.success(f"✅ Loaded: {len(protein_data.raw)} proteins × {len(protein_data.numeric_cols)} samples")
 
 # ============================================================================
-# SIDEBAR
+# COMPUTE ALL TRANSFORMS (CACHED - RUNS ONCE)
 # ============================================================================
 
-with st.sidebar:
-    st.title("📊 EDA Settings")
-    
-    transform_method = st.selectbox("Transform", TRANSFORMS, index=0)
-    theme_name = st.selectbox("Theme", ["light", "dark", "colorblind", "journal"])
-    st.session_state.theme = theme_name
-    
-    # Species filter
-    species_col = getattr(protein_data, 'species_col', None)
-    if species_col and species_col in df.columns:
-        available_species = sorted(df[species_col].dropna().unique().tolist())
-        selected_species = st.multiselect("Species", available_species, default=available_species)
-        if selected_species:
-            df = df[df[species_col].isin(selected_species)]
-            st.info(f"{len(df):,} proteins from {len(selected_species)} species")
-
-# Get theme
-theme = get_theme(theme_name)
-
-# ============================================================================
-# TRANSFORM DATA (using your helper)
-# ============================================================================
-
-st.title("📊 Visual EDA")
-
-if transform_method == "raw":
-    df_for_plots = protein_data.raw.copy()
-else:
-    df_for_plots = apply_transform(
-        protein_data.raw,
-        protein_data.numeric_cols,
-        method=transform_method,
+with st.spinner("Computing transformations..."):
+    all_transforms = compute_all_transforms_cached(
+        df=protein_data.raw,
+        numeric_cols=protein_data.numeric_cols,
+        _hash_key=protein_data.file_path  # Cache key
     )
 
-# Auto-detect groups
-group_a = [c for c in numeric_cols if 'A' in c.upper()] or numeric_cols[:len(numeric_cols)//2]
-group_b = [c for c in numeric_cols if 'B' in c.upper()] or numeric_cols[len(numeric_cols)//2:]
-
-st.metric("Transform", transform_method)
-
-
-
+st.info(f"💾 Cached {len(all_transforms)} transformations for instant switching")
 
 # ============================================================================
-# PLOT 1: 6 INDIVIDUAL DISTRIBUTIONS (Custom - not in helpers)
+# USER CONTROLS
 # ============================================================================
 
-st.subheader("Individual Sample Distributions")
-
-fig = make_subplots(
-    rows=2, cols=3,
-    subplot_titles=numeric_cols[:6],
-    vertical_spacing=0.15,
-    horizontal_spacing=0.10
-)
-
-for idx, col in enumerate(numeric_cols[:6]):
-    row = (idx // 3) + 1
-    col_pos = (idx % 3) + 1
-    
-    values = df_for_plots[col][df_for_plots[col] > 1.0]
-    
-    fig.add_trace(
-        go.Histogram(
-            x=values,
-            name=col,
-            nbinsx=40,
-            opacity=0.75,
-            marker_color=theme['color_human']
-        ),
-        row=row, col=col_pos
-    )
-
-fig.update_layout(
-    showlegend=False,
-    plot_bgcolor=theme['bg_primary'],
-    paper_bgcolor=theme['paper_bg'],
-    font=dict(family="Arial", size=11, color=theme['text_primary']),
-    height=650
-)
-
-fig.update_xaxes(showgrid=True, gridcolor=theme['grid'])
-fig.update_yaxes(showgrid=True, gridcolor=theme['grid'])
-
-st.plotly_chart(fig, width="stretch")
-
-# ============================================================================
-# PLOT 2 & 3: RANKED INTENSITY (Custom)
-# ============================================================================
-
-st.subheader("Ranked Intensity Plots")
-
-def get_ranked(df, cols):
-    median = df[cols].median(axis=1)
-    valid = (df[cols] > 1.0).any(axis=1)
-    return median[valid].sort_values(ascending=False).reset_index(drop=True)
+st.subheader("🎛️ Analysis Controls")
 
 col1, col2 = st.columns(2)
 
 with col1:
-    ranked_a = get_ranked(df_for_plots, group_a)
-    fig_a = go.Figure(go.Scatter(x=list(range(1, len(ranked_a)+1)), y=ranked_a.values, 
-                                  mode='lines', line=dict(color=theme['color_human'], width=2)))
-    fig_a.update_layout(title="Group A", xaxis_title="Rank", yaxis_title=f"{transform_method} Intensity",
-                        plot_bgcolor=theme['bg_primary'], height=450)
-    st.plotly_chart(fig_a, width="stretch")
+    # Transform selector
+    transform_options = list(all_transforms.keys())
+    selected_transform = st.selectbox(
+        "📊 Select Transformation",
+        options=transform_options,
+        format_func=lambda x: TRANSFORM_NAMES.get(x, x),
+        index=0,  # Default: raw
+        help="Choose transformation method to apply to data"
+    )
+    
+    # Show description
+    st.caption(TRANSFORM_DESCRIPTIONS.get(selected_transform, ""))
 
 with col2:
-    ranked_b = get_ranked(df_for_plots, group_b)
-    fig_b = go.Figure(go.Scatter(x=list(range(1, len(ranked_b)+1)), y=ranked_b.values,
-                                  mode='lines', line=dict(color=theme['color_yeast'], width=2)))
-    fig_b.update_layout(title="Group B", xaxis_title="Rank", yaxis_title=f"{transform_method} Intensity",
-                        plot_bgcolor=theme['bg_primary'], height=450)
-    st.plotly_chart(fig_b, width="stretch")
-
-# ============================================================================
-# PLOT 4: HEATMAP (using your helper!)
-# ============================================================================
-
-st.subheader("Intensity Heatmap")
-
-fig = create_heatmap_simple(
-    df_for_plots,
-    protein_data.numeric_cols,
-    theme_name=theme_name,
-)
-st.plotly_chart(fig,width="stretch")
-
-
-# ============================================================================
-# NORMALITY TESTS (using your helper!)
-# ============================================================================
-
-st.subheader("🔬 Normality Tests")
-
-results = []
-for col in numeric_cols:
-    if transform_method == "raw":
-        values = protein_data.raw[col].dropna()
+    # Species filter
+    if protein_data.species_mapping:
+        species_available = list(set(protein_data.species_mapping.values()))
+        species_available = [s for s in species_available if s and s != 'Unknown']
+        
+        if species_available:
+            selected_species = st.multiselect(
+                "🧬 Filter by Species",
+                options=sorted(species_available),
+                default=sorted(species_available),  # All selected by default
+                help="Select species to include in analysis"
+            )
+        else:
+            selected_species = None
+            st.info("No species information available")
     else:
-        values = df_for_plots[col].dropna()
+        selected_species = None
+        st.info("No species information available")
 
-    diag = normality_diagnostics(values)  # new helper
-
-    results.append({
-        "Sample": col,
-        "n": diag["n"],
-        "Shapiro p": diag["shapiro_p"],
-        "DAgostino p": diag["dagostino_p"],
-        "Skewness": diag["skewness"],
-        "Kurtosis": diag["kurtosis"],
-        "is_normal": diag["is_normal"],
-    })
-
-results_df = pd.DataFrame(results)
-
+st.divider()
 
 # ============================================================================
-# AUDIT
+# NORMALITY TEST TABLE
 # ============================================================================
 
-log_event("EDA", f"{transform_method} analysis", {"n_proteins": len(df), "theme": theme_name})
+st.subheader("1️⃣ Normality Test Results")
+st.markdown("""
+**Shapiro-Wilk Test** (p > 0.05 indicates normally distributed data)
+- Tests whether each sample follows a normal distribution
+- Transformation goal: Improve normality for statistical tests
+""")
+
+# Compute normality tests
+normality_df = test_normality_all_samples(
+    df_raw=all_transforms['raw'],
+    df_transformed=all_transforms[selected_transform],
+    numeric_cols=protein_data.numeric_cols,
+    alpha=0.05
+)
+
+# Format for display
+display_df = normality_df.copy()
+display_df['Raw_P_Value'] = display_df['Raw_P_Value'].apply(lambda x: f"{x:.4f}" if not np.isnan(x) else "N/A")
+display_df['Trans_P_Value'] = display_df['Trans_P_Value'].apply(lambda x: f"{x:.4f}" if not np.isnan(x) else "N/A")
+display_df['Raw_Statistic'] = display_df['Raw_Statistic'].apply(lambda x: f"{x:.4f}" if not np.isnan(x) else "N/A")
+display_df['Trans_Statistic'] = display_df['Trans_Statistic'].apply(lambda x: f"{x:.4f}" if not np.isnan(x) else "N/A")
+
+# Color code the table
+def highlight_normality(row):
+    colors = []
+    for col in row.index:
+        if col == 'Raw_Normal':
+            colors.append('background-color: #90EE90' if row[col] else 'background-color: #FFB6C6')
+        elif col == 'Trans_Normal':
+            colors.append('background-color: #90EE90' if row[col] else 'background-color: #FFB6C6')
+        elif col == 'Improvement':
+            if '✅' in str(row[col]):
+                colors.append('background-color: #90EE90; font-weight: bold')
+            elif '⚠️' in str(row[col]):
+                colors.append('background-color: #FFB6C6')
+            else:
+                colors.append('')
+        else:
+            colors.append('')
+    return colors
+
+styled_df = display_df.style.apply(highlight_normality, axis=1)
+st.dataframe(styled_df, use_container_width=True, height=300)
+
+# Summary metrics
+n_normal_raw = normality_df['Raw_Normal'].sum()
+n_normal_trans = normality_df['Trans_Normal'].sum()
+n_improved = len([x for x in normality_df['Improvement'] if '✅' in x])
+
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Samples Tested", len(normality_df))
+c2.metric("Normal (Raw)", f"{n_normal_raw}/{len(normality_df)}")
+c3.metric("Normal (Transformed)", f"{n_normal_trans}/{len(normality_df)}")
+c4.metric("Improved", f"{n_improved}", delta=f"+{n_improved - n_normal_raw}")
+
+st.divider()
+
+# ============================================================================
+# FILTER DATA BY SPECIES
+# ============================================================================
+
+df_to_plot = all_transforms[selected_transform].copy()
+
+if selected_species:
+    # Create species series
+    species_series = pd.Series(protein_data.species_mapping)
+    # Filter to selected species
+    mask = species_series.isin(selected_species)
+    protein_ids = species_series[mask].index
+    df_to_plot = df_to_plot[df_to_plot.index.isin(protein_ids)]
+    
+    n_proteins_filtered = len(df_to_plot)
+    species_str = ', '.join(selected_species)
+    st.info(f"📊 Plotting **{n_proteins_filtered:,} proteins** from species: **{species_str}**")
+else:
+    st.info(f"📊 Plotting **{len(df_to_plot):,} proteins** (all species)")
+
+# ============================================================================
+# 6-PANEL DISTRIBUTION PLOTS
+# ============================================================================
+
+st.subheader("2️⃣ Distribution Analysis (All Samples)")
+st.markdown("""
+Each plot shows:
+- **Histogram**: Distribution of intensity values
+- **Red dashed line**: Mean value
+- **Shaded region**: ±2 standard deviations (95% of data if normal)
+""")
+
+theme = get_theme(st.session_state.get("theme", "light"))
+
+# Determine grid layout based on number of samples
+n_samples = len(protein_data.numeric_cols)
+if n_samples <= 3:
+    n_rows, n_cols = 1, n_samples
+elif n_samples <= 6:
+    n_rows, n_cols = 2, 3
+elif n_samples <= 9:
+    n_rows, n_cols = 3, 3
+else:
+    n_rows, n_cols = (n_samples + 3) // 4, 4
+
+# Create subplots
+fig = make_subplots(
+    rows=n_rows,
+    cols=n_cols,
+    subplot_titles=[f"<b>{col}</b>" for col in protein_data.numeric_cols],
+    vertical_spacing=0.12 if n_rows > 1 else 0,
+    horizontal_spacing=0.08
+)
+
+# Plot each sample
+for idx, sample_col in enumerate(protein_data.numeric_cols):
+    row = (idx // n_cols) + 1
+    col_pos = (idx % n_cols) + 1
+    
+    # Get data for this sample
+    sample_data = df_to_plot[sample_col].dropna().values
+    
+    if len(sample_data) == 0:
+        continue
+    
+    # Calculate statistics
+    mean_val = np.mean(sample_data)
+    std_val = np.std(sample_data)
+    lower_bound = mean_val - 2 * std_val
+    upper_bound = mean_val + 2 * std_val
+    
+    # Create histogram
+    fig.add_trace(
+        go.Histogram(
+            x=sample_data,
+            nbinsx=50,
+            opacity=0.7,
+            name=sample_col,
+            marker=dict(
+                color=theme["primary"],
+                line=dict(color=theme["text_primary"], width=0.5)
+            ),
+            showlegend=False,
+            hovertemplate="Value: %{x:.2f}<br>Count: %{y}<extra></extra>"
+        ),
+        row=row, col=col_pos
+    )
+    
+    # Add mean line
+    fig.add_vline(
+        x=mean_val,
+        line=dict(dash="dash", color="red", width=2),
+        row=row, col=col_pos,
+        annotation_text=f"μ={mean_val:.2f}",
+        annotation_position="top",
+        annotation_font_size=10
+    )
+    
+    # Add ±2 StdDev shaded region
+    fig.add_vrect(
+        x0=lower_bound,
+        x1=upper_bound,
+        fillcolor=theme["primary"],
+        opacity=0.15,
+        line_width=0,
+        row=row, col=col_pos,
+        annotation_text=f"±2σ",
+        annotation_position="bottom right",
+        annotation_font_size=9
+    )
+    
+    # Update axes for this subplot
+    fig.update_xaxes(
+        title_text="Intensity",
+        showgrid=True,
+        gridcolor=theme["grid"],
+        row=row, col=col_pos
+    )
+    fig.update_yaxes(
+        title_text="Count",
+        showgrid=True,
+        gridcolor=theme["grid"],
+        row=row, col=col_pos
+    )
+
+# Update overall layout
+fig.update_layout(
+    height=400 * n_rows,
+    title_text=f"<b>Sample Distributions - {TRANSFORM_NAMES[selected_transform]}</b>",
+    title_font_size=18,
+    showlegend=False,
+    plot_bgcolor=theme["bg_primary"],
+    paper_bgcolor=theme["paper_bg"],
+    font=dict(
+        family="Arial",
+        size=12,
+        color=theme["text_primary"]
+    ),
+    hovermode="closest"
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+# ============================================================================
+# SUMMARY STATISTICS TABLE
+# ============================================================================
+
+st.subheader("3️⃣ Summary Statistics")
+
+summary_data = []
+for col in protein_data.numeric_cols:
+    sample_data = df_to_plot[col].dropna()
+    
+    if len(sample_data) > 0:
+        summary_data.append({
+            'Sample': col,
+            'N': len(sample_data),
+            'Mean': sample_data.mean(),
+            'Median': sample_data.median(),
+            'Std Dev': sample_data.std(),
+            'Min': sample_data.min(),
+            'Max': sample_data.max(),
+            'Q1': sample_data.quantile(0.25),
+            'Q3': sample_data.quantile(0.75),
+            'IQR': sample_data.quantile(0.75) - sample_data.quantile(0.25)
+        })
+
+summary_df = pd.DataFrame(summary_data)
+
+# Format numeric columns
+for col in ['Mean', 'Median', 'Std Dev', 'Min', 'Max', 'Q1', 'Q3', 'IQR']:
+    summary_df[col] = summary_df[col].apply(lambda x: f"{x:.2f}")
+
+st.dataframe(summary_df, use_container_width=True)
+
+# ============================================================================
+# FOOTER
+# ============================================================================
+
+st.divider()
+st.markdown("""
+### 💡 Interpretation Tips
+
+**Normality Tests:**
+- p > 0.05: Data likely normally distributed (good for t-tests)
+- p ≤ 0.05: Data likely not normal (consider non-parametric tests)
+
+**Distributions:**
+- **Symmetric + bell-shaped**: Good normality
+- **Right-skewed**: Consider log transformation
+- **Left-skewed**: Consider power transformation
+- **Bimodal**: Possible batch effects or subpopulations
+
+**±2σ Region:**
+- Should contain ~95% of data if normally distributed
+- Outliers beyond ±3σ may need investigation
+""")
+
+st.info("💾 **All transformations are cached** - changing plots/filters is instant!")
