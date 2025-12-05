@@ -114,46 +114,93 @@ st.divider()
 df_to_plot = all_transforms[selected_transform].copy()
 
 st.write(f"**Initial data shape:** {df_to_plot.shape}")
-st.write(f"**Columns:** {list(df_to_plot.columns)}")
 
 # Apply species filtering if needed
 if selected_species and protein_data.species_mapping:
-    # Get protein IDs for selected species
-    protein_ids_to_keep = [
-        protein_id 
-        for protein_id, species in protein_data.species_mapping.items()
-        if species in selected_species
-    ]
+    st.write(f"**Attempting to filter for species: {selected_species}**")
     
-    st.write(f"**Filtering to {len(protein_ids_to_keep)} proteins from species: {selected_species}**")
+    # Debug: Show species mapping structure
+    with st.expander("🔍 Species Mapping Debug"):
+        st.write(f"**Total proteins in species_mapping:** {len(protein_data.species_mapping)}")
+        st.write("**Sample of species_mapping (first 5):**")
+        sample_mapping = dict(list(protein_data.species_mapping.items())[:5])
+        st.write(sample_mapping)
+        
+        # Count by species
+        species_counts = {}
+        for protein_id, species in protein_data.species_mapping.items():
+            species_counts[species] = species_counts.get(species, 0) + 1
+        st.write("**Proteins per species in mapping:**")
+        st.write(species_counts)
     
-    # Filter the dataframe
-    # Check if index_col is in the columns or if it's the index
-    if protein_data.index_col in df_to_plot.columns:
-        df_to_plot = df_to_plot[df_to_plot[protein_data.index_col].isin(protein_ids_to_keep)]
-    else:
-        # Assume index is the protein ID
+    # Method 1: If protein_data has a species column in the dataframe
+    if protein_data.species_col and protein_data.species_col in df_to_plot.columns:
+        st.info(f"Using species column: {protein_data.species_col}")
+        df_to_plot = df_to_plot[df_to_plot[protein_data.species_col].isin(selected_species)]
+        st.write(f"**After filtering by species column:** {len(df_to_plot)} proteins")
+    
+    # Method 2: If index contains protein IDs
+    elif df_to_plot.index.name or len(df_to_plot.index) > 0:
+        st.info("Using index for species filtering")
+        
+        # Get protein IDs for selected species
+        protein_ids_to_keep = [
+            protein_id 
+            for protein_id, species in protein_data.species_mapping.items()
+            if species in selected_species
+        ]
+        
+        st.write(f"**Found {len(protein_ids_to_keep)} protein IDs matching species filter**")
+        
+        # Filter by index
         df_to_plot = df_to_plot[df_to_plot.index.isin(protein_ids_to_keep)]
+        st.write(f"**After filtering by index:** {len(df_to_plot)} proteins")
     
-    st.write(f"**After species filter:** {df_to_plot.shape}")
-else:
-    st.write("**No species filtering applied - using all data**")
+    # Method 3: If index_col is a column in the dataframe
+    elif protein_data.index_col and protein_data.index_col in df_to_plot.columns:
+        st.info(f"Using index column: {protein_data.index_col}")
+        
+        # Get protein IDs for selected species
+        protein_ids_to_keep = [
+            protein_id 
+            for protein_id, species in protein_data.species_mapping.items()
+            if species in selected_species
+        ]
+        
+        st.write(f"**Found {len(protein_ids_to_keep)} protein IDs matching species filter**")
+        
+        # Filter by column
+        df_to_plot = df_to_plot[df_to_plot[protein_data.index_col].isin(protein_ids_to_keep)]
+        st.write(f"**After filtering by {protein_data.index_col}:** {len(df_to_plot)} proteins")
+    
+    else:
+        st.warning("⚠️ Cannot determine how to filter by species - showing all data")
 
-# Check if we have data
-if len(df_to_plot) == 0:
-    st.error("❌ No data after filtering! Check your species selection.")
+else:
+    st.info("**No species filtering applied - using all data**")
+
+# Final check
+n_proteins_filtered = len(df_to_plot)
+
+if n_proteins_filtered == 0:
+    st.error("❌ No data after filtering!")
+    st.error("**Possible issues:**")
+    st.error("1. Species names don't match (check case sensitivity)")
+    st.error("2. Protein IDs in dataframe don't match species_mapping keys")
+    st.error("3. Index/column structure mismatch")
+    
+    # Show debug info
+    st.write("**Debug Info:**")
+    st.write(f"- Selected species: {selected_species}")
+    st.write(f"- Dataframe index name: {df_to_plot.index.name}")
+    st.write(f"- Dataframe index sample: {list(df_to_plot.index[:5])}")
+    st.write(f"- Species mapping keys sample: {list(protein_data.species_mapping.keys())[:5]}")
+    
     st.stop()
 
-# Show sample of data
-with st.expander("📊 View Sample Data (After Filtering)"):
-    st.dataframe(df_to_plot.head(10))
-    
-    # Show statistics per column
-    st.write("**Column Statistics:**")
-    for col in protein_data.numeric_cols:
-        if col in df_to_plot.columns:
-            vals = df_to_plot[col].dropna()
-            st.write(f"- **{col}**: {len(vals)} values, range [{vals.min():.2f}, {vals.max():.2f}]")
+# Show success message
+species_str = ', '.join(selected_species) if selected_species else 'All'
+st.success(f"📊 **Plotting {n_proteins_filtered:,} proteins** from species: **{species_str}**")
 
 
 # ============================================================================
