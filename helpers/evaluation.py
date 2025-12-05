@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy import stats
 from typing import Dict, List
-import streamlit as st
+
 
 def evaluate_transformation_metrics(
     df_raw: pd.DataFrame,
@@ -14,6 +14,9 @@ def evaluate_transformation_metrics(
     raw_cols: List[str],
     trans_cols: List[str],
 ) -> Dict[str, float]:
+    """
+    Compute Shapiro p-values (raw & transformed) and mean–variance correlations.
+    """
     raw_vals = df_raw[raw_cols].to_numpy().ravel()
     trans_vals = df_transformed[trans_cols].to_numpy().ravel()
 
@@ -49,34 +52,6 @@ def evaluate_transformation_metrics(
     }
 
 
-@st.cache_data(show_spinner=False)
-def cached_evaluate_transformation_metrics(
-    df_raw: pd.DataFrame,
-    df_transformed: pd.DataFrame,
-    raw_cols: List[str],
-    trans_cols: List[str],
-    method: str,
-    file_hash: str,
-) -> Dict[str, float]:
-    return evaluate_transformation_metrics(df_raw, df_transformed, raw_cols, trans_cols)
-
-
-@st.cache_data(show_spinner=False)
-def create_raw_row_figure(
-    df_raw: pd.DataFrame,
-    raw_cols: List[str],
-    title: str,
-    file_hash: str,
-) -> go.Figure:
-    fig = make_subplots(
-        rows=1,
-        cols=3,
-        subplot_titles=["Raw Intensities", "Q-Q Plot (Raw)", "Mean-Variance (Raw)"],
-        horizontal_spacing=0.08,
-    )
-
-    raw_vals, means_raw, vars_raw = cached_raw_values(df_raw, raw_cols, file_hash)
-
 def create_raw_row_figure(
     df_raw: pd.DataFrame,
     raw_cols: List[str],
@@ -84,9 +59,9 @@ def create_raw_row_figure(
 ) -> go.Figure:
     """
     Single row (1×3) for raw:
-    col1: raw intensities (+ mean + ±2σ region)
-    col2: QQ raw
-    col3: mean–variance raw
+      col1: raw intensities (+ mean + ±2σ region)
+      col2: QQ plot (raw)
+      col3: mean–variance (raw)
     """
     fig = make_subplots(
         rows=1,
@@ -108,7 +83,7 @@ def create_raw_row_figure(
         sigma = float(np.std(raw_vals))
         x0, x1 = mu - 2 * sigma, mu + 2 * sigma
 
-        # Histogram
+        # histogram data
         hist, bin_edges = np.histogram(raw_vals, bins=50)
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
         bin_width = bin_edges[1] - bin_edges[0]
@@ -125,45 +100,50 @@ def create_raw_row_figure(
             col=1,
         )
 
-        # Shaded ±2σ region
+        # shaded ±2σ
         fig.add_vrect(
             x0=x0,
             x1=x1,
-            fillcolor="#ffffff",
+            fillcolor="#1f77b4",
             opacity=0.15,
             line_width=0,
             row=1,
             col=1,
         )
 
-        # Mean line
+        # mean line
         fig.add_vline(
             x=mu,
-            line_color="white",
+            line_color="red",
             line_width=2,
             line_dash="dash",
             row=1,
             col=1,
         )
 
-        # Text annotations
+        # annotations
+        if len(hist) > 0:
+            y_max = max(hist)
+        else:
+            y_max = 1
+
         fig.add_annotation(
             x=mu,
-            y=max(hist) * 0.82,
+            y=y_max * 1.05,
             xref="x1",
             yref="y1",
             text=f"μ={mu:.2f}",
             showarrow=False,
-            font=dict(color="white", size=10),
+            font=dict(color="red", size=10),
         )
         fig.add_annotation(
             x=x1,
-            y=max(hist) * 0.1,
+            y=y_max * 0.1,
             xref="x1",
             yref="y1",
             text="±2σ",
             showarrow=False,
-            font=dict(color="white", size=9),
+            font=dict(color="#1f77b4", size=9),
         )
 
     fig.update_xaxes(title_text="Intensity", row=1, col=1)
@@ -232,9 +212,9 @@ def create_transformed_row_figure(
 ) -> go.Figure:
     """
     Single row (1×3) for transformed:
-    col1: transformed intensities (+ mean + ±2σ)
-    col2: QQ transformed
-    col3: mean–variance transformed
+      col1: transformed intensities (+ mean + ±2σ)
+      col2: QQ transformed
+      col3: mean–variance transformed
     """
     fig = make_subplots(
         rows=1,
@@ -272,45 +252,47 @@ def create_transformed_row_figure(
             col=1,
         )
 
-        # Shaded ±2σ
         fig.add_vrect(
             x0=x0,
             x1=x1,
-            fillcolor="#ffffff",
+            fillcolor="#ff7f0e",
             opacity=0.15,
             line_width=0,
             row=1,
             col=1,
         )
 
-        # Mean line
         fig.add_vline(
             x=mu,
-            line_color="white",
+            line_color="darkred",
             line_width=2,
             line_dash="dash",
             row=1,
             col=1,
         )
 
-        # Annotations
+        if len(hist) > 0:
+            y_max = max(hist)
+        else:
+            y_max = 1
+
         fig.add_annotation(
             x=mu,
-            y=max(hist) * 1.05,
+            y=y_max * 1.05,
             xref="x1",
             yref="y1",
             text=f"μ={mu:.2f}",
             showarrow=False,
-            font=dict(color="white", size=10),
+            font=dict(color="darkred", size=10),
         )
         fig.add_annotation(
             x=x1,
-            y=max(hist) * 0.1,
+            y=y_max * 0.1,
             xref="x1",
             yref="y1",
             text="±2σ",
             showarrow=False,
-            font=dict(color="white", size=9),
+            font=dict(color="#ff7f0e", size=9),
         )
 
     fig.update_xaxes(title_text="Transformed Intensity", row=1, col=1)
@@ -370,5 +352,3 @@ def create_transformed_row_figure(
         font=dict(family="Arial", size=11),
     )
     return fig
-
-
