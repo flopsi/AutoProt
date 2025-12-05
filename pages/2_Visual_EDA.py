@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 from helpers.constants import get_theme, TRANSFORMS
-from helpers.statistics import test_normality_shapiro
+from helpers.statistics import normality_diagnostics
 from helpers.plots_advanced import create_heatmap_simple
 from helpers.audit import log_event
 from helpers.constants import get_theme, TRANSFORMS
@@ -177,27 +177,19 @@ for col in numeric_cols:
     else:
         values = df_for_plots[col].dropna()
 
-    res = test_normality_shapiro(values)
+    diag = normality_diagnostics(values)  # new helper
+
     results.append({
         "Sample": col,
-        "Statistic": res["statistic"],
-        "p-value": res["p_value"],
-        "is_normal": res["is_normal"],
-        "n": res["n"],
+        "n": diag["n"],
+        "Shapiro p": diag["shapiro_p"],
+        "DAgostino p": diag["dagostino_p"],
+        "Skewness": diag["skewness"],
+        "Kurtosis": diag["kurtosis"],
+        "is_normal": diag["is_normal"],
     })
 
 results_df = pd.DataFrame(results)
-
-def highlight_normal(val):
-    if bool(val):
-        return "background-color: #d1fae5;"  # light green
-    return ""
-
-st.dataframe(
-    results_df.style.applymap(highlight_normal, subset=["is_normal"]),
-    width="stretch",
-    height=400,
-)
 
 
 # ============================================================================
