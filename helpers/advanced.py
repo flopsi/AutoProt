@@ -92,6 +92,46 @@ def create_heatmap_clustered(
     
     return fig
 
+def create_heatmap_simple(
+    df: pd.DataFrame,
+    numeric_cols: list,
+    theme_name: str = "light",
+) -> go.Figure:
+    """
+    Simple heatmap (no dendrogram), proteins × samples.
+
+    Args:
+        df: Data matrix
+        numeric_cols: Columns to include as samples
+        theme_name: Theme
+
+    Returns:
+        Plotly Heatmap figure
+    """
+    theme = get_theme(theme_name)
+
+    data = df[numeric_cols].astype(float)
+
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=data.values,
+            x=data.columns,
+            y=df.index,
+            colorscale="Viridis",
+            colorbar=dict(title="Intensity"),
+        )
+    )
+
+    fig.update_layout(
+        title="Intensity Heatmap",
+        height=600,
+        xaxis_title="Samples",
+        yaxis_title="Proteins",
+        plot_bgcolor=theme["bg_secondary"],
+        paper_bgcolor=theme["paper_bg"],
+    )
+
+    return fig
 
 # ============================================================================
 # PCA PLOTS
