@@ -95,53 +95,47 @@ with tab2:
             summary_df['n_significant'].rank(ascending=False)
         )
         
-        # === SUMMARY TABLE (NOW SAFE) ===
+        # === SUMMARY TABLE (BULLETPROOF STYLING) ===
         st.subheader("📋 Comparison Summary")
         
-        # Style best transformation
-        def highlight_best(row):
-            if row.name == summary_df['combined_score'].idxmax():
-                return ["background-color: #B5BD00; color: white; font-weight: bold"] * len(row)
-            return [""]
-        
-        styled_summary = summary_df.style.apply(highlight_best, axis=1).format({
-            'shapiro_p': '{:.2e}',
-            'mean_var_corr': '{:.3f}',
-            'n_significant': '{:,}',
-            'n_up': '{:,}',
-            'n_down': '{:,}'
-        })
-        
-        st.dataframe(styled_summary, use_container_width=True)
-        
-        # === BEST TRANSFORMATION ===
-        best_method, reason = find_best_transformation(summary_df)
-        st.success(f"🏆 **Best: {TRANSFORM_NAMES[best_method]}** | Reason: {reason}")
-        
-        # === METRICS ===
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Best Shapiro p", f"{summary_df['shapiro_p'].max():.2e}")
-        with col2:
-            st.metric("Best Variance Stabil.", f"{summary_df['mean_var_corr'].abs().min():.3f}")
-        with col3:
-            st.metric("Most Significant", f"{summary_df['n_significant'].max():,}")
-        with col4:
-            st.metric("Transformations Tested", len(summary_df))
-        
-        # === TOP 3 RANKING ===
-        st.subheader("🏅 Top 3 Transformations")
-        top3 = summary_df.nlargest(3, 'combined_score')
-        col1, col2, col3 = st.columns(3)
-        
-        for i, (_, row) in enumerate(top3.iterrows()):
-            with eval(f"col{i+1}"):
-                st.metric(
-                    TRANSFORM_NAMES[row['method']],
-                    f"p={row['shapiro_p']:.2e}",
-                    delta=f"DE={row['n_significant']:,}"
-                )
-        
+        # Compute best index first (outside styler)
+        if not summary_df.empty:
+            best_idx = summary_df['combined_score'].idxmax()
+            
+            # Simple conditional formatting without complex styler
+            display_df = summary_df.copy()
+            display_df['Rank'] = display_df['combined_score'].rank(ascending=False).astype(int)
+            
+            # Manual highlighting
+            def color_rank(val):
+                if pd.isna(val):
+                    return ''
+                rank = int(val)
+                if rank == 1:
+                    return 'background-color: #B5BD00; color: white; font-weight: bold'
+                elif rank == 2:
+                    return 'background-color: #D4AF37; color: white'
+                elif rank == 3:
+                    return 'background-color: #C0C0C0; color: black'
+                return ''
+            
+            # Format numeric columns
+            styled_df = display_df.style.format({
+                'shapiro_p': '{:.2e}',
+                'mean_var_corr': '{:.3f}',
+                'n_significant': '{:,}',
+                'n_up': '{:,}',
+                'n_down': '{:,}'
+            }).applymap(color_rank, subset=['Rank'])
+            
+            st.dataframe(styled_df, use_container_width=True)
+            
+            # Show best explicitly
+            best_row = summary_df.loc[best_idx]
+            st.info(f"**🥇 #1: {TRANSFORM_NAMES[best_row['method']]}** (Score: {best_row['combined_score']:.1f})")
+        else:
+            st.warning("No comparison results available")
+
         # === SAVE RESULTS ===
         csv = summary_df.round(4).to_csv(index=False)
         st.download_button(
