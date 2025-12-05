@@ -34,20 +34,9 @@ st.success(f"{len(df_raw):,} proteins × {len(numeric_cols)} intensity columns")
 # ----------------------------------------------------------------------
 # 1) Controls
 # ----------------------------------------------------------------------
-st.subheader("1️⃣ Select Transformations")
+st.subheader("1️⃣ Configuration")
 
 available_methods = [m for m in TRANSFORM_NAMES.keys() if m != "raw"]
-
-selected_methods = st.multiselect(
-    "Transformations to evaluate",
-    options=available_methods,
-    default=["log2", "log10", "sqrt", "arcsinh", "vst", "quantile"],
-    format_func=lambda x: TRANSFORM_NAMES.get(x, x),
-)
-
-if not selected_methods:
-    st.info("Select at least one transformation to continue.")
-    st.stop()
 
 max_cols = st.slider(
     "Number of intensity columns used for diagnostics",
@@ -57,41 +46,23 @@ max_cols = st.slider(
 )
 eval_cols = numeric_cols[:max_cols]
 
-# ----------------------------------------------------------------------
-# 2) Raw diagnostics row (reference)
-# ----------------------------------------------------------------------
-st.subheader("2️⃣ Raw Data Diagnostics (Reference)")
-
-raw_fig = create_raw_row_figure(
-    df_raw=df_raw,
-    raw_cols=eval_cols,
-    title="Raw Data",
-)
-st.plotly_chart(raw_fig, width="stretch")
+# We will evaluate all methods (so the table is complete)
+methods_to_evaluate = available_methods
 
 # ----------------------------------------------------------------------
-# 3) Per-transformation diagnostics + collect metrics
+# 2) Compute stats for all methods (once)
 # ----------------------------------------------------------------------
-st.subheader("3️⃣ Transformation Diagnostics")
+st.subheader("2️⃣ Transformation Statistics")
 
-all_metrics = []  # for bottom table
+summary_rows = []
 
-for method in selected_methods:
+for method in methods_to_evaluate:
     nice_name = TRANSFORM_NAMES.get(method, method)
-    st.markdown(f"#### 🔄 {nice_name}")
 
-    # Transform only the eval_cols
+    # Transform only eval_cols
     df_trans, trans_cols = apply_transformation(df_raw, eval_cols, method)
 
-    # Plots
-    trans_fig = create_transformed_row_figure(
-        df_transformed=df_trans,
-        trans_cols=trans_cols,
-        title=nice_name,
-    )
-    st.plotly_chart(trans_fig, width="stretch")
-
-    # Metrics
+    # Metrics (Shapiro W is inside SciPy's output, but we stored p-values and correlations)
     metrics = evaluate_transformation_metrics(
         df_raw=df_raw,
         df_transformed=df_trans,
@@ -99,63 +70,108 @@ for method in selected_methods:
         trans_cols=trans_cols,
     )
 
-    all_metrics.append(
+    # To also show W-statistic, we recompute Shapiro-W here explicitly on transformed data
+    # (metrics already has p-value; we can get W together)
+    trans_vals = df_trans[trans_cols].to_numpy().ravel()
+    trans_vals = trans_vals[~pd.isna(trans_vals)]
+    if len(trans_vals) >= 3:
+        W_trans, p_trans = stats.shapiro(trans_vals[: min(5000, len(trans_vals))])
+    else:
+        W_trans, p_trans = float("nan"), float("nan")
+
+    raw_vals = df_raw[eval_cols].to_numpy().ravel()
+    raw_vals = raw_vals[~pd.isna(raw_vals)]
+    if len(raw_vals) >= 3:
+        W_raw, p_raw = stats.shapiro(raw_vals[: min(5000, len(raw_vals))])
+    else:
+        W_raw, p_raw = float("nan"), float("nan")
+
+    summary_rows.append(
         {
             "method": method,
             "Method": nice_name,
-            "shapiro_raw": metrics["shapiro_raw"],
-            "shapiro_trans": metrics["shapiro_trans"],
+            "W_raw": W_raw,
+            "p_raw": p_raw,
+            "W_trans": W_trans,
+            "p_trans": p_trans,
             "mean_var_corr_raw": metrics["mean_var_corr_raw"],
             "mean_var_corr_trans": metrics["mean_var_corr_trans"],
         }
     )
 
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.metric("Shapiro p (Raw)", f"{metrics['shapiro_raw']:.2e}")
-    with c2:
-        st.metric("Shapiro p (Trans)", f"{metrics['shapiro_trans']:.2e}")
-    with c3:
-        st.metric("Mean–Var Corr (Raw)", f"{metrics['mean_var_corr_raw']:.3f}")
-    with c4:
-        st.metric("Mean–Var Corr (Trans)", f"{metrics['mean_var_corr_trans']:.3f}")
+if not summary_rows:
+    st.warning("No transformations evaluated.")
+    st.stop()
 
-    st.markdown("---")
+df_summary = pd.DataFrame(summary_rows)
+
+# Combined score: higher W_trans and p_trans, lower |mean_var_corr_trans|
+df_summary["combined_score"] = (
+    df_summary["W_trans"].rank(ascending=False)
+    + df_summary["p_trans"].rank(ascending=False)
+    + (1 - df_summary["mean_var_corr_trans"].abs()).rank(ascending=False)
+)
+
+df_summary = df_summary.sort_values("combined_score").reset_index(drop=True)
+
+# Display table
+display_cols = [
+    "Method",
+    "W_raw",
+    "p_raw",
+    "W_trans",
+    "p_trans",
+    "mean_var_corr_raw",
+    "mean_var_corr_trans",
+    "combined_score",
+]
+df_display = df_summary[display_cols].round(4)
+df_display.index = df_display.index + 1  # rank-like index
+
+st.dataframe(df_display, width="stretch")
+
+best = df_summary.iloc[0]
+st.success(
+    f"🏆 Best: **{best['Method']}** "
+    f"(W={best['W_trans']:.3f}, p={best['p_trans']:.2e}, "
+    f"Mean–Var Corr={best['mean_var_corr_trans']:.3f})"
+)
 
 # ----------------------------------------------------------------------
-# 4) Bottom ranking table (built from all_metrics)
+# 3) Raw plot (always visible) + selection of a single transformation
 # ----------------------------------------------------------------------
-st.subheader("4️⃣ Transformation Ranking")
+st.subheader("3️⃣ Diagnostics Plots")
 
-if not all_metrics:
-    st.warning("No metrics collected.")
-else:
-    df_summary = pd.DataFrame(all_metrics)
+col_left, col_right = st.columns([1, 1])
 
-    # Combined score: higher Shapiro_trans, lower |mean_var_corr_trans| is better
-    df_summary["combined_score"] = (
-        df_summary["shapiro_trans"].rank(ascending=False)
-        + (1 - df_summary["mean_var_corr_trans"].abs()).rank(ascending=False)
+with col_left:
+    st.markdown("**Raw Data (Reference)**")
+    raw_fig = create_raw_row_figure(
+        df_raw=df_raw,
+        raw_cols=eval_cols,
+        title="Raw Data",
     )
+    st.plotly_chart(raw_fig, width="stretch")
 
-    df_summary = df_summary.sort_values("combined_score").reset_index(drop=True)
+# Choose exactly one transformation to visualize
+methods_for_radio = df_summary["method"].tolist()
+default_best_index = 0  # first row is best after sorting
+selected_method = st.radio(
+    "Select transformation to visualize",
+    options=methods_for_radio,
+    index=default_best_index,
+    format_func=lambda m: TRANSFORM_NAMES.get(m, m),
+)
 
-    display_cols = [
-        "Method",
-        "shapiro_trans",
-        "mean_var_corr_trans",
-        "shapiro_raw",
-        "mean_var_corr_raw",
-        "combined_score",
-    ]
-    df_display = df_summary[display_cols].round(4)
-    df_display.index = df_display.index + 1  # rank-like index
+with col_right:
+    nice_name = TRANSFORM_NAMES.get(selected_method, selected_method)
+    st.markdown(f"**{nice_name}**")
 
-    st.dataframe(df_display, width="stretch")
-
-    best = df_summary.iloc[0]
-    st.success(
-        f"🏆 Best: **{best['Method']}** "
-        f"(Shapiro p={best['shapiro_trans']:.2e}, "
-        f"Mean–Var Corr={best['mean_var_corr_trans']:.3f})"
+    # Reuse the same transform for this method (could cache if needed)
+    df_trans, trans_cols = apply_transformation(df_raw, eval_cols, selected_method)
+    trans_fig = create_transformed_row_figure(
+        df_transformed=df_trans,
+        trans_cols=trans_cols,
+        title=nice_name,
     )
+    st.plotly_chart(trans_fig, width="stretch")
