@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 
 from helpers.constants import get_theme, TRANSFORMS
 from helpers.statistics import test_normality_shapiro
-from helpers.plots import plot_heatmap
+from helpers.plots_advanced import create_heatmap_clustered
 from helpers.audit import log_event
 from helpers.constants import get_theme, TRANSFORMS
 from helpers.transforms import apply_transform, get_transform_info, recommend_transform
@@ -149,7 +149,13 @@ n_sample = min(1000, len(df_transformed))
 sampled = df_transformed.sample(n=n_sample, random_state=42)
 
 # Use YOUR plot_heatmap function
-fig_heat = plot_heatmap(sampled, numeric_cols, theme=theme)
+fig = create_heatmap_clustered(
+    df_transformed,
+    protein_data.numeric_cols,
+    species_mapping=protein_data.species_mapping,
+    theme_name=theme_name,   # or your chosen theme variable
+)
+st.plotly_chart(fig, use_container_width=True)
 st.plotly_chart(fig_heat, width="stretch")
 
 # ============================================================================
