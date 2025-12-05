@@ -10,6 +10,20 @@ from typing import Dict, List, Tuple
 from helpers.transforms import apply_transformation
 from helpers.evaluation import evaluate_transformation
 
+def find_best_transformation(summary_df: pd.DataFrame) -> Tuple[str, str]:
+    """Find best transformation based on multiple criteria."""
+    if summary_df.empty:
+        return 'log2', 'default'
+    
+    # Ensure combined_score exists
+    if 'combined_score' not in summary_df.columns:
+        summary_df['combined_score'] = (
+            summary_df['shapiro_p'].rank(ascending=False) +
+            (1 - summary_df['mean_var_corr'].abs()).rank(ascending=False) +
+            summary_df['n_significant'].rank(ascending=False)
+        )
+
+
 def compare_transformations(
     df_raw: pd.DataFrame,
     numeric_cols: list,
