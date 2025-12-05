@@ -76,21 +76,7 @@ group_b = [c for c in numeric_cols if 'B' in c.upper()] or numeric_cols[len(nume
 st.metric("Transform", transform_method)
 
 
-st.subheader("Raw intensity distributions (per sample)")
 
-for col in numeric_cols:
-    vals = protein_data.raw[col].dropna()
-    if vals.empty:
-        continue
-    st.caption(col)
-    st.plotly_chart(
-        px.histogram(
-            vals,
-            nbins=50,
-            title=None,
-        ),
-        width="stretch",
-    )
 
 # ============================================================================
 # PLOT 1: 6 INDIVIDUAL DISTRIBUTIONS (Custom - not in helpers)
