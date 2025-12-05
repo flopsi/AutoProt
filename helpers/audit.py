@@ -22,8 +22,8 @@ def ensure_audit_dir() -> None:
     os.makedirs("data", exist_ok=True)
 
 
-def log_event(page: str, action: str, details: Dict = None) -> None:
-    """
+def log_event(page: str, action: str, details: dict = None):
+    """Log an event to the audit trail."""    """
     Log an event to the audit trail.
     
     Args:
@@ -82,6 +82,22 @@ def clear_audit_log() -> None:
         open(AUDIT_LOG_PATH, "w").close()
     except Exception as e:
         print(f"Failed to clear audit log: {e}")
+
+    # Convert numpy types to Python types for JSON serialization
+    if details:
+        details_cleaned = {}
+        for key, value in details.items():
+            if isinstance(value, (np.integer, np.int64, np.int32)):
+                details_cleaned[key] = int(value)
+            elif isinstance(value, (np.floating, np.float64, np.float32)):
+                details_cleaned[key] = float(value)
+            elif isinstance(value, np.bool_):
+                details_cleaned[key] = bool(value)
+            elif isinstance(value, np.ndarray):
+                details_cleaned[key] = value.tolist()
+            else:
+                details_cleaned[key] = value
+        details = details_cleaned
 
 
 # ============================================================================
