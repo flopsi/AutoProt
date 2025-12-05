@@ -1,193 +1,139 @@
-"""
-pages/2_Visual_EDA.py
-Clean 2-row layout: Raw | Transformed + Comparison Table
-"""
+# pages/2_Visual_EDA.py
 
 import streamlit as st
 import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 from helpers.transforms import apply_transformation, TRANSFORM_NAMES, TRANSFORM_DESCRIPTIONS
+from helpers.evaluation import create_evaluation_figure, evaluate_transformation_metrics
 from helpers.comparison import compare_transformations
-from helpers.constants import get_theme
 
 st.set_page_config(page_title="Visual EDA", layout="wide")
 
-st.title("📊 Visual Exploratory Data Analysis")
+st.title("📊 Visual EDA: Transformation Diagnostics")
 
-# Load data
+# ---------------------------------------------------------------------
+# Load data from session
+# ---------------------------------------------------------------------
 protein_data = st.session_state.get("protein_data")
-if not protein_data:
-    st.error("❌ No data loaded. Please upload data first.")
+if protein_data is None:
+    st.error("No data found. Please upload data on the 'Data Upload' page first.")
     st.stop()
 
-st.success(f"✅ Loaded: {len(protein_data.raw):,} proteins × {len(protein_data.numeric_cols)} samples")
+df_raw = protein_data.raw
+numeric_cols = protein_data.numeric_cols
 
-# ============================================================================
-# CONTROLS
-# ============================================================================
+if not numeric_cols:
+    st.error("No numeric columns found in data.")
+    st.stop()
 
-col1, col2 = st.columns([2, 1])
-with col1:
-    transform_options = list(TRANSFORM_NAMES.keys())[1:]  # Skip raw for dropdown
-    selected_transform = st.selectbox(
-        "Transformation", 
-        options=transform_options,
-        format_func=lambda x: TRANSFORM_NAMES[x],
-        index=0  # log2 default
+st.success(f"Data: {len(df_raw):,} proteins × {len(numeric_cols)} intensity columns")
+
+# ---------------------------------------------------------------------
+# Top controls: multi-select of transformations
+# ---------------------------------------------------------------------
+st.subheader("1️⃣ Select Transformations to Evaluate")
+
+available_methods = [m for m in TRANSFORM_NAMES.keys() if m != "raw"]
+
+selected_methods = st.multiselect(
+    "Transformations",
+    options=available_methods,
+    default=["log2", "log10", "sqrt", "arcsinh", "vst"],
+    format_func=lambda x: TRANSFORM_NAMES.get(x, x),
+)
+
+if not selected_methods:
+    st.info("Select at least one transformation to see diagnostics.")
+    st.stop()
+
+# Limit number of columns used for evaluation (to keep plots readable)
+max_cols = st.slider(
+    "Number of intensity columns to use for evaluation",
+    min_value=3,
+    max_value=min(12, len(numeric_cols)),
+    value=6,
+)
+eval_cols = numeric_cols[:max_cols]
+
+# ---------------------------------------------------------------------
+# For each selected transformation:
+# Row block with 2×3 plots (raw vs transformed) and metrics
+# ---------------------------------------------------------------------
+st.subheader("2️⃣ Diagnostic Plots per Transformation")
+
+all_metrics = {}
+
+for method in selected_methods:
+    st.markdown(f"### 🔄 {TRANSFORM_NAMES.get(method, method)}")
+
+    # Apply transformation to the whole data, but only use eval_cols for plotting
+    df_transformed, trans_cols = apply_transformation(df_raw, eval_cols, method)
+
+    # Create evaluation plots (raw vs transformed) for these columns
+    fig = create_evaluation_figure(
+        df_raw=df_raw,
+        df_transformed=df_transformed,
+        raw_cols=eval_cols,
+        trans_cols=trans_cols,
+        title=TRANSFORM_NAMES.get(method, method),
     )
-    st.caption(TRANSFORM_DESCRIPTIONS.get(selected_transform, ""))
-    
-with col2:
-    max_plots = st.slider("Max samples", 3, min(12, len(protein_data.numeric_cols)), 6)
+    st.plotly_chart(fig, use_container_width=True)
 
-# Run comparison table (always visible)
-if st.checkbox("Show Comparison Table"):
-    col3, col4 = st.columns(2)
-    with col3:
-        compare_transforms = st.multiselect(
-            "Compare these", 
-            options=transform_options,
-            default=['log2', 'log10', 'sqrt', 'arcsinh', 'vst']
-        )
-    with col4:
-        st.button("🔄 Refresh Comparison")
-
-# ============================================================================
-# ROW 1: RAW DATA PLOTS (LEFT)
-# ROW 2: TRANSFORMED PLOTS (RIGHT)  
-# ============================================================================
-
-theme = get_theme(st.session_state.get("theme", "light"))
-
-# Create 2-row layout
-row1_col1, row1_col2 = st.columns([1, 1])
-row2_col1, row2_col2 = st.columns([1, 1])
-
-# === ROW 1: RAW DATA ===
-with row1_col1:
-    st.subheader("📈 Raw Data Distributions")
-    
-    raw_fig = make_subplots(rows=2, cols=3, subplot_titles=[""]*6)
-    
-    for i, col in enumerate(protein_data.numeric_cols[:max_plots]):
-        row, pos = (i//3)+1, (i%3)+1
-        values = protein_data.raw[col][protein_data.raw[col]>1.0].dropna()
-        
-        if len(values) > 0:
-            raw_fig.add_trace(
-                go.Histogram(x=values, nbinsx=40, opacity=0.75,
-                           marker_color="#1f77b4", showlegend=False),
-                row=row, col=pos
-            )
-            raw_fig.add_vline(values.mean(), line_dash="dash", line_color="red",
-                            annotation_text=f"μ={values.mean():.1f}", row=row, col=pos)
-    
-    raw_fig.update_layout(height=400, showlegend=False, 
-                         title="Raw Intensity Distributions")
-    st.plotly_chart(raw_fig, use_container_width=True)
-
-# === ROW 2: TRANSFORMED DATA ===
-with row2_col2:
-    st.subheader(f"🔄 {TRANSFORM_NAMES[selected_transform]} Distributions")
-    
-    # Apply transformation
-    df_trans, trans_cols = apply_transformation(
-        protein_data.raw, protein_data.numeric_cols[:max_plots], selected_transform
+    # Compute metrics (Shapiro p, mean–variance correlations)
+    metrics = evaluate_transformation_metrics(
+        df_raw=df_raw,
+        df_transformed=df_transformed,
+        raw_cols=eval_cols,
+        trans_cols=trans_cols,
     )
-    
-    trans_fig = make_subplots(rows=2, cols=3, subplot_titles=[""]*6)
-    
-    for i, col in enumerate(trans_cols[:max_plots]):
-        row, pos = (i//3)+1, (i%3)+1
-        values = df_trans[col][df_trans[col]>1.0].dropna()
-        
-        if len(values) > 0:
-            trans_fig.add_trace(
-                go.Histogram(x=values, nbinsx=40, opacity=0.75,
-                           marker_color="#ff7f0e", showlegend=False),
-                row=row, col=pos
-            )
-            trans_fig.add_vline(values.mean(), line_dash="dash", line_color="darkred",
-                              annotation_text=f"μ={values.mean():.1f}", row=row, col=pos)
-    
-    trans_fig.update_layout(height=400, showlegend=False,
-                           title=f"{TRANSFORM_NAMES[selected_transform]} Distributions")
-    st.plotly_chart(trans_fig, use_container_width=True)
+    all_metrics[method] = metrics
 
-# ============================================================================
-# SUMMARY STATISTICS (BOTH)
-# ============================================================================
+    # Show metrics under the plots
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("Shapiro p (Raw)", f"{metrics['shapiro_raw']:.2e}")
+    with c2:
+        st.metric("Shapiro p (Trans)", f"{metrics['shapiro_trans']:.2e}")
+    with c3:
+        st.metric("Mean–Var Corr (Raw)", f"{metrics['mean_var_corr_raw']:.3f}")
+    with c4:
+        st.metric("Mean–Var Corr (Trans)", f"{metrics['mean_var_corr_trans']:.3f}")
 
-with row1_col2:
-    st.subheader("📊 Raw Statistics")
-    raw_stats = []
-    for col in protein_data.numeric_cols[:max_plots]:
-        values = protein_data.raw[col][protein_data.raw[col]>1.0].dropna()
-        if len(values)>0:
-            raw_stats.append({
-                'Sample': col, 'N': len(values), 'Mean': values.mean(),
-                'Std': values.std(), 'CV%': values.std()/values.mean()*100
-            })
-    if raw_stats:
-        pd.DataFrame(raw_stats).round(1).style.format({'CV%': '{:.1f}%'}).to_html()
+    st.markdown("---")
 
-with row2_col1:
-    st.subheader(f"📊 {TRANSFORM_NAMES[selected_transform]} Statistics")
-    trans_stats = []
-    for col in trans_cols[:max_plots]:
-        values = df_trans[col][df_trans[col]>1.0].dropna()
-        if len(values)>0:
-            trans_stats.append({
-                'Sample': col.replace('_transformed',''), 'N': len(values),
-                'Mean': values.mean(), 'Std': values.std(), 'CV%': values.std()/values.mean()*100
-            })
-    if trans_stats:
-        pd.DataFrame(trans_stats).round(1)
+# ---------------------------------------------------------------------
+# Bottom: Comparison table across all methods
+# ---------------------------------------------------------------------
+st.subheader("3️⃣ Transformation Ranking")
 
-st.divider()
+summary_df, _ = compare_transformations(
+    df_raw=df_raw,
+    numeric_cols=eval_cols,
+    methods=selected_methods,
+)
 
-# ============================================================================
-# COMPARISON TABLE (BOTTOM)
-# ============================================================================
+if summary_df.empty:
+    st.warning("No comparison results could be computed.")
+    st.stop()
 
-st.subheader("⚖️ All Transformations Comparison")
-if st.button("🔄 Run Full Comparison"):
-    with st.spinner("Comparing all transformations..."):
-        summary_df, _ = compare_transformations(
-            protein_data.raw, protein_data.numeric_cols[:6],
-            ['log2', 'log10', 'sqrt', 'arcsinh', 'vst', 'yeo-johnson']
-        )
-    
-    if not summary_df.empty:
-        # Add rank and sort
-        summary_df['Rank'] = summary_df['combined_score'].rank(ascending=False).astype(int)
-        summary_df = summary_df.sort_values('Rank')
-        
-        # Simple table
-        display_cols = ['Rank', 'method', 'shapiro_p', 'mean_var_corr', 'n_significant', 'improvement']
-        st.dataframe(
-            summary_df[display_cols].round(4),
-            use_container_width=True,
-            column_config={
-                "method": st.column_config.Column("Method", width="medium"),
-                "shapiro_p": st.column_config.Column("Shapiro p", format="%.2e"),
-                "Rank": st.column_config.Column("Rank", width="medium")
-            }
-        )
-        
-        # Best result
-        best = summary_df.iloc[0]
-        col1, col2, col3 = st.columns(3)
-        col1.metric("🥇 Best Method", TRANSFORM_NAMES[best['method']])
-        col2.metric("Shapiro p", f"{best['shapiro_p']:.2e}")
-        col3.metric("DE Results", f"{best['n_significant']:,}")
-        
-        # Download
-        st.download_button(
-            "💾 Download Results",
-            summary_df.to_csv(index=False),
-            f"transformations_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv"
-        )
+# Map method → nice name for display
+summary_df = summary_df.copy()
+summary_df["Method"] = summary_df["method"].map(lambda x: TRANSFORM_NAMES.get(x, x))
+
+# Order columns
+display_cols = ["Method", "shapiro_p", "mean_var_corr", "combined_score"]
+summary_df = summary_df[display_cols].round(4)
+
+# Sort by combined_score (lower rank = better)
+summary_df = summary_df.sort_values("combined_score", ascending=True).reset_index(drop=True)
+summary_df.index = summary_df.index + 1  # rank 1-based
+
+st.dataframe(summary_df, use_container_width=True)
+
+# Highlight best
+best_row = summary_df.iloc[0]
+st.success(
+    f"🏆 Best transformation: **{best_row['Method']}** "
+    f"(Shapiro p={best_row['shapiro_p']:.2e}, "
+    f"Mean–Var Corr={best_row['mean_var_corr']:.3f})"
+)
