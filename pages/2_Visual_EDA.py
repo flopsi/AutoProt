@@ -185,20 +185,20 @@ for col in numeric_cols:
         "is_normal": res["is_normal"],
         "n": res["n"],
     })
-st.dataframe(pd.DataFrame(results), width="stretch")
 
+results_df = pd.DataFrame(results)
 
 def highlight_normal(val):
-    # val is True/False or truthy/falsy
     if bool(val):
         return "background-color: #d1fae5;"  # light green
     return ""
 
 st.dataframe(
-    results.style.applymap(highlight_normal, subset=["is_normal"]),
+    results_df.style.applymap(highlight_normal, subset=["is_normal"]),
     width="stretch",
     height=400,
 )
+
 
 # ============================================================================
 # AUDIT
