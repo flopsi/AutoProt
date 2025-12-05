@@ -186,7 +186,7 @@ else:
 # 6-PANEL DISTRIBUTION PLOTS
 # ============================================================================
 
-st.subheader("2️⃣ Distribution Analysis (All Samples)")
+st.subheader("2️⃣ Individual Sample Distributions")
 st.markdown("""
 Each plot shows:
 - **Histogram**: Distribution of intensity values
@@ -196,37 +196,28 @@ Each plot shows:
 
 theme = get_theme(st.session_state.get("theme", "light"))
 
-# Determine grid layout based on number of samples
-n_samples = len(protein_data.numeric_cols)
-if n_samples <= 3:
-    n_rows, n_cols = 1, n_samples
-elif n_samples <= 6:
-    n_rows, n_cols = 2, 3
-elif n_samples <= 9:
-    n_rows, n_cols = 3, 3
-else:
-    n_rows = (n_samples + 3) // 4
-    n_cols = 4
+# Determine how many samples to plot (max 6 for 2x3 grid)
+n_samples = min(len(protein_data.numeric_cols), 6)
+numeric_cols = protein_data.numeric_cols[:n_samples]
 
-# Create subplots
+# Create subplot grid
 fig = make_subplots(
-    rows=n_rows,
-    cols=n_cols,
-    subplot_titles=[f"<b>{col}</b>" for col in protein_data.numeric_cols],
+    rows=2, cols=3,
+    subplot_titles=[f"<b>{col}</b>" for col in numeric_cols],
     vertical_spacing=0.15,
     horizontal_spacing=0.10
 )
 
 # Plot each sample
-for idx, sample_col in enumerate(protein_data.numeric_cols):
-    row = (idx // n_cols) + 1
-    col_pos = (idx % n_cols) + 1
+for idx, col in enumerate(numeric_cols):
+    row = (idx // 3) + 1
+    col_pos = (idx % 3) + 1
     
-    # Get data for this sample (drop NaN)
-    sample_data = df_to_plot[sample_col].dropna().values
+    # Get filtered data for this sample (drop NaN and values == 1.0)
+    values = df_to_plot[col][df_to_plot[col] > 1.0].dropna().values
     
-    if len(sample_data) == 0:
-        # Add annotation for empty data
+    if len(values) == 0:
+        # Add "No data" annotation if empty
         fig.add_annotation(
             text="No data",
             xref=f"x{idx+1}" if idx > 0 else "x",
@@ -240,131 +231,129 @@ for idx, sample_col in enumerate(protein_data.numeric_cols):
         continue
     
     # Calculate statistics
-    mean_val = np.mean(sample_data)
-    std_val = np.std(sample_data)
+    mean_val = np.mean(values)
+    std_val = np.std(values)
     lower_bound = mean_val - 2 * std_val
     upper_bound = mean_val + 2 * std_val
     
-    # Calculate histogram manually for better control
-    hist, bin_edges = np.histogram(sample_data, bins=50)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-    
-    # Add histogram as bar chart
+    # Add histogram
     fig.add_trace(
-        go.Bar(
-            x=bin_centers,
-            y=hist,
-            width=(bin_edges[1] - bin_edges[0]) * 0.9,
-            name=sample_col,
-            marker=dict(
-                color=theme["primary"],
-                opacity=0.7,
-                line=dict(color=theme["text_primary"], width=0.5)
-            ),
+        go.Histogram(
+            x=values,
+            name=col,
+            nbinsx=40,
+            opacity=0.75,
+            marker_color=theme['primary'],
             showlegend=False,
-            hovertemplate="Value: %{x:.2f}<br>Count: %{y}<extra></extra>"
+            hovertemplate="Intensity: %{x:.2f}<br>Count: %{y}<extra></extra>"
         ),
         row=row, col=col_pos
     )
     
-    # Get y-axis range for annotations
-    y_max = max(hist) if len(hist) > 0 else 1
+    # Add mean line (vertical line)
+    # Get histogram to determine y-axis range
+    hist_values, bin_edges = np.histogram(values, bins=40)
+    y_max = max(hist_values) if len(hist_values) > 0 else 1
     
-    # Add mean line
     fig.add_trace(
         go.Scatter(
             x=[mean_val, mean_val],
-            y=[0, y_max],
+            y=[0, y_max * 1.1],
             mode='lines',
             line=dict(dash="dash", color="red", width=2),
             showlegend=False,
-            hovertemplate=f"Mean: {mean_val:.2f}<extra></extra>"
+            hovertemplate=f"Mean: {mean_val:.2f}<extra></extra>",
+            name="Mean"
         ),
         row=row, col=col_pos
     )
     
-    # Add ±2 StdDev shaded region as shape
-    # Note: shapes are added to the figure, not to individual subplots
-    # We need to calculate the correct axis references
-    xaxis_name = f"x{idx+1}" if idx > 0 else "x"
-    yaxis_name = f"y{idx+1}" if idx > 0 else "y"
+    # Add ±2σ shaded region as a shape
+    # Calculate axis reference names
+    xaxis_ref = f"x{idx+1}" if idx > 0 else "x"
+    yaxis_ref = f"y{idx+1}" if idx > 0 else "y"
     
     fig.add_shape(
         type="rect",
-        xref=xaxis_name,
-        yref=yaxis_name,
+        xref=xaxis_ref,
+        yref=f"{yaxis_ref} domain",  # Use domain for y (0 to 1)
         x0=lower_bound,
         x1=upper_bound,
         y0=0,
         y1=1,
-        yref=f"{yaxis_name} domain",  # Use domain coordinates for y
-        fillcolor=theme["primary"],
-        opacity=0.15,
+        fillcolor=theme['primary'],
+        opacity=0.2,
         line_width=0,
         layer="below"
     )
     
-    # Add text annotations for mean and std
+    # Add annotation for mean
     fig.add_annotation(
-        text=f"μ={mean_val:.2f}",
-        xref=xaxis_name,
-        yref=yaxis_name,
+        text=f"μ = {mean_val:.2f}",
+        xref=xaxis_ref,
+        yref=yaxis_ref,
         x=mean_val,
         y=y_max * 0.95,
         showarrow=False,
-        font=dict(size=10, color="red"),
-        bgcolor="white",
-        opacity=0.8
+        font=dict(size=10, color="red", family="Arial"),
+        bgcolor="rgba(255, 255, 255, 0.8)",
+        borderpad=2
     )
     
+    # Add annotation for ±2σ
     fig.add_annotation(
         text=f"±2σ",
-        xref=xaxis_name,
-        yref=yaxis_name,
+        xref=xaxis_ref,
+        yref=yaxis_ref,
         x=upper_bound,
-        y=y_max * 0.05,
+        y=y_max * 0.1,
         showarrow=False,
-        font=dict(size=9, color=theme["primary"]),
-        bgcolor="white",
-        opacity=0.8
-    )
-    
-    # Update axes for this subplot
-    fig.update_xaxes(
-        title_text="Intensity",
-        showgrid=True,
-        gridcolor=theme["grid"],
-        row=row, col=col_pos
-    )
-    fig.update_yaxes(
-        title_text="Count",
-        showgrid=True,
-        gridcolor=theme["grid"],
-        row=row, col=col_pos
+        font=dict(size=9, color=theme['primary'], family="Arial"),
+        bgcolor="rgba(255, 255, 255, 0.7)",
+        borderpad=2
     )
 
-# Update overall layout
+# Update layout
 fig.update_layout(
-    height=400 * n_rows,
-    title_text=f"<b>Sample Distributions - {TRANSFORM_NAMES[selected_transform]}</b>",
-    title_font_size=18,
     showlegend=False,
-    plot_bgcolor=theme["bg_primary"],
-    paper_bgcolor=theme["paper_bg"],
-    font=dict(
-        family="Arial",
-        size=12,
-        color=theme["text_primary"]
-    ),
+    plot_bgcolor=theme['bg_primary'],
+    paper_bgcolor=theme['paper_bg'],
+    font=dict(family="Arial", size=11, color=theme['text_primary']),
+    height=650,
+    title_text=f"<b>Sample Distributions - {TRANSFORM_NAMES[selected_transform]}</b>",
+    title_font_size=16,
     hovermode="closest"
 )
 
-st.plotly_chart(fig, width='stretch')
+# Update all axes
+fig.update_xaxes(
+    title_text="Intensity",
+    showgrid=True,
+    gridcolor=theme['grid'],
+    gridwidth=1
+)
+fig.update_yaxes(
+    title_text="Count",
+    showgrid=True,
+    gridcolor=theme['grid'],
+    gridwidth=1
+)
 
+st.plotly_chart(fig, width="stretch")
 
-# ============================================================================
-# SUMMARY STATISTICS TABLE
-# ============================================================================
+# Show statistics summary below plots
+st.markdown("**Statistics Summary:**")
+stats_cols = st.columns(n_samples)
+for idx, col in enumerate(numeric_cols):
+    values = df_to_plot[col][df_to_plot[col] > 1.0].dropna().values
+    if len(values) > 0:
+        with stats_cols[idx]:
+            mean_val = np.mean(values)
+            std_val = np.std(values)
+            st.caption(f"**{col}**")
+            st.caption(f"μ: {mean_val:.2f}")
+            st.caption(f"σ: {std_val:.2f}")
+            st.caption(f"n: {len(values):,}")
 
 # ============================================================================
 # SUMMARY STATISTICS TABLE
