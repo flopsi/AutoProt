@@ -4,7 +4,7 @@ from helpers.transforms import cached_apply_transformation, TRANSFORM_NAMES
 from helpers.evaluation import (
     create_raw_row_figure,
     create_transformed_row_figure,
-    cached_evaluate_transformation_metrics,
+    evaluate_transformation_metrics,
 )
 from helpers.comparison import compare_transformations
 
@@ -67,13 +67,11 @@ for method in selected_methods:
     )
     st.plotly_chart(trans_fig, use_container_width=True)
 
-    metrics = cached_evaluate_transformation_metrics(
+    metrics = evaluate_transformation_metrics(
         df_raw=df_raw,
         df_transformed=df_trans,
         raw_cols=eval_cols,
         trans_cols=trans_cols,
-        method=method,
-        file_hash=file_hash,
     )
 
     c1, c2, c3, c4 = st.columns(4)
