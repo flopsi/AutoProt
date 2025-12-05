@@ -195,7 +195,7 @@ def highlight_normal(val):
     return ""
 
 st.dataframe(
-    results_df.style.applymap(highlight_normal, subset=["is_normal"]),
+    results.style.applymap(highlight_normal, subset=["is_normal"]),
     width="stretch",
     height=400,
 )
