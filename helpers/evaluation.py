@@ -81,7 +81,7 @@ def create_raw_row_figure(
     if len(raw_vals) > 0:
         mu = float(np.mean(raw_vals))
         sigma = float(np.std(raw_vals))
-        x0, x1 = mu - 2 * sigma, mu + 2 * sigma
+        x0, x1 = mu - 3 * sigma, mu + 3 * sigma
 
         # histogram data
         hist, bin_edges = np.histogram(raw_vals, bins=50)
@@ -234,7 +234,7 @@ def create_transformed_row_figure(
     if len(trans_vals) > 0:
         mu = float(np.mean(trans_vals))
         sigma = float(np.std(trans_vals))
-        x0, x1 = mu - 2 * sigma, mu + 2 * sigma
+        x0, x1 = mu - 3 * sigma, mu + 3 * sigma
 
         hist, bin_edges = np.histogram(trans_vals, bins=50)
         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
