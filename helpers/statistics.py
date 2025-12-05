@@ -45,6 +45,86 @@ def test_normality_shapiro(
         "alpha": alpha,
         "n": n,
     }
+import pandas as pd
+import numpy as np
+from scipy import stats
+
+
+def normality_diagnostics(
+    series: pd.Series,
+    alpha: float = 0.05,
+) -> dict:
+    """
+    Comprehensive normality diagnostics combining:
+    - Shapiro–Wilk
+    - D’Agostino’s K² (skewness + kurtosis)
+    - Anderson–Darling
+    - Skewness / Kurtosis as effect sizes
+
+    Returns a dict with per-test p-values and a more tolerant 'is_normal' flag.
+    """
+    x = pd.to_numeric(series, errors="coerce").dropna().values
+    n = len(x)
+
+    if n < 8:
+        return {
+            "n": n,
+            "shapiro_stat": np.nan,
+            "shapiro_p": np.nan,
+            "dagostino_stat": np.nan,
+            "dagostino_p": np.nan,
+            "anderson_stat": np.nan,
+            "anderson_crit_5": np.nan,
+            "skewness": np.nan,
+            "kurtosis": np.nan,
+            "is_normal": False,
+            "alpha": alpha,
+        }
+
+    # Shapiro–Wilk
+    sh_stat, sh_p = stats.shapiro(x)
+
+    # D’Agostino’s K² (skew + kurtosis)
+    dag_stat, dag_p = stats.normaltest(x)
+
+    # Anderson–Darling (for normal distribution)
+    anderson_res = stats.anderson(x, dist="norm")
+    and_stat = anderson_res.statistic
+    # critical value at ~5% level
+    crit_5 = np.nan
+    for sig, crit in zip(anderson_res.significance_level, anderson_res.critical_values):
+        if np.isclose(sig, 5.0):
+            crit_5 = crit
+            break
+
+    # Effect-size style measures
+    skew = stats.skew(x, bias=False)
+    kurt = stats.kurtosis(x, fisher=True, bias=False)  # 0 for normal
+
+    # Combine into a more tolerant decision rule:
+    # - allow Shapiro or D’Agostino to be slightly below alpha for large n
+    # - require |skew| and |kurtosis| to be small
+    skew_ok = abs(skew) < 0.5        # tweakable
+    kurt_ok = abs(kurt) < 1.0        # tweakable
+    sh_ok = (sh_p > alpha) or (n > 5000 and sh_p > alpha / 10)
+    dag_ok = (dag_p > alpha) or (n > 5000 and dag_p > alpha / 10)
+    and_ok = (crit_5 is np.nan) or (and_stat < crit_5)
+
+    is_normal = skew_ok and kurt_ok and (sh_ok or dag_ok or and_ok)
+
+    return {
+        "n": int(n),
+        "shapiro_stat": float(sh_stat),
+        "shapiro_p": float(sh_p),
+        "dagostino_stat": float(dag_stat),
+        "dagostino_p": float(dag_p),
+        "anderson_stat": float(and_stat),
+        "anderson_crit_5": float(crit_5) if not np.isnan(crit_5) else np.nan,
+        "skewness": float(skew),
+        "kurtosis": float(kurt),
+        "is_normal": bool(is_normal),
+        "alpha": float(alpha),
+    }
 
 # ============================================================================
 # T-TEST & FDR CALCULATION
