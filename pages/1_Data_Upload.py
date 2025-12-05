@@ -571,22 +571,35 @@ else:
 
 st.subheader("9️⃣ Finalizing...")
 
-# Optional cleaning: drop rows where all intensities are NaN or exactly 1.00
+st.subheader("9️⃣ Finalizing...")
+
+# Optional cleaning: drop proteins with any NaN or 1.00 in intensity columns
 drop_invalid = st.checkbox(
-    "Drop rows where all selected intensity values are NaN or exactly 1.00",
+    "Drop proteins with any NaN or 1.00 in selected intensity columns",
     value=False,
-    help="Keeps rows that have at least one valid intensity value. "
-         "Rows where every selected intensity column is NaN or 1.00 are removed."
+    help=(
+        "If enabled, any protein with at least one missing (NaN) or 1.00 value "
+        "in the selected intensity columns will be removed."
+    ),
 )
 
+rows_dropped = 0
 if drop_invalid:
     before_rows = len(df)
-    df = drop_invalid_intensity_rows(df, numeric_cols, drop_value=1.0)
+    df = drop_proteins_with_invalid_intensities(
+        df=df,
+        intensity_cols=numeric_cols,
+        drop_value=1.0,
+        drop_nan=True,
+    )
     after_rows = len(df)
-    st.info(f"Removed {before_rows - after_rows} proteins with only NaN/1.00 intensities. "
-            f"Remaining: {after_rows} proteins.")
+    rows_dropped = before_rows - after_rows
+    st.info(
+        f"Dropped {rows_dropped} proteins with at least one NaN or 1.00 intensity. "
+        f"Remaining: {after_rows} proteins."
+    )
 
-# Now create the ProteinData object with the (possibly cleaned) df
+# Now create ProteinData with the (possibly cleaned) df
 protein_data = ProteinData(
     raw=df,
     numeric_cols=numeric_cols,
@@ -613,7 +626,7 @@ log_event(
         "columns_renamed": int(len(rename_dict)),
         "nan_replaced": int(n_nan_before),
         "zeros_replaced": int(n_zero_before),
-        "rows_dropped_all_invalid": int(before_rows - after_rows) if drop_invalid else 0,
+        "proteins_dropped_any_invalid": int(rows_dropped),
     },
 )
 
