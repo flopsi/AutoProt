@@ -49,6 +49,34 @@ def evaluate_transformation_metrics(
     }
 
 
+@st.cache_data(show_spinner=False)
+def cached_evaluate_transformation_metrics(
+    df_raw: pd.DataFrame,
+    df_transformed: pd.DataFrame,
+    raw_cols: List[str],
+    trans_cols: List[str],
+    method: str,
+    file_hash: str,
+) -> Dict[str, float]:
+    return evaluate_transformation_metrics(df_raw, df_transformed, raw_cols, trans_cols)
+
+
+@st.cache_data(show_spinner=False)
+def create_raw_row_figure(
+    df_raw: pd.DataFrame,
+    raw_cols: List[str],
+    title: str,
+    file_hash: str,
+) -> go.Figure:
+    fig = make_subplots(
+        rows=1,
+        cols=3,
+        subplot_titles=["Raw Intensities", "Q-Q Plot (Raw)", "Mean-Variance (Raw)"],
+        horizontal_spacing=0.08,
+    )
+
+    raw_vals, means_raw, vars_raw = cached_raw_values(df_raw, raw_cols, file_hash)
+
 def create_raw_row_figure(
     df_raw: pd.DataFrame,
     raw_cols: List[str],
