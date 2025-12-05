@@ -44,7 +44,27 @@ def log_event(page: str, action: str, details: dict = None):
         action=action,
         details=details or {},
     )
+    def log_event(page: str, action: str, details: dict = None):
+    """Log an event to the audit trail."""
     
+    # Convert numpy/pandas types to Python types for JSON
+    if details:
+        details_cleaned = {}
+        for key, value in details.items():
+            if pd.isna(value) or np.isnan(value):
+                details_cleaned[key] = None
+            elif isinstance(value, (np.integer, np.int64, np.int32, pd.Int64Dtype)):
+                details_cleaned[key] = int(value)
+            elif isinstance(value, (np.floating, np.float64, np.float32)):
+                details_cleaned[key] = float(value)
+            elif isinstance(value, np.ndarray):
+                details_cleaned[key] = value.tolist()
+            elif isinstance(value, (pd.Series, pd.DataFrame)):
+                details_cleaned[key] = str(value)[:100]  # Truncate long objects
+            else:
+                details_cleaned[key] = value
+        details = details_cleaned
+
     # Append to JSON log file
     try:
         with open(AUDIT_LOG_PATH, "a") as f:
