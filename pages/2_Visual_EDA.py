@@ -88,18 +88,28 @@ with tab2:
                 max_cols_analysis
             )
         
-        # === SUMMARY TABLE ===
+        # === COMPUTE COMBINED SCORE FIRST ===
+        summary_df['combined_score'] = (
+            summary_df['shapiro_p'].rank(ascending=False) +
+            (1 - summary_df['mean_var_corr'].abs()).rank(ascending=False) +
+            summary_df['n_significant'].rank(ascending=False)
+        )
+        
+        # === SUMMARY TABLE (NOW SAFE) ===
         st.subheader("📋 Comparison Summary")
         
         # Style best transformation
         def highlight_best(row):
             if row.name == summary_df['combined_score'].idxmax():
-                return ["background-color: #B5BD00; color: white"] * len(row)
+                return ["background-color: #B5BD00; color: white; font-weight: bold"] * len(row)
             return [""]
         
         styled_summary = summary_df.style.apply(highlight_best, axis=1).format({
             'shapiro_p': '{:.2e}',
-            'mean_var_corr': '{:.3f}'
+            'mean_var_corr': '{:.3f}',
+            'n_significant': '{:,}',
+            'n_up': '{:,}',
+            'n_down': '{:,}'
         })
         
         st.dataframe(styled_summary, use_container_width=True)
@@ -122,12 +132,28 @@ with tab2:
         # === TOP 3 RANKING ===
         st.subheader("🏅 Top 3 Transformations")
         top3 = summary_df.nlargest(3, 'combined_score')
-        for _, row in top3.iterrows():
-            st.metric(
-                TRANSFORM_NAMES[row['method']],
-                f"p={row['shapiro_p']:.2e} | DE={row['n_significant']:,}",
-                delta=f"corr={row['mean_var_corr']:.3f}"
-            )
+        col1, col2, col3 = st.columns(3)
+        
+        for i, (_, row) in enumerate(top3.iterrows()):
+            with eval(f"col{i+1}"):
+                st.metric(
+                    TRANSFORM_NAMES[row['method']],
+                    f"p={row['shapiro_p']:.2e}",
+                    delta=f"DE={row['n_significant']:,}"
+                )
+        
+        # === SAVE RESULTS ===
+        csv = summary_df.round(4).to_csv(index=False)
+        st.download_button(
+            label="💾 Download Results",
+            data=csv,
+            file_name=f"transformation_comparison_{pd.Timestamp.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv"
+        )
+        
+        st.session_state.all_transformed_data = all_transformed_data
+        st.session_state.comparison_summary = summary_df
+
         
         # === SAVE RESULTS ===
         st.download_button(
