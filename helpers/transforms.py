@@ -121,3 +121,16 @@ def get_transformed_data(df: pd.DataFrame, numeric_cols: list, method: str) -> t
     """
     df_transformed, transformed_cols = apply_transformation(df, numeric_cols, method)
     return df_transformed, transformed_cols
+
+@st.cache_data(show_spinner=False)
+def cached_apply_transformation(
+    df: pd.DataFrame,
+    numeric_cols: List[str],
+    method: str,
+    file_hash: str,
+) -> Tuple[pd.DataFrame, List[str]]:
+    """
+    Cached wrapper around apply_transformation.
+    file_hash should change when a new file is uploaded (e.g. path or checksum).
+    """
+    return apply_transformation(df, numeric_cols, method)
