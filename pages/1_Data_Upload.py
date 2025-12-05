@@ -549,30 +549,25 @@ st.subheader("Total Species Distribution")
 
 species_totals = species_series.value_counts()
 
-if len(species_totals) == 0:
-    st.info("No species data available")
-else:
-    # Limit to first 8 species to avoid too many columns
-    top_species = species_totals.head(8)
-    n_cols = int(len(top_species))
+if len(species_totals) > 0:
+    # Force conversion to Python int
+    n_species = int(len(species_totals))
     
-    if n_cols <= 4:
-        cols = st.columns(n_cols)
-    else:
-        # Use 2 rows for many species
-        cols1, cols2 = st.columns(4)
-        cols = cols1 + cols2[:n_cols-4] if n_cols > 4 else cols1
+    # Limit columns to avoid layout issues
+    max_cols = min(n_species, 8)
+    cols = st.columns(max_cols)
+    
+    # Show top species
+    top_species = species_totals.head(max_cols)
     
     for col_idx, (species, count) in enumerate(top_species.items()):
         with cols[col_idx]:
-            st.metric(
-                species, 
-                f"{int(count):,}",
-                delta=f"{int(count)} proteins"
-            )
+            st.metric(species, f"{int(count):,}")
     
-    if len(species_totals) > 8:
-        st.caption(f"... and {int(len(species_totals) - 8)} more species")
+    if n_species > max_cols:
+        st.caption(f"and {int(n_species - max_cols)} more species...")
+else:
+    st.info("No species data available")
 
 # ============================================================================
 # STEP 9: CREATE PROTEIN DATA OBJECT & STORE
