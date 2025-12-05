@@ -1,5 +1,5 @@
 """
-helpers/plots_advanced.py
+helpers/plots.py
 Advanced visualization functions (heatmaps, PCA, QC dashboard)
 Extends Phase 1 plots with sophisticated analysis visualizations
 """
