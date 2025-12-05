@@ -1,6 +1,6 @@
 import streamlit as st
 
-from helpers.transforms import cached_apply_transformation, TRANSFORM_NAMES
+from helpers.transforms import apply_transformation, TRANSFORM_NAMES
 from helpers.evaluation import (
     create_raw_row_figure,
     create_transformed_row_figure,
@@ -10,7 +10,6 @@ from helpers.comparison import compare_transformations
 
 st.set_page_config(page_title="Visual EDA", layout="wide")
 
-st.title("📊 Visual EDA: Transformation Diagnostics")
 
 protein_data = st.session_state.get("protein_data")
 if protein_data is None:
@@ -73,7 +72,7 @@ for method in selected_methods:
         raw_cols=eval_cols,
         trans_cols=trans_cols,
     )
-
+    
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.metric("Shapiro p (Raw)", f"{metrics['shapiro_raw']:.2e}")
