@@ -111,10 +111,6 @@ def apply_transformation(df: pd.DataFrame, numeric_cols: list, method: str = 'lo
             if pd.isna(median_intensity) or median_intensity <= 0:
                 median_intensity = 1.0
             df_out.loc[vals.index, f'{col}_transformed'] = np.arcsinh(vals / (2 * median_intensity))
-            
-        else:
-            st.error(f"Unknown transformation: {method}")
-            df_out.loc[vals.index, f'{col}_transformed'] = vals
 
         elif method == 'quantile':
             # QuantileTransformer: map each column to a normal-like distribution
@@ -135,6 +131,10 @@ def apply_transformation(df: pd.DataFrame, numeric_cols: list, method: str = 'lo
                     df_out.loc[mask, f'{col}_transformed'] = v_tr
                 except Exception:
                     df_out.loc[mask, f'{col}_transformed'] = vals[mask]
+
+        else:
+            st.error(f"Unknown transformation: {method}")
+            df_out.loc[vals.index, f'{col}_transformed'] = vals
     
         # Get transformed column names
         transformed_cols = [f'{col}_transformed' for col in numeric_cols if f'{col}_transformed' in df_out.columns]
