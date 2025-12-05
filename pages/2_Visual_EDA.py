@@ -47,29 +47,16 @@ max_cols = st.slider(
 )
 eval_cols = numeric_cols[:max_cols]
 
-# Methods to evaluate (all)
-methods_to_evaluate = ["raw"] + available_methods
-
 # ----------------------------------------------------------------------
-# Helper: compute pooled normality stats
-# ----------------------------------------------------------------------
+# Helper: pooled normality stats
 def pooled_normality_stats(df: pd.DataFrame, cols: list) -> dict:
-    """
-    Flatten all given columns into one array and compute:
-    - Shapiro W, p
-    - Skewness, kurtosis (Fisher)
-    """
     x = df[cols].to_numpy().ravel()
     x = x[np.isfinite(x)]
     n = len(x)
     if n < 3:
         return {"n": n, "W": np.nan, "p": np.nan, "skew": np.nan, "kurt": np.nan}
 
-    # subsample for very large n to keep Shapiro stable/fast
-    if n > 5000:
-        x = np.random.choice(x, size=5000, replace=False)
-        n = len(x)
-
+    # Use all values
     W, p = stats.shapiro(x)
     skew = stats.skew(x, bias=False)
     kurt = stats.kurtosis(x, fisher=True, bias=False)
@@ -81,6 +68,7 @@ def pooled_normality_stats(df: pd.DataFrame, cols: list) -> dict:
         "skew": float(skew),
         "kurt": float(kurt),
     }
+
 
 # ----------------------------------------------------------------------
 # 2) Global normality table (one row per condition)
@@ -94,6 +82,7 @@ raw_stats = pooled_normality_stats(df_raw, eval_cols)
 rows.append(
     {
         "Condition": "Raw",
+        "key": "raw",
         "W": raw_stats["W"],
         "p": raw_stats["p"],
         "Skew": raw_stats["skew"],
@@ -109,46 +98,56 @@ for method in available_methods:
     rows.append(
         {
             "Condition": TRANSFORM_NAMES.get(method, method),
+            "key": method,
             "W": stats_tr["W"],
             "p": stats_tr["p"],
             "Skew": stats_tr["skew"],
             "Kurtosis": stats_tr["kurt"],
             "n": stats_tr["n"],
-            "method_key": method,
         }
     )
 
 table_df = pd.DataFrame(rows)
 
-# Compute ranking (ignore Raw)
+# Ranking (ignore Raw for score)
 table_df["score"] = np.nan
-mask_tr = table_df["Condition"] != "Raw"
+mask_tr = table_df["key"] != "raw"
 table_df.loc[mask_tr, "score"] = (
     table_df.loc[mask_tr, "W"].rank(ascending=False)
     + table_df.loc[mask_tr, "p"].rank(ascending=False)
 )
 
-# Order: Raw first, then by score
-table_df = table_df.sort_values(
-    by=["Condition", "score"], key=lambda s: (s == "Raw").astype(int), ascending=[False, True]
-).reset_index(drop=True)
-
+# Show table
 disp = table_df[["Condition", "W", "p", "Skew", "Kurtosis", "n", "score"]].round(4)
 disp.index = disp.index + 1
-st.dataframe(disp, width="stretch")
+st.dataframe(disp, use_container_width=True)
 
-# Best transformation (highest W & p)
-best_row = table_df[table_df["Condition"] != "Raw"].sort_values("score").iloc[0]
-best_method_key = best_row["method_key"]
-st.success(
-    f"🏆 Best transformation: **{best_row['Condition']}** "
-    f"(W={best_row['W']:.3f}, p={best_row['p']:.2e})"
-)
+# Best non-raw method
+if mask_tr.any():
+    best_row = table_df.loc[mask_tr].sort_values("score").iloc[0]
+    st.success(
+        f"🏆 Best transformation: **{best_row['Condition']}** "
+        f"(W={best_row['W']:.3f}, p={best_row['p']:.2e})"
+    )
 
 # ----------------------------------------------------------------------
-# 3) Plots: Raw (fixed) + 1 selected transformation
+# 3) Selection controls "from the table" + plots
 # ----------------------------------------------------------------------
 st.subheader("3️⃣ Diagnostic Plots")
+
+# Radio options aligned with table rows
+condition_keys = table_df["key"].tolist()
+condition_labels = table_df["Condition"].tolist()
+
+# Default: Raw
+default_index = condition_keys.index("raw") if "raw" in condition_keys else 0
+
+selected_key = st.radio(
+    "Select condition to visualize",
+    options=condition_keys,
+    index=default_index,
+    format_func=lambda k: "Raw" if k == "raw" else TRANSFORM_NAMES.get(k, k),
+)
 
 col_left, col_right = st.columns(2)
 
@@ -161,24 +160,17 @@ with col_left:
     )
     st.plotly_chart(raw_fig, use_container_width=True)
 
-# Radio: choose one condition (only transformed ones)
-method_keys = [row["method_key"] for _, row in table_df[table_df["Condition"] != "Raw"].iterrows()]
-default_index = method_keys.index(best_method_key) if best_method_key in method_keys else 0
-selected_method = st.radio(
-    "Select transformation to visualize",
-    options=method_keys,
-    index=default_index,
-    format_func=lambda m: TRANSFORM_NAMES.get(m, m),
-)
-
 with col_right:
-    nice_name = TRANSFORM_NAMES.get(selected_method, selected_method)
-    st.markdown(f"**{nice_name}**")
-
-    df_trans_sel, trans_cols_sel = apply_transformation(df_raw, eval_cols, selected_method)
-    trans_fig = create_transformed_row_figure(
-        df_transformed=df_trans_sel,
-        trans_cols=trans_cols_sel,
-        title=nice_name,
-    )
-    st.plotly_chart(trans_fig, use_container_width=True)
+    if selected_key == "raw":
+        st.markdown("**Raw Data (same as left, for comparison)**")
+        st.plotly_chart(raw_fig, use_container_width=True)
+    else:
+        nice_name = TRANSFORM_NAMES.get(selected_key, selected_key)
+        st.markdown(f"**{nice_name}**")
+        df_trans_sel, trans_cols_sel = apply_transformation(df_raw, eval_cols, selected_key)
+        trans_fig = create_transformed_row_figure(
+            df_transformed=df_trans_sel,
+            trans_cols=trans_cols_sel,
+            title=nice_name,
+        )
+        st.plotly_chart(trans_fig, use_container_width=True)
