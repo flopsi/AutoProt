@@ -545,13 +545,34 @@ if species_mapping and species_col:
 
         st.plotly_chart(fig, width="stretch")
 
-    st.subheader("Total Species Distribution")
-    species_totals = species_series.value_counts()
+st.subheader("Total Species Distribution")
 
-    cols = st.columns(len(species_totals))
-    for col, (sp, count) in zip(cols, species_totals.items()):
-        with col:
-            st.metric(sp, f"{count:,}")
+species_totals = species_series.value_counts()
+
+if len(species_totals) == 0:
+    st.info("No species data available")
+else:
+    # Limit to first 8 species to avoid too many columns
+    top_species = species_totals.head(8)
+    n_cols = int(len(top_species))
+    
+    if n_cols <= 4:
+        cols = st.columns(n_cols)
+    else:
+        # Use 2 rows for many species
+        cols1, cols2 = st.columns(4)
+        cols = cols1 + cols2[:n_cols-4] if n_cols > 4 else cols1
+    
+    for col_idx, (species, count) in enumerate(top_species.items()):
+        with cols[col_idx]:
+            st.metric(
+                species, 
+                f"{int(count):,}",
+                delta=f"{int(count)} proteins"
+            )
+    
+    if len(species_totals) > 8:
+        st.caption(f"... and {int(len(species_totals) - 8)} more species")
 
 # ============================================================================
 # STEP 9: CREATE PROTEIN DATA OBJECT & STORE
