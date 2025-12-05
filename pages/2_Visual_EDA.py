@@ -15,12 +15,6 @@ from helpers.statistics import test_normality_all_samples
 from helpers.constants import get_theme
 
 # ============================================================================
-# PAGE CONFIGURATION
-# ============================================================================
-
-st.set_page_config(page_title="Visual EDA", layout="wide")
-
-# ============================================================================
 # LOAD DATA
 # ============================================================================
 
@@ -32,6 +26,19 @@ if not protein_data:
     st.stop()
 
 st.success(f"✅ Loaded: {len(protein_data.raw)} proteins × {len(protein_data.numeric_cols)} samples")
+
+# Debug: Show what we have
+with st.expander("🔍 Debug Info"):
+    st.write("**Protein Data Object:**")
+    st.write(f"- Numeric columns: {protein_data.numeric_cols}")
+    st.write(f"- Species column: {protein_data.species_col}")
+    st.write(f"- Index column: {protein_data.index_col}")
+    st.write(f"- Raw data shape: {protein_data.raw.shape}")
+    st.write(f"- Raw data columns: {list(protein_data.raw.columns)}")
+    
+    # Show first few rows
+    st.write("**First 3 rows of raw data:**")
+    st.dataframe(protein_data.raw.head(3))
 
 # ============================================================================
 # COMPUTE ALL TRANSFORMS (CACHED - RUNS ONCE)
@@ -45,6 +52,15 @@ with st.spinner("Computing transformations..."):
     )
 
 st.info(f"💾 Cached {len(all_transforms)} transformations for instant switching")
+
+# Debug: Check transforms
+with st.expander("🔍 Transform Debug"):
+    for transform_name, transform_df in all_transforms.items():
+        st.write(f"**{transform_name}**: shape {transform_df.shape}")
+        st.write(f"Sample values from first numeric column:")
+        if len(protein_data.numeric_cols) > 0:
+            first_col = protein_data.numeric_cols[0]
+            st.write(transform_df[first_col].head(5))
 
 # ============================================================================
 # USER CONTROLS
@@ -83,12 +99,62 @@ with col2:
             )
         else:
             selected_species = None
-            st.info("No species information available")
+            st.warning("No species information available - showing all data")
     else:
         selected_species = None
-        st.info("No species information available")
+        st.warning("No species information available - showing all data")
 
 st.divider()
+
+# ============================================================================
+# PREPARE DATA FOR PLOTTING
+# ============================================================================
+
+# Get the transformed dataframe
+df_to_plot = all_transforms[selected_transform].copy()
+
+st.write(f"**Initial data shape:** {df_to_plot.shape}")
+st.write(f"**Columns:** {list(df_to_plot.columns)}")
+
+# Apply species filtering if needed
+if selected_species and protein_data.species_mapping:
+    # Get protein IDs for selected species
+    protein_ids_to_keep = [
+        protein_id 
+        for protein_id, species in protein_data.species_mapping.items()
+        if species in selected_species
+    ]
+    
+    st.write(f"**Filtering to {len(protein_ids_to_keep)} proteins from species: {selected_species}**")
+    
+    # Filter the dataframe
+    # Check if index_col is in the columns or if it's the index
+    if protein_data.index_col in df_to_plot.columns:
+        df_to_plot = df_to_plot[df_to_plot[protein_data.index_col].isin(protein_ids_to_keep)]
+    else:
+        # Assume index is the protein ID
+        df_to_plot = df_to_plot[df_to_plot.index.isin(protein_ids_to_keep)]
+    
+    st.write(f"**After species filter:** {df_to_plot.shape}")
+else:
+    st.write("**No species filtering applied - using all data**")
+
+# Check if we have data
+if len(df_to_plot) == 0:
+    st.error("❌ No data after filtering! Check your species selection.")
+    st.stop()
+
+# Show sample of data
+with st.expander("📊 View Sample Data (After Filtering)"):
+    st.dataframe(df_to_plot.head(10))
+    
+    # Show statistics per column
+    st.write("**Column Statistics:**")
+    for col in protein_data.numeric_cols:
+        if col in df_to_plot.columns:
+            vals = df_to_plot[col].dropna()
+            st.write(f"- **{col}**: {len(vals)} values, range [{vals.min():.2f}, {vals.max():.2f}]")
+
 
 # ============================================================================
 # NORMALITY TEST TABLE
