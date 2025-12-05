@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 
 from helpers.constants import get_theme, TRANSFORMS
 from helpers.statistics import test_normality_shapiro
-from helpers.advanced import create_heatmap_clustered
+from helpers.plots_advanced import create_heatmap_simple
 from helpers.audit import log_event
 from helpers.constants import get_theme, TRANSFORMS
 from helpers.transforms import apply_transform, get_transform_info, recommend_transform
@@ -145,13 +145,9 @@ with col2:
 
 st.subheader("Intensity Heatmap")
 
-n_sample = min(1000, len(df_transformed))
-sampled = df_transformed.sample(n=n_sample, random_state=42)
-
-fig = create_heatmap_clustered(
+fig = create_heatmap_simple(
     df_transformed,
     protein_data.numeric_cols,
-    species_mapping=protein_data.species_mapping,
     theme_name=theme_name,
 )
 st.plotly_chart(fig, use_container_width=True)
