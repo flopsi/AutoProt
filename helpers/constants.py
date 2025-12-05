@@ -115,6 +115,7 @@ SPECIES_LIST = ["HUMAN", "YEAST", "ECOLI", "MOUSE"]
 # In helpers/constants.py, update TRANSFORMS list:
 
 TRANSFORMS = [
+    "raw",
     "log2", 
     "log10", 
     "sqrt", 
