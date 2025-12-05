@@ -150,7 +150,7 @@ fig = create_heatmap_simple(
     protein_data.numeric_cols,
     theme_name=theme_name,
 )
-st.plotly_chart(fig, width=True)
+st.plotly_chart(fig, width=content)
 
 
 # ============================================================================
