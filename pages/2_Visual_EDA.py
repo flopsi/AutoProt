@@ -205,15 +205,16 @@ elif n_samples <= 6:
 elif n_samples <= 9:
     n_rows, n_cols = 3, 3
 else:
-    n_rows, n_cols = (n_samples + 3) // 4, 4
+    n_rows = (n_samples + 3) // 4
+    n_cols = 4
 
 # Create subplots
 fig = make_subplots(
     rows=n_rows,
     cols=n_cols,
     subplot_titles=[f"<b>{col}</b>" for col in protein_data.numeric_cols],
-    vertical_spacing=0.12 if n_rows > 1 else 0,
-    horizontal_spacing=0.08
+    vertical_spacing=0.15,
+    horizontal_spacing=0.10
 )
 
 # Plot each sample
@@ -221,10 +222,21 @@ for idx, sample_col in enumerate(protein_data.numeric_cols):
     row = (idx // n_cols) + 1
     col_pos = (idx % n_cols) + 1
     
-    # Get data for this sample
+    # Get data for this sample (drop NaN)
     sample_data = df_to_plot[sample_col].dropna().values
     
     if len(sample_data) == 0:
+        # Add annotation for empty data
+        fig.add_annotation(
+            text="No data",
+            xref=f"x{idx+1}" if idx > 0 else "x",
+            yref=f"y{idx+1}" if idx > 0 else "y",
+            x=0.5,
+            y=0.5,
+            showarrow=False,
+            row=row,
+            col=col_pos
+        )
         continue
     
     # Calculate statistics
@@ -233,15 +245,20 @@ for idx, sample_col in enumerate(protein_data.numeric_cols):
     lower_bound = mean_val - 2 * std_val
     upper_bound = mean_val + 2 * std_val
     
-    # Create histogram
+    # Calculate histogram manually for better control
+    hist, bin_edges = np.histogram(sample_data, bins=50)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+    
+    # Add histogram as bar chart
     fig.add_trace(
-        go.Histogram(
-            x=sample_data,
-            nbinsx=50,
-            opacity=0.7,
+        go.Bar(
+            x=bin_centers,
+            y=hist,
+            width=(bin_edges[1] - bin_edges[0]) * 0.9,
             name=sample_col,
             marker=dict(
                 color=theme["primary"],
+                opacity=0.7,
                 line=dict(color=theme["text_primary"], width=0.5)
             ),
             showlegend=False,
@@ -250,27 +267,66 @@ for idx, sample_col in enumerate(protein_data.numeric_cols):
         row=row, col=col_pos
     )
     
+    # Get y-axis range for annotations
+    y_max = max(hist) if len(hist) > 0 else 1
+    
     # Add mean line
-    fig.add_vline(
-        x=mean_val,
-        line=dict(dash="dash", color="red", width=2),
-        row=row, col=col_pos,
-        annotation_text=f"μ={mean_val:.2f}",
-        annotation_position="top",
-        annotation_font_size=10
+    fig.add_trace(
+        go.Scatter(
+            x=[mean_val, mean_val],
+            y=[0, y_max],
+            mode='lines',
+            line=dict(dash="dash", color="red", width=2),
+            showlegend=False,
+            hovertemplate=f"Mean: {mean_val:.2f}<extra></extra>"
+        ),
+        row=row, col=col_pos
     )
     
-    # Add ±2 StdDev shaded region
-    fig.add_vrect(
+    # Add ±2 StdDev shaded region as shape
+    # Note: shapes are added to the figure, not to individual subplots
+    # We need to calculate the correct axis references
+    xaxis_name = f"x{idx+1}" if idx > 0 else "x"
+    yaxis_name = f"y{idx+1}" if idx > 0 else "y"
+    
+    fig.add_shape(
+        type="rect",
+        xref=xaxis_name,
+        yref=yaxis_name,
         x0=lower_bound,
         x1=upper_bound,
+        y0=0,
+        y1=1,
+        yref=f"{yaxis_name} domain",  # Use domain coordinates for y
         fillcolor=theme["primary"],
         opacity=0.15,
         line_width=0,
-        row=row, col=col_pos,
-        annotation_text=f"±2σ",
-        annotation_position="bottom right",
-        annotation_font_size=9
+        layer="below"
+    )
+    
+    # Add text annotations for mean and std
+    fig.add_annotation(
+        text=f"μ={mean_val:.2f}",
+        xref=xaxis_name,
+        yref=yaxis_name,
+        x=mean_val,
+        y=y_max * 0.95,
+        showarrow=False,
+        font=dict(size=10, color="red"),
+        bgcolor="white",
+        opacity=0.8
+    )
+    
+    fig.add_annotation(
+        text=f"±2σ",
+        xref=xaxis_name,
+        yref=yaxis_name,
+        x=upper_bound,
+        y=y_max * 0.05,
+        showarrow=False,
+        font=dict(size=9, color=theme["primary"]),
+        bgcolor="white",
+        opacity=0.8
     )
     
     # Update axes for this subplot
@@ -303,7 +359,8 @@ fig.update_layout(
     hovermode="closest"
 )
 
-st.plotly_chart(fig, width="stretch")
+st.plotly_chart(fig, width='stretch')
+
 
 # ============================================================================
 # SUMMARY STATISTICS TABLE
