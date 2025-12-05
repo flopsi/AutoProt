@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 
 from helpers.constants import get_theme, TRANSFORMS
 from helpers.statistics import test_normality_shapiro
-from helpers.plots import create_heatmap_clustered
+from helpers.advanced import create_heatmap_clustered
 from helpers.audit import log_event
 from helpers.constants import get_theme, TRANSFORMS
 from helpers.transforms import apply_transform, get_transform_info, recommend_transform
