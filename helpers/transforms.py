@@ -38,7 +38,7 @@ TRANSFORM_DESCRIPTIONS = {
     'vst': 'Variance stabilizing transformation (asinh(x/median))',
     'quantile': 'Rank-based quantile transformation to an approximately normal distribution',
 }
-}
+
 
 
 def apply_transformation(df: pd.DataFrame, numeric_cols: list, method: str = 'log2') -> pd.DataFrame:
