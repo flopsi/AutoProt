@@ -148,15 +148,14 @@ st.subheader("Intensity Heatmap")
 n_sample = min(1000, len(df_transformed))
 sampled = df_transformed.sample(n=n_sample, random_state=42)
 
-# Use YOUR plot_heatmap function
 fig = create_heatmap_clustered(
     df_transformed,
     protein_data.numeric_cols,
     species_mapping=protein_data.species_mapping,
-    theme_name=theme_name,   # or your chosen theme variable
+    theme_name=theme_name,
 )
-st.plotly_chart(fig, width=True)
-st.plotly_chart(fig_heat, width="stretch")
+st.plotly_chart(fig, use_container_width=True)
+
 
 # ============================================================================
 # NORMALITY TESTS (using your helper!)
