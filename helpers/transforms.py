@@ -116,30 +116,30 @@ def apply_transformation(df: pd.DataFrame, numeric_cols: list, method: str = 'lo
             st.error(f"Unknown transformation: {method}")
             df_out.loc[vals.index, f'{col}_transformed'] = vals
 
-    elif method == 'quantile':
-        # QuantileTransformer: map each column to a normal-like distribution
-        qt = QuantileTransformer(
-            n_quantiles=min(1000, len(df)),
-            output_distribution='normal',
-            random_state=0,
-        )
-        for col in numeric_cols:
-            vals = df_out[col]
-            mask = vals.notna()
-            if mask.sum() < 2:
-                continue
-            # fit/transform only non-NaN values
-            v = vals[mask].to_numpy().reshape(-1, 1)
-            try:
-                v_tr = qt.fit_transform(v).ravel()
-                df_out.loc[mask, f'{col}_transformed'] = v_tr
-            except Exception:
-                df_out.loc[mask, f'{col}_transformed'] = vals[mask]
-
-    # Get transformed column names
-    transformed_cols = [f'{col}_transformed' for col in numeric_cols if f'{col}_transformed' in df_out.columns]
+        elif method == 'quantile':
+            # QuantileTransformer: map each column to a normal-like distribution
+            qt = QuantileTransformer(
+                n_quantiles=min(1000, len(df)),
+                output_distribution='normal',
+                random_state=0,
+            )
+            for col in numeric_cols:
+                vals = df_out[col]
+                mask = vals.notna()
+                if mask.sum() < 2:
+                    continue
+                # fit/transform only non-NaN values
+                v = vals[mask].to_numpy().reshape(-1, 1)
+                try:
+                    v_tr = qt.fit_transform(v).ravel()
+                    df_out.loc[mask, f'{col}_transformed'] = v_tr
+                except Exception:
+                    df_out.loc[mask, f'{col}_transformed'] = vals[mask]
     
-    return df_out, transformed_cols
+        # Get transformed column names
+        transformed_cols = [f'{col}_transformed' for col in numeric_cols if f'{col}_transformed' in df_out.columns]
+        
+        return df_out, transformed_cols
 
 
 def get_transformed_data(df: pd.DataFrame, numeric_cols: list, method: str) -> tuple:
