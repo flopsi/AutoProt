@@ -135,7 +135,7 @@ def create_raw_row_figure(
             yref="y1",
             text="±2σ",
             showarrow=False,
-            font=dict(color="#white", size=9),
+            font=dict(color="white", size=9),
         )
 
     fig.update_xaxes(title_text="Intensity", row=1, col=1)
@@ -282,7 +282,7 @@ def create_transformed_row_figure(
             yref="y1",
             text="±2σ",
             showarrow=False,
-            font=dict(color="#white", size=9),
+            font=dict(color="white", size=9),
         )
 
     fig.update_xaxes(title_text="Transformed Intensity", row=1, col=1)
