@@ -101,7 +101,7 @@ def create_raw_row_figure(
         fig.add_vrect(
             x0=x0,
             x1=x1,
-            fillcolor="#1f77b4",
+            fillcolor="white,
             opacity=0.15,
             line_width=0,
             row=1,
@@ -111,7 +111,7 @@ def create_raw_row_figure(
         # Mean line
         fig.add_vline(
             x=mu,
-            line_color="red",
+            line_color="white",
             line_width=2,
             line_dash="dash",
             row=1,
@@ -121,12 +121,12 @@ def create_raw_row_figure(
         # Text annotations
         fig.add_annotation(
             x=mu,
-            y=max(hist) * 1.05,
+            y=max(hist) * 0.82,
             xref="x1",
             yref="y1",
             text=f"μ={mu:.2f}",
             showarrow=False,
-            font=dict(color="red", size=10),
+            font=dict(color="white", size=10),
         )
         fig.add_annotation(
             x=x1,
