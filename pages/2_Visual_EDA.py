@@ -4,10 +4,8 @@ import streamlit as st
 import pandas as pd
 
 from helpers.transforms import apply_transformation, TRANSFORM_NAMES, TRANSFORM_DESCRIPTIONS
-from helpers.comparison import compare_transformations
 from helpers.evaluation import create_evaluation_figure, evaluate_transformation_metrics
-
-
+from helpers.comparison import compare_transformations
 st.set_page_config(page_title="Visual EDA", layout="wide")
 
 st.title("📊 Visual EDA: Transformation Diagnostics")
