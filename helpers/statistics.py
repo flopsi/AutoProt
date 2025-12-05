@@ -1,501 +1,115 @@
-"""
-helpers/statistics.py
-Statistical tests and metrics for differential expression analysis
-Includes t-test, FDR, RMSE, ROC, precision-recall calculations
-"""
-
-import pandas as pd
-import numpy as np
-from scipy.stats import ttest_ind
-from typing import Dict, Tuple
-from scipy import stats
-
-def test_normality_shapiro(
-    series: pd.Series,
-    alpha: float = 0.05,
-) -> dict:
-    """
-    Shapiro–Wilk normality test on a 1D numeric series.
-
-    Returns:
-        {
-            "statistic": float,
-            "p_value": float,
-            "is_normal": bool,
-            "alpha": float,
-            "n": int,
-        }
-    """
-    x = pd.to_numeric(series, errors="coerce").dropna().values
-    n = len(x)
-    if n < 3:
-        return {
-            "statistic": np.nan,
-            "p_value": np.nan,
-            "is_normal": False,
-            "alpha": alpha,
-            "n": n,
-        }
-
-    stat, p = stats.shapiro(x)
-    return {
-        "statistic": float(stat),
-        "p_value": float(p),
-        "is_normal": bool(p > alpha),
-        "alpha": alpha,
-        "n": n,
-    }
-import pandas as pd
-import numpy as np
-from scipy import stats
-
-
-def normality_diagnostics(
-    series: pd.Series,
-    alpha: float = 0.05,
-) -> dict:
-    """
-    Comprehensive normality diagnostics combining:
-    - Shapiro–Wilk
-    - D’Agostino’s K² (skewness + kurtosis)
-    - Anderson–Darling
-    - Skewness / Kurtosis as effect sizes
-
-    Returns a dict with per-test p-values and a more tolerant 'is_normal' flag.
-    """
-    x = pd.to_numeric(series, errors="coerce").dropna().values
-    n = len(x)
-
-    if n < 8:
-        return {
-            "n": n,
-            "shapiro_stat": np.nan,
-            "shapiro_p": np.nan,
-            "dagostino_stat": np.nan,
-            "dagostino_p": np.nan,
-            "anderson_stat": np.nan,
-            "anderson_crit_5": np.nan,
-            "skewness": np.nan,
-            "kurtosis": np.nan,
-            "is_normal": False,
-            "alpha": alpha,
-        }
-
-    # Shapiro–Wilk
-    sh_stat, sh_p = stats.shapiro(x)
-
-    # D’Agostino’s K² (skew + kurtosis)
-    dag_stat, dag_p = stats.normaltest(x)
-
-    # Anderson–Darling (for normal distribution)
-    anderson_res = stats.anderson(x, dist="norm")
-    and_stat = anderson_res.statistic
-    # critical value at ~5% level
-    crit_5 = np.nan
-    for sig, crit in zip(anderson_res.significance_level, anderson_res.critical_values):
-        if np.isclose(sig, 5.0):
-            crit_5 = crit
-            break
-
-    # Effect-size style measures
-    skew = stats.skew(x, bias=False)
-    kurt = stats.kurtosis(x, fisher=True, bias=False)  # 0 for normal
-
-    # Combine into a more tolerant decision rule:
-    # - allow Shapiro or D’Agostino to be slightly below alpha for large n
-    # - require |skew| and |kurtosis| to be small
-    skew_ok = abs(skew) < 0.5        # tweakable
-    kurt_ok = abs(kurt) < 1.0        # tweakable
-    sh_ok = (sh_p > alpha) or (n > 5000 and sh_p > alpha / 10)
-    dag_ok = (dag_p > alpha) or (n > 5000 and dag_p > alpha / 10)
-    and_ok = (crit_5 is np.nan) or (and_stat < crit_5)
-
-    is_normal = skew_ok and kurt_ok and (sh_ok or dag_ok or and_ok)
-
-    return {
-        "n": int(n),
-        "shapiro_stat": float(sh_stat),
-        "shapiro_p": float(sh_p),
-        "dagostino_stat": float(dag_stat),
-        "dagostino_p": float(dag_p),
-        "anderson_stat": float(and_stat),
-        "anderson_crit_5": float(crit_5) if not np.isnan(crit_5) else np.nan,
-        "skewness": float(skew),
-        "kurtosis": float(kurt),
-        "is_normal": bool(is_normal),
-        "alpha": float(alpha),
-    }
+# Add to existing imports at top
+from scipy.stats import shapiro, anderson
 
 # ============================================================================
-# T-TEST & FDR CALCULATION
+# NORMALITY TESTING
 # ============================================================================
 
-def perform_ttest(
-    df: pd.DataFrame,
-    group1_cols: list,
-    group2_cols: list,
-    min_valid: int = 2,
+def test_normality_all_samples(
+    df_raw: pd.DataFrame,
+    df_transformed: pd.DataFrame,
+    numeric_cols: list,
+    alpha: float = 0.05
 ) -> pd.DataFrame:
     """
-    Perform Welch's t-test on log2-transformed data.
-    Compares group1 (reference) vs group2 (treatment).
+    Test normality (Shapiro-Wilk) for each sample before & after transformation.
     
-    Uses Limma convention: log2FC = mean(group1) - mean(group2)
-    Positive FC = higher in reference group
+    Parameters:
+    -----------
+    df_raw : pd.DataFrame
+        Raw data (untransformed)
+    df_transformed : pd.DataFrame
+        Transformed data
+    numeric_cols : list
+        List of numeric column names to test
+    alpha : float
+        Significance level (default 0.05)
     
-    Args:
-        df: Transformed intensity data
-        group1_cols: Column names for reference/control
-        group2_cols: Column names for treatment
-        min_valid: Minimum non-missing values required per group
-        
     Returns:
-        DataFrame with log2fc, pvalue, fdr, means, n_valid
+    --------
+    pd.DataFrame with columns:
+        - Sample: Column name
+        - N: Sample size (non-missing values)
+        - Raw_Statistic: Shapiro-Wilk W statistic for raw data
+        - Raw_P_Value: p-value for raw data
+        - Raw_Normal: True if p > alpha (normally distributed)
+        - Trans_Statistic: Shapiro-Wilk W statistic for transformed data
+        - Trans_P_Value: p-value for transformed data
+        - Trans_Normal: True if p > alpha (normally distributed)
+        - Improvement: "Yes" if transformation made data more normal
     """
     results = []
     
-    # ---- Loop over each protein ----
-    for protein_id, row in df.iterrows():
-        g1_vals = row[group1_cols].dropna()
-        g2_vals = row[group2_cols].dropna()
+    for col in numeric_cols:
+        # Get raw data (drop NaN)
+        raw_vals = df_raw[col].dropna().values
+        trans_vals = df_transformed[col].dropna().values
         
-        # Check minimum requirement
-        if len(g1_vals) < min_valid or len(g2_vals) < min_valid:
+        n = len(raw_vals)
+        
+        # Skip if too few samples
+        if n < 3:
             results.append({
-                "protein_id": protein_id,
-                "log2fc": np.nan,
-                "pvalue": np.nan,
-                "mean_g1": np.nan,
-                "mean_g2": np.nan,
-                "n_g1": len(g1_vals),
-                "n_g2": len(g2_vals),
+                'Sample': col,
+                'N': n,
+                'Raw_Statistic': np.nan,
+                'Raw_P_Value': np.nan,
+                'Raw_Normal': False,
+                'Trans_Statistic': np.nan,
+                'Trans_P_Value': np.nan,
+                'Trans_Normal': False,
+                'Improvement': 'N/A'
             })
             continue
         
-        # Calculate means
-        mean_g1 = g1_vals.mean()
-        mean_g2 = g2_vals.mean()
-        
-        # Limma convention: log2FC = log2(g1 / g2)
-        log2fc = mean_g1 - mean_g2
-        
-        # Perform Welch's t-test (unequal variances)
+        # Shapiro-Wilk test for raw data
         try:
-            t_stat, pval = ttest_ind(g1_vals, g2_vals, equal_var=False)
-        except Exception:
-            t_stat, pval = np.nan, np.nan
+            if n <= 5000:  # Shapiro-Wilk works well for n <= 5000
+                stat_raw, p_raw = shapiro(raw_vals)
+            else:
+                # For large samples, use Anderson-Darling
+                result = anderson(raw_vals)
+                stat_raw = result.statistic
+                # Approximate p-value (conservative)
+                p_raw = 0.01 if stat_raw > result.critical_values[2] else 0.10
+        except Exception as e:
+            stat_raw, p_raw = np.nan, np.nan
+        
+        # Shapiro-Wilk test for transformed data
+        try:
+            if n <= 5000:
+                stat_trans, p_trans = shapiro(trans_vals)
+            else:
+                result = anderson(trans_vals)
+                stat_trans = result.statistic
+                p_trans = 0.01 if stat_trans > result.critical_values[2] else 0.10
+        except Exception as e:
+            stat_trans, p_trans = np.nan, np.nan
+        
+        # Determine normality
+        is_normal_raw = p_raw > alpha if not np.isnan(p_raw) else False
+        is_normal_trans = p_trans > alpha if not np.isnan(p_trans) else False
+        
+        # Check improvement
+        if not is_normal_raw and is_normal_trans:
+            improvement = "✅ Yes"
+        elif is_normal_raw and not is_normal_trans:
+            improvement = "⚠️ Worse"
+        elif not is_normal_raw and not is_normal_trans:
+            improvement = "➖ No Change"
+        else:
+            improvement = "✓ Both Normal"
         
         results.append({
-            "protein_id": protein_id,
-            "log2fc": log2fc,
-            "pvalue": pval,
-            "mean_g1": mean_g1,
-            "mean_g2": mean_g2,
-            "n_g1": len(g1_vals),
-            "n_g2": len(g2_vals),
+            'Sample': col,
+            'N': n,
+            'Raw_Statistic': stat_raw,
+            'Raw_P_Value': p_raw,
+            'Raw_Normal': is_normal_raw,
+            'Trans_Statistic': stat_trans,
+            'Trans_P_Value': p_trans,
+            'Trans_Normal': is_normal_trans,
+            'Improvement': improvement
         })
     
-    # Convert to DataFrame
-    results_df = pd.DataFrame(results)
-    results_df.set_index("protein_id", inplace=True)
-    
-    # ---- FDR Correction (Benjamini-Hochberg) ----
-    pvals = results_df["pvalue"].dropna().sort_values()
-    n = len(pvals)
-    
-    if n > 0:
-        ranks = np.arange(1, n + 1)
-        fdr_vals = pvals.values * n / ranks
-        # Ensure FDR is monotonic (increasing from right to left)
-        fdr_vals = np.minimum.accumulate(fdr_vals[::-1])[::-1]
-        fdr_dict = dict(zip(pvals.index, fdr_vals))
-        results_df["fdr"] = results_df.index.map(fdr_dict)
-    else:
-        results_df["fdr"] = np.nan
-    
-    # Add -log10(p) for volcano plots
-    results_df["neg_log10_pval"] = -np.log10(
-        results_df["pvalue"].replace(0, 1e-300)
-    )
-    
-    return results_df
-
-
-# ============================================================================
-# CLASSIFICATION & ERROR RATES
-# ============================================================================
-
-def classify_regulation(
-    log2fc: float,
-    pvalue: float,
-    fc_threshold: float = 1.0,
-    pval_threshold: float = 0.05,
-) -> str:
-    """
-    Classify protein regulation status.
-    
-    Args:
-        log2fc: log2 fold change
-        pvalue: Statistical p-value (or FDR)
-        fc_threshold: Absolute log2FC cutoff
-        pval_threshold: P-value significance cutoff
-        
-    Returns:
-        One of: "up", "down", "not_significant", "not_tested"
-    """
-    if pd.isna(log2fc) or pd.isna(pvalue):
-        return "not_tested"
-    
-    if pvalue > pval_threshold:
-        return "not_significant"
-    
-    if log2fc > fc_threshold:
-        return "up"
-    elif log2fc < -fc_threshold:
-        return "down"
-    else:
-        return "not_significant"
-
-
-def calculate_error_metrics(
-    results_df: pd.DataFrame,
-    true_fc_dict: Dict[str, float],
-    fc_threshold: float = 1.0,
-    pval_threshold: float = 0.05,
-) -> Dict:
-    """
-    Calculate confusion matrix and performance metrics.
-    
-    Args:
-        results_df: Results from perform_ttest() with 'regulation' column
-        true_fc_dict: True log2FC by protein ID
-        fc_threshold: FC threshold used for classification
-        pval_threshold: P-value threshold used
-        
-    Returns:
-        Dict with TP, FP, TN, FN, sensitivity, specificity, precision, FPR, FNR
-    """
-    results_df = results_df.copy()
-    
-    # Map true fold changes
-    results_df["true_log2fc"] = results_df.index.map(
-        lambda x: true_fc_dict.get(x, 0.0)
-    )
-    
-    # Classify true regulation (using same thresholds)
-    results_df["true_regulated"] = results_df["true_log2fc"].apply(
-        lambda x: abs(x) > fc_threshold
-    )
-    
-    # Observed regulation
-    results_df["observed_regulated"] = results_df["regulation"].isin(["up", "down"])
-    
-    # Confusion matrix
-    TP = ((results_df["true_regulated"]) & (results_df["observed_regulated"])).sum()
-    FP = ((~results_df["true_regulated"]) & (results_df["observed_regulated"])).sum()
-    TN = ((~results_df["true_regulated"]) & (~results_df["observed_regulated"])).sum()
-    FN = ((results_df["true_regulated"]) & (~results_df["observed_regulated"])).sum()
-    
-    # Metrics
-    sensitivity = TP / (TP + FN) if (TP + FN) > 0 else 0.0
-    specificity = TN / (TN + FP) if (TN + FP) > 0 else 0.0
-    fpr = FP / (FP + TN) if (FP + TN) > 0 else 0.0
-    fnr = FN / (FN + TP) if (FN + TP) > 0 else 0.0
-    precision = TP / (TP + FP) if (TP + FP) > 0 else 0.0
-    
-    return {
-        "TP": int(TP),
-        "FP": int(FP),
-        "TN": int(TN),
-        "FN": int(FN),
-        "sensitivity": sensitivity,
-        "specificity": specificity,
-        "precision": precision,
-        "fpr": fpr,
-        "fnr": fnr,
-    }
-
-
-# ============================================================================
-# ROC & PRECISION-RECALL CURVES
-# ============================================================================
-
-def compute_roc_curve(
-    results_df: pd.DataFrame,
-    true_fc_dict: Dict[str, float],
-    fc_threshold: float = 1.0,
-) -> Tuple[list, list, list]:
-    """
-    Compute ROC curve: false positive rate vs true positive rate.
-    Varies p-value threshold from 1.0 to 0.0.
-    
-    Args:
-        results_df: Results from perform_ttest() with pvalue
-        true_fc_dict: True log2FC by protein ID
-        fc_threshold: FC threshold for true regulation
-        
-    Returns:
-        (fpr_list, tpr_list, threshold_list)
-    """
-    results_df = results_df.copy()
-    results_df["true_regulated"] = results_df.index.map(
-        lambda x: abs(true_fc_dict.get(x, 0.0)) > fc_threshold
-    )
-    
-    # Sort by p-value
-    results_df = results_df.sort_values("pvalue")
-    
-    fpr_list = []
-    tpr_list = []
-    thresholds = []
-    
-    n_neg = (~results_df["true_regulated"]).sum()
-    n_pos = results_df["true_regulated"].sum()
-    
-    if n_neg == 0 or n_pos == 0:
-        return [0, 1], [0, 1], [1, 0]
-    
-    # Vary threshold across p-values
-    for pval_threshold in np.linspace(1, 0, 50):
-        results_df["predicted"] = results_df["pvalue"] < pval_threshold
-        
-        tp = (results_df["true_regulated"] & results_df["predicted"]).sum()
-        fp = (~results_df["true_regulated"] & results_df["predicted"]).sum()
-        
-        tpr = tp / n_pos
-        fpr = fp / n_neg
-        
-        fpr_list.append(fpr)
-        tpr_list.append(tpr)
-        thresholds.append(pval_threshold)
-    
-    return fpr_list, tpr_list, thresholds
-
-
-def compute_precision_recall_curve(
-    results_df: pd.DataFrame,
-    true_fc_dict: Dict[str, float],
-    fc_threshold: float = 1.0,
-) -> Tuple[list, list, list]:
-    """
-    Compute precision-recall curve.
-    Varies p-value threshold from 1.0 to 0.0.
-    
-    Args:
-        results_df: Results from perform_ttest()
-        true_fc_dict: True log2FC by protein ID
-        fc_threshold: FC threshold
-        
-    Returns:
-        (recall_list, precision_list, threshold_list)
-    """
-    results_df = results_df.copy()
-    results_df["true_regulated"] = results_df.index.map(
-        lambda x: abs(true_fc_dict.get(x, 0.0)) > fc_threshold
-    )
-    
-    results_df = results_df.sort_values("pvalue")
-    
-    precision_list = []
-    recall_list = []
-    thresholds = []
-    
-    n_pos = results_df["true_regulated"].sum()
-    
-    if n_pos == 0:
-        return [0, 1], [1, 0], [1, 0]
-    
-    for pval_threshold in np.linspace(1, 0, 50):
-        results_df["predicted"] = results_df["pvalue"] < pval_threshold
-        
-        tp = (results_df["true_regulated"] & results_df["predicted"]).sum()
-        fp = (~results_df["true_regulated"] & results_df["predicted"]).sum()
-        
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-        recall = tp / n_pos
-        
-        precision_list.append(precision)
-        recall_list.append(recall)
-        thresholds.append(pval_threshold)
-    
-    return recall_list, precision_list, thresholds
-
-
-# ============================================================================
-# PER-SPECIES METRICS
-# ============================================================================
-
-def compute_species_rmse(
-    results_df: pd.DataFrame,
-    true_fc_dict: Dict[str, float],
-    species_mapping: Dict[str, str],
-    fc_threshold: float = 1.0,
-    pval_threshold: float = 0.05,
-) -> pd.DataFrame:
-    """
-    Calculate RMSE and other metrics per species.
-    
-    Args:
-        results_df: Results DataFrame with 'regulation' column
-        true_fc_dict: True log2FC by protein ID
-        species_mapping: Protein ID → species mapping
-        fc_threshold: For classification
-        pval_threshold: For classification
-        
-    Returns:
-        DataFrame with per-species metrics
-    """
-    species_metrics = []
-    
-    for species in ["HUMAN", "YEAST", "ECOLI"]:
-        # Get proteins for this species
-        species_proteins = [
-            pid for pid, sp in species_mapping.items() if sp == species
-        ]
-        
-        if not species_proteins:
-            continue
-        
-        # Get results for this species
-        species_results = results_df.loc[
-            results_df.index.intersection(species_proteins)
-        ].copy()
-        
-        if len(species_results) == 0:
-            continue
-        
-        # Get theoretical FC
-        theo_fc = true_fc_dict.get(species_proteins[0], 0.0)
-        
-        # Calculate error
-        species_results["error"] = species_results["log2fc"] - theo_fc
-        
-        n_proteins = len(species_results)
-        rmse = np.sqrt((species_results["error"] ** 2).mean())
-        mae = species_results["error"].abs().mean()
-        bias = species_results["error"].mean()
-        
-        # Detection rate
-        if "regulation" not in species_results.columns:
-            species_results["regulation"] = species_results.apply(
-                lambda row: classify_regulation(
-                    row["log2fc"], row["pvalue"], fc_threshold, pval_threshold
-                ),
-                axis=1,
-            )
-        
-        n_detected = (
-            species_results["regulation"].isin(["up", "down"]).sum()
-        )
-        detection_rate = n_detected / n_proteins if n_proteins > 0 else 0
-        
-        species_metrics.append({
-            "Species": species,
-            "N": n_proteins,
-            "Theo FC": f"{theo_fc:.2f}",
-            "RMSE": f"{rmse:.3f}",
-            "MAE": f"{mae:.3f}",
-            "Detection": f"{detection_rate:.1%}",
-        })
-    
-    return pd.DataFrame(species_metrics)
+    return pd.DataFrame(results)
