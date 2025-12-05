@@ -2,19 +2,18 @@
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 from scipy import stats
-from helpers.statistics import test_normality_all_samples
+
 from helpers.transforms import apply_transformation, TRANSFORM_NAMES
 from helpers.evaluation import (
     create_raw_row_figure,
     create_transformed_row_figure,
-    evaluate_transformation_metrics,
 )
-from helpers.statistics import test_normality_all_samples
 
 st.set_page_config(page_title="Visual EDA", layout="wide")
 
-st.title("📊 Visual EDA: Transformation Diagnostics")
+st.title("📊 Visual EDA: Global Normality by Transformation")
 
 # ----------------------------------------------------------------------
 # Load data
@@ -34,7 +33,7 @@ if not numeric_cols:
 st.success(f"{len(df_raw):,} proteins × {len(numeric_cols)} intensity columns")
 
 # ----------------------------------------------------------------------
-# 1) Controls
+# 1) Configuration
 # ----------------------------------------------------------------------
 st.subheader("1️⃣ Configuration")
 
@@ -48,81 +47,106 @@ max_cols = st.slider(
 )
 eval_cols = numeric_cols[:max_cols]
 
-# We’ll evaluate all methods (and show all in table),
-# but for plots only one will be active at a time.
-methods_to_evaluate = available_methods
-
-
+# Methods to evaluate (all)
+methods_to_evaluate = ["raw"] + available_methods
 
 # ----------------------------------------------------------------------
-from helpers.statistics import test_normality_all_samples
+# Helper: compute pooled normality stats
+# ----------------------------------------------------------------------
+def pooled_normality_stats(df: pd.DataFrame, cols: list) -> dict:
+    """
+    Flatten all given columns into one array and compute:
+    - Shapiro W, p
+    - Skewness, kurtosis (Fisher)
+    """
+    x = df[cols].to_numpy().ravel()
+    x = x[np.isfinite(x)]
+    n = len(x)
+    if n < 3:
+        return {"n": n, "W": np.nan, "p": np.nan, "skew": np.nan, "kurt": np.nan}
+
+    # subsample for very large n to keep Shapiro stable/fast
+    if n > 5000:
+        x = np.random.choice(x, size=5000, replace=False)
+        n = len(x)
+
+    W, p = stats.shapiro(x)
+    skew = stats.skew(x, bias=False)
+    kurt = stats.kurtosis(x, fisher=True, bias=False)
+
+    return {
+        "n": int(n),
+        "W": float(W),
+        "p": float(p),
+        "skew": float(skew),
+        "kurt": float(kurt),
+    }
 
 # ----------------------------------------------------------------------
-# 2) Normality Table: first row = RAW, then 1 row per transformation
+# 2) Global normality table (one row per condition)
 # ----------------------------------------------------------------------
-st.subheader("2️⃣ Normality Table (Raw + Transformations)")
+st.subheader("2️⃣ Global Normality per Condition")
 
 rows = []
 
-# ---- RAW row (computed once) ----
-raw_norm_df = test_normality_all_samples(
-    df_raw=df_raw,
-    df_transformed=df_raw,  # same as raw; we only use Raw_* columns
-    numeric_cols=eval_cols,
-    alpha=0.05,
+# Raw row
+raw_stats = pooled_normality_stats(df_raw, eval_cols)
+rows.append(
+    {
+        "Condition": "Raw",
+        "W": raw_stats["W"],
+        "p": raw_stats["p"],
+        "Skew": raw_stats["skew"],
+        "Kurtosis": raw_stats["kurt"],
+        "n": raw_stats["n"],
+    }
 )
 
-rows.append({
-    "Method": "Raw",
-    "W_mean": raw_norm_df["Raw_Statistic"].mean(),
-    "p_mean": raw_norm_df["Raw_P_Value"].mean(),
-})
-
-# ---- One row per transformation ----
+# Each transformation
 for method in available_methods:
     df_trans, trans_cols = apply_transformation(df_raw, eval_cols, method)
-
-    norm_df = test_normality_all_samples(
-        df_raw=df_raw,
-        df_transformed=df_trans,
-        numeric_cols=eval_cols,
-        alpha=0.05,
+    stats_tr = pooled_normality_stats(df_trans, trans_cols)
+    rows.append(
+        {
+            "Condition": TRANSFORM_NAMES.get(method, method),
+            "W": stats_tr["W"],
+            "p": stats_tr["p"],
+            "Skew": stats_tr["skew"],
+            "Kurtosis": stats_tr["kurt"],
+            "n": stats_tr["n"],
+            "method_key": method,
+        }
     )
-
-    rows.append({
-        "Method": TRANSFORM_NAMES.get(method, method),
-        "W_mean": norm_df["Trans_Statistic"].mean(),
-        "p_mean": norm_df["Trans_P_Value"].mean(),
-    })
 
 table_df = pd.DataFrame(rows)
 
-# Compute simple ranking (skip Raw in ranking)
-rank_df = table_df.copy()
-rank_df.loc[rank_df["Method"] != "Raw", "score"] = (
-    rank_df.loc[rank_df["Method"] != "Raw", "W_mean"].rank(ascending=False)
-    + rank_df.loc[rank_df["Method"] != "Raw", "p_mean"].rank(ascending=False)
+# Compute ranking (ignore Raw)
+table_df["score"] = np.nan
+mask_tr = table_df["Condition"] != "Raw"
+table_df.loc[mask_tr, "score"] = (
+    table_df.loc[mask_tr, "W"].rank(ascending=False)
+    + table_df.loc[mask_tr, "p"].rank(ascending=False)
 )
-# Raw gets NaN score
-rank_df = rank_df.sort_values(
-    by=["score", "Method"], ascending=[True, True], na_position="first"
+
+# Order: Raw first, then by score
+table_df = table_df.sort_values(
+    by=["Condition", "score"], key=lambda s: (s == "Raw").astype(int), ascending=[False, True]
 ).reset_index(drop=True)
 
-display_df = rank_df.copy()
-display_df.index = display_df.index + 1
-display_df = display_df[["Method", "W_mean", "p_mean", "score"]].round(4)
+disp = table_df[["Condition", "W", "p", "Skew", "Kurtosis", "n", "score"]].round(4)
+disp.index = disp.index + 1
+st.dataframe(disp, width="stretch")
 
-st.dataframe(display_df, width="stretch")
-
-# Best non-raw method
-best_row = rank_df[rank_df["Method"] != "Raw"].iloc[0]
+# Best transformation (highest W & p)
+best_row = table_df[table_df["Condition"] != "Raw"].sort_values("score").iloc[0]
+best_method_key = best_row["method_key"]
 st.success(
-    f"🏆 Best transformation: **{best_row['Method']}** "
-    f"(W={best_row['W_mean']:.3f}, p={best_row['p_mean']:.2e})"
+    f"🏆 Best transformation: **{best_row['Condition']}** "
+    f"(W={best_row['W']:.3f}, p={best_row['p']:.2e})"
 )
 
 # ----------------------------------------------------------------------
-# 3) Raw plot (static) + single selected transformation plot
+# 3) Plots: Raw (fixed) + 1 selected transformation
 # ----------------------------------------------------------------------
 st.subheader("3️⃣ Diagnostic Plots")
 
@@ -137,12 +161,12 @@ with col_left:
     )
     st.plotly_chart(raw_fig, use_container_width=True)
 
-# Radio: exactly one transformation selected for plotting
-methods_for_radio = summary_df["method"].tolist()
-default_index = 0  # best method
+# Radio: choose one condition (only transformed ones)
+method_keys = [row["method_key"] for _, row in table_df[table_df["Condition"] != "Raw"].iterrows()]
+default_index = method_keys.index(best_method_key) if best_method_key in method_keys else 0
 selected_method = st.radio(
     "Select transformation to visualize",
-    options=methods_for_radio,
+    options=method_keys,
     index=default_index,
     format_func=lambda m: TRANSFORM_NAMES.get(m, m),
 )
@@ -151,36 +175,10 @@ with col_right:
     nice_name = TRANSFORM_NAMES.get(selected_method, selected_method)
     st.markdown(f"**{nice_name}**")
 
-    df_trans_selected, trans_cols_selected = apply_transformation(df_raw, eval_cols, selected_method)
+    df_trans_sel, trans_cols_sel = apply_transformation(df_raw, eval_cols, selected_method)
     trans_fig = create_transformed_row_figure(
-        df_transformed=df_trans_selected,
-        trans_cols=trans_cols_selected,
+        df_transformed=df_trans_sel,
+        trans_cols=trans_cols_sel,
         title=nice_name,
     )
     st.plotly_chart(trans_fig, use_container_width=True)
-
-# ----------------------------------------------------------------------
-# 4) Detailed per-sample table for selected transformation
-# ----------------------------------------------------------------------
-st.subheader("4️⃣ Per-Sample Normality (Selected Transformation)")
-
-norm_selected = test_normality_all_samples(
-    df_raw=df_raw,
-    df_transformed=df_trans_selected,
-    numeric_cols=eval_cols,
-    alpha=0.05,
-)
-
-# Make column names nicer
-norm_display = norm_selected.rename(
-    columns={
-        "Sample": "Sample",
-        "N": "N",
-        "Raw_Statistic": "W_raw",
-        "Raw_P_Value": "p_raw",
-        "Trans_Statistic": "W_trans",
-        "Trans_P_Value": "p_trans",
-        "Improvement": "Improvement",
-    }
-)
-st.dataframe(norm_display.round(4), width="stretch")
