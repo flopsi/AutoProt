@@ -402,6 +402,19 @@ st.success(f"✅ Keeping {len(columns_to_keep)} columns")
 
 st.subheader("7️⃣ Data Preview (First 10 Rows)")
 
+# Ensure column names are unique (PyArrow/Streamlit requirement)
+if df.columns.duplicated().any():
+    cols = []
+    seen = {}
+    for c in df.columns:
+        if c in seen:
+            seen[c] += 1
+            cols.append(f"{c}_{seen[c]}")
+        else:
+            seen[c] = 0
+            cols.append(c)
+    df.columns = cols
+
 df_display = df.head(10).copy()
 for col in df_display.columns:
     if pd.api.types.is_float_dtype(df_display[col]):
