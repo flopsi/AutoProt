@@ -155,7 +155,7 @@ fig = create_heatmap_clustered(
     species_mapping=protein_data.species_mapping,
     theme_name=theme_name,   # or your chosen theme variable
 )
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width=True)
 st.plotly_chart(fig_heat, width="stretch")
 
 # ============================================================================
