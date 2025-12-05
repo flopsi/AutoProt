@@ -101,7 +101,7 @@ def create_raw_row_figure(
         fig.add_vrect(
             x0=x0,
             x1=x1,
-            fillcolor="white",
+            fillcolor="#ff0000",
             opacity=0.15,
             line_width=0,
             row=1,
@@ -248,7 +248,7 @@ def create_transformed_row_figure(
         fig.add_vrect(
             x0=x0,
             x1=x1,
-            fillcolor="#whie",
+            fillcolor="#ff0000",
             opacity=0.15,
             line_width=0,
             row=1,
