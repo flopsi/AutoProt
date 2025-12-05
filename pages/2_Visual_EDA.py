@@ -55,26 +55,33 @@ methods_to_evaluate = available_methods
 
 
 # ----------------------------------------------------------------------
-# 2) Compute normality table: raw once, transformed per method
-# ----------------------------------------------------------------------
-st.subheader("2️⃣ Normality Table (Per Sample, All Transformations)")
+from helpers.statistics import test_normality_all_samples
 
-# 2a. Raw W / p once
+# ----------------------------------------------------------------------
+# 2) Normality Table: first row = RAW, then 1 row per transformation
+# ----------------------------------------------------------------------
+st.subheader("2️⃣ Normality Table (Raw + Transformations)")
+
+rows = []
+
+# ---- RAW row (computed once) ----
 raw_norm_df = test_normality_all_samples(
     df_raw=df_raw,
-    df_transformed=df_raw,  # same as raw, we only use Raw_* columns
+    df_transformed=df_raw,  # same as raw; we only use Raw_* columns
     numeric_cols=eval_cols,
     alpha=0.05,
 )
-W_raw_mean = raw_norm_df["Raw_Statistic"].mean()
-p_raw_mean = raw_norm_df["Raw_P_Value"].mean()
 
-summary_rows = []
+rows.append({
+    "Method": "Raw",
+    "W_mean": raw_norm_df["Raw_Statistic"].mean(),
+    "p_mean": raw_norm_df["Raw_P_Value"].mean(),
+})
 
-for method in available_methods:  # evaluate all
+# ---- One row per transformation ----
+for method in available_methods:
     df_trans, trans_cols = apply_transformation(df_raw, eval_cols, method)
 
-    # Use test_normality_all_samples for transformed; we ignore Raw_* here
     norm_df = test_normality_all_samples(
         df_raw=df_raw,
         df_transformed=df_trans,
@@ -82,46 +89,36 @@ for method in available_methods:  # evaluate all
         alpha=0.05,
     )
 
-    W_trans_mean = norm_df["Trans_Statistic"].mean()
-    p_trans_mean = norm_df["Trans_P_Value"].mean()
+    rows.append({
+        "Method": TRANSFORM_NAMES.get(method, method),
+        "W_mean": norm_df["Trans_Statistic"].mean(),
+        "p_mean": norm_df["Trans_P_Value"].mean(),
+    })
 
-    summary_rows.append(
-        {
-            "method": method,
-            "Method": TRANSFORM_NAMES.get(method, method),
-            "W_raw_mean": W_raw_mean,   # same for all (raw is shared)
-            "p_raw_mean": p_raw_mean,
-            "W_trans_mean": W_trans_mean,
-            "p_trans_mean": p_trans_mean,
-        }
-    )
+table_df = pd.DataFrame(rows)
 
-summary_df = pd.DataFrame(summary_rows)
-
-if summary_df.empty:
-    st.warning("No transformations evaluated.")
-    st.stop()
-
-# Combined score: higher W_trans_mean and p_trans_mean is better
-summary_df["combined_score"] = (
-    summary_df["W_trans_mean"].rank(ascending=False)
-    + summary_df["p_trans_mean"].rank(ascending=False)
+# Compute simple ranking (skip Raw in ranking)
+rank_df = table_df.copy()
+rank_df.loc[rank_df["Method"] != "Raw", "score"] = (
+    rank_df.loc[rank_df["Method"] != "Raw", "W_mean"].rank(ascending=False)
+    + rank_df.loc[rank_df["Method"] != "Raw", "p_mean"].rank(ascending=False)
 )
+# Raw gets NaN score
+rank_df = rank_df.sort_values(
+    by=["score", "Method"], ascending=[True, True], na_position="first"
+).reset_index(drop=True)
 
-summary_df = summary_df.sort_values("combined_score").reset_index(drop=True)
-
-display_df = summary_df.copy()
+display_df = rank_df.copy()
 display_df.index = display_df.index + 1
-display_df = display_df[
-    ["Method", "W_raw_mean", "p_raw_mean", "W_trans_mean", "p_trans_mean", "combined_score"]
-].round(4)
+display_df = display_df[["Method", "W_mean", "p_mean", "score"]].round(4)
 
 st.dataframe(display_df, width="stretch")
 
-best_row = summary_df.iloc[0]
+# Best non-raw method
+best_row = rank_df[rank_df["Method"] != "Raw"].iloc[0]
 st.success(
-    f"🏆 Best by mean Shapiro: **{best_row['Method']}** "
-    f"(W={best_row['W_trans_mean']:.3f}, p={best_row['p_trans_mean']:.2e})"
+    f"🏆 Best transformation: **{best_row['Method']}** "
+    f"(W={best_row['W_mean']:.3f}, p={best_row['p_mean']:.2e})"
 )
 
 # ----------------------------------------------------------------------
