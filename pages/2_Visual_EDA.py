@@ -136,7 +136,7 @@ def highlight_normality(row):
     return colors
 
 styled_df = display_df.style.apply(highlight_normality, axis=1)
-st.dataframe(styled_df, use_container_width=True, height=300)
+st.dataframe(styled_df, width="stretch", height=300)
 
 # Summary metrics
 # Summary metrics - FIX st.columns error
@@ -303,7 +303,11 @@ fig.update_layout(
     hovermode="closest"
 )
 
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width="stretch")
+
+# ============================================================================
+# SUMMARY STATISTICS TABLE
+# ============================================================================
 
 # ============================================================================
 # SUMMARY STATISTICS TABLE
@@ -318,24 +322,33 @@ for col in protein_data.numeric_cols:
     if len(sample_data) > 0:
         summary_data.append({
             'Sample': col,
-            'N': len(sample_data),
-            'Mean': sample_data.mean(),
-            'Median': sample_data.median(),
-            'Std Dev': sample_data.std(),
-            'Min': sample_data.min(),
-            'Max': sample_data.max(),
-            'Q1': sample_data.quantile(0.25),
-            'Q3': sample_data.quantile(0.75),
-            'IQR': sample_data.quantile(0.75) - sample_data.quantile(0.25)
+            'N': int(len(sample_data)),
+            'Mean': float(sample_data.mean()),
+            'Median': float(sample_data.median()),
+            'Std_Dev': float(sample_data.std()),
+            'Min': float(sample_data.min()),
+            'Max': float(sample_data.max()),
+            'Q1': float(sample_data.quantile(0.25)),
+            'Q3': float(sample_data.quantile(0.75)),
+            'IQR': float(sample_data.quantile(0.75) - sample_data.quantile(0.25))
         })
 
-summary_df = pd.DataFrame(summary_data)
+if summary_data:
+    summary_df = pd.DataFrame(summary_data)
+    
+    # Format numeric columns
+    format_cols = ['Mean', 'Median', 'Std_Dev', 'Min', 'Max', 'Q1', 'Q3', 'IQR']
+    for col in format_cols:
+        if col in summary_df.columns:
+            summary_df[col] = summary_df[col].apply(lambda x: f"{x:.2f}")
+    
+    # Rename for display
+    summary_df = summary_df.rename(columns={'Std_Dev': 'Std Dev'})
+    
+    st.dataframe(summary_df, width='stretch')
+else:
+    st.warning("No data available for summary statistics")
 
-# Format numeric columns
-for col in ['Mean', 'Median', 'Std Dev', 'Min', 'Max', 'Q1', 'Q3', 'IQR']:
-    summary_df[col] = summary_df[col].apply(lambda x: f"{x:.2f}")
-
-st.dataframe(summary_df, use_container_width=True)
 
 # ============================================================================
 # FOOTER
