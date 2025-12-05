@@ -1,294 +1,270 @@
 """
 helpers/audit.py
-Audit trail logging for data manipulation tracking
-Records all operations: uploads, filters, transformations, analyses
+Robust audit logging with JSON serialization safety
 """
 
 import json
 import os
+import time
 from datetime import datetime
-from typing import Dict, List, Optional
-from helpers.dataclasses import AuditEvent, AuditTrail
+from pathlib import Path
+import streamlit as st
+from typing import Dict, Any, Optional
 
 # ============================================================================
-# AUDIT FILE MANAGEMENT
+# AUDIT CONFIGURATION
 # ============================================================================
 
-AUDIT_LOG_PATH = "data/audit.log"
+AUDIT_DIR = Path("audit_logs")
+AUDIT_FILE = AUDIT_DIR / "audit_log.jsonl"
+MAX_LOG_SIZE_MB = 10  # Rotate when file exceeds this size
 
+# ============================================================================
+# UTILITY FUNCTIONS
+# ============================================================================
 
-def ensure_audit_dir() -> None:
-    """Create data directory if it doesn't exist."""
-    os.makedirs("data", exist_ok=True)
-
-
-def log_event(page: str, action: str, details: dict = None):
-    """Log an event to the audit trail."""    """
-    Log an event to the audit trail.
+def _to_json_serializable(obj: Any) -> Any:
+    """
+    Convert numpy/pandas types to JSON-serializable Python types.
+    Handles NaN, Int64, float64, arrays, DataFrames, etc.
+    """
+    import numpy as np
+    import pandas as pd
     
-    Args:
-        page: Page name where event occurred
-        action: Human-readable action description
-        details: Additional metadata (dict)
+    if pd.isna(obj) or (isinstance(obj, float) and np.isnan(obj)):
+        return None
+    
+    if isinstance(obj, (np.integer, np.int64, np.int32, np.int16, np.int8)):
+        return int(obj)
+    
+    if isinstance(obj, (np.floating, np.float64, np.float32, np.float16)):
+        if np.isnan(obj):
+            return None
+        return float(obj)
+    
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    
+    if isinstance(obj, (pd.Series, pd.DataFrame)):
+        # Convert to dict and truncate long content
+        obj_dict = obj.to_dict()
+        # Limit dict size for logging
+        if len(str(obj_dict)) > 500:
+            obj_dict = {"truncated": f"Size: {len(obj)} items"}
+        return obj_dict
+    
+    if isinstance(obj, (list, tuple)):
+        return [_to_json_serializable(item) for item in obj]
+    
+    if isinstance(obj, dict):
+        return {k: _to_json_serializable(v) for k, v in obj.items()}
+    
+    return obj
+
+
+def _ensure_audit_dir():
+    """Create audit directory if it doesn't exist."""
+    AUDIT_DIR.mkdir(exist_ok=True)
+
+
+def _rotate_log_if_needed():
+    """Rotate log file if it exceeds max size."""
+    if AUDIT_FILE.exists() and AUDIT_FILE.stat().st_size > MAX_LOG_SIZE_MB * 1024 * 1024:
+        backup_file = AUDIT_FILE.with_suffix(f".backup.{int(time.time())}")
+        AUDIT_FILE.rename(backup_file)
+        st.info(f"🔄 Audit log rotated: {backup_file.name}")
+
+
+# ============================================================================
+# MAIN AUDIT FUNCTIONS
+# ============================================================================
+
+def log_event(
+    page: str,
+    action: str,
+    details: Optional[Dict[str, Any]] = None,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None
+):
+    """
+    Log an audit event to JSONL file.
+    
+    Parameters:
+    -----------
+    page : str
+        Page where event occurred (e.g., "1_Data_Upload")
+    action : str
+        Action performed (e.g., "file_uploaded", "transform_selected")
+    details : dict, optional
+        Additional event details
+    user_id : str, optional
+        User identifier
+    session_id : str, optional
+        Streamlit session ID
+    """
+    try:
+        _ensure_audit_dir()
+        _rotate_log_if_needed()
         
-    Example:
-        log_event("Data Upload", "Uploaded protein data", {"n_proteins": 5000, "file": "data.csv"})
-        log_event("Filtering", "Removed low CV proteins", {"removed": 200, "threshold": 0.5})
-        log_event("Analysis", "Ran t-test", {"n_significant": 150, "fc_threshold": 1.0})
-    """
-    ensure_audit_dir()
-    
-    event = AuditEvent(
-        timestamp=datetime.now().isoformat(),
-        page=page,
-        action=action,
-        details=details or {},
-    )
-    def log_event(page: str, action: str, details: dict = None):
-    """Log an event to the audit trail."""
-    
-    # Convert numpy/pandas types to Python types for JSON
-    if details:
-        details_cleaned = {}
-        for key, value in details.items():
-            if pd.isna(value) or np.isnan(value):
-                details_cleaned[key] = None
-            elif isinstance(value, (np.integer, np.int64, np.int32, pd.Int64Dtype)):
-                details_cleaned[key] = int(value)
-            elif isinstance(value, (np.floating, np.float64, np.float32)):
-                details_cleaned[key] = float(value)
-            elif isinstance(value, np.ndarray):
-                details_cleaned[key] = value.tolist()
-            elif isinstance(value, (pd.Series, pd.DataFrame)):
-                details_cleaned[key] = str(value)[:100]  # Truncate long objects
-            else:
-                details_cleaned[key] = value
-        details = details_cleaned
-
-    # Append to JSON log file
-    try:
-        with open(AUDIT_LOG_PATH, "a") as f:
-            f.write(json.dumps(event.to_dict()) + "\n")
+        # Prepare event data
+        event = {
+            "timestamp": datetime.now().isoformat(),
+            "page": page,
+            "action": action,
+            "user_id": user_id,
+            "session_id": session_id or st.session_state.get("session_id", "unknown"),
+            "details": details or {}
+        }
+        
+        # Convert all values to JSON-serializable types
+        event_safe = {
+            k: _to_json_serializable(v) 
+            for k, v in event.items()
+        }
+        
+        # Write to JSONL file (one JSON object per line)
+        with open(AUDIT_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(event_safe) + "\n")
+            
     except Exception as e:
-        print(f"Failed to log event: {e}")
+        # Silent fail - don't break the app
+        print(f"Audit logging failed: {e}")
 
 
-def read_audit_log() -> List[Dict]:
+def log_file_upload(
+    filename: str,
+    file_size: int,
+    n_rows: int,
+    n_cols: int,
+    numeric_cols: int
+):
+    """Log file upload event."""
+    details = {
+        "filename": filename,
+        "file_size_bytes": int(file_size),
+        "rows": int(n_rows),
+        "columns": int(n_cols),
+        "numeric_columns": int(numeric_cols)
+    }
+    log_event("1_Data_Upload", "file_uploaded", details)
+
+
+def log_transformation_selected(
+    transform_name: str,
+    shapiro_w: float
+):
+    """Log transformation selection."""
+    details = {
+        "transform": transform_name,
+        "shapiro_w": float(shapiro_w)
+    }
+    log_event("2_Visual_EDA", "transformation_selected", details)
+
+
+def log_species_filter(
+    species_selected: list,
+    proteins_filtered: int
+):
+    """Log species filtering."""
+    details = {
+        "species": species_selected,
+        "proteins_after_filter": int(proteins_filtered)
+    }
+    log_event("2_Visual_EDA", "species_filtered", details)
+
+
+def get_recent_events(limit: int = 50) -> list[Dict[str, Any]]:
     """
-    Read all events from audit log file.
+    Get recent audit events for display.
+    
+    Parameters:
+    -----------
+    limit : int
+        Maximum number of events to return
     
     Returns:
-        List of event dictionaries
+    --------
+    list of event dictionaries
     """
-    if not os.path.exists(AUDIT_LOG_PATH):
+    try:
+        if not AUDIT_FILE.exists():
+            return []
+        
+        events = []
+        with open(AUDIT_FILE, "r", encoding="utf-8") as f:
+            for line_num, line in enumerate(f):
+                if line_num >= limit:
+                    break
+                try:
+                    event = json.loads(line.strip())
+                    events.append(event)
+                except json.JSONDecodeError:
+                    continue
+        
+        return events[::-1]  # Return most recent first
+        
+    except Exception:
         return []
+
+
+def display_audit_log():
+    """Display recent audit events in Streamlit."""
+    st.subheader("📋 Recent Activity")
     
-    events = []
-    try:
-        with open(AUDIT_LOG_PATH, "r") as f:
-            for line in f:
-                if line.strip():
-                    events.append(json.loads(line))
-    except Exception as e:
-        print(f"Failed to read audit log: {e}")
-    
-    return events
-
-
-def clear_audit_log() -> None:
-    """Clear the audit log file."""
-    ensure_audit_dir()
-    try:
-        open(AUDIT_LOG_PATH, "w").close()
-    except Exception as e:
-        print(f"Failed to clear audit log: {e}")
-
-    # Convert numpy types to Python types for JSON serialization
-    if details:
-        details_cleaned = {}
-        for key, value in details.items():
-            if isinstance(value, (np.integer, np.int64, np.int32)):
-                details_cleaned[key] = int(value)
-            elif isinstance(value, (np.floating, np.float64, np.float32)):
-                details_cleaned[key] = float(value)
-            elif isinstance(value, np.bool_):
-                details_cleaned[key] = bool(value)
-            elif isinstance(value, np.ndarray):
-                details_cleaned[key] = value.tolist()
-            else:
-                details_cleaned[key] = value
-        details = details_cleaned
-
-
-# ============================================================================
-# AUDIT SUMMARY & STATISTICS
-# ============================================================================
-
-def get_audit_summary() -> Dict:
-    """
-    Generate summary statistics from audit log.
-    
-    Returns:
-        Dict with counts by page, timeline, etc.
-    """
-    events = read_audit_log()
+    events = get_recent_events(20)
     
     if not events:
-        return {
-            "total_events": 0,
-            "pages": {},
-            "first_event": None,
-            "last_event": None,
-        }
+        st.info("No audit events recorded yet")
+        return
     
-    # Count by page
-    page_counts = {}
-    for event in events:
-        page = event.get("page", "Unknown")
-        page_counts[page] = page_counts.get(page, 0) + 1
+    # Create summary metrics
+    col1, col2, col3 = st.columns(3)
     
-    # Timeline
-    first_time = events[0].get("timestamp", "")
-    last_time = events[-1].get("timestamp", "")
+    with col1:
+        st.metric("Total Events", len(events))
+    with col2:
+        uploads = sum(1 for e in events if e.get("action") == "file_uploaded")
+        st.metric("File Uploads", uploads)
+    with col3:
+        transforms = sum(1 for e in events if "transformation" in e.get("action", ""))
+        st.metric("Transformations", transforms)
     
-    return {
-        "total_events": len(events),
-        "pages": page_counts,
-        "first_event": first_time,
-        "last_event": last_time,
-        "session_duration": calculate_duration(first_time, last_time),
-    }
-
-
-def calculate_duration(start_iso: str, end_iso: str) -> str:
-    """
-    Calculate duration between two ISO timestamps.
-    
-    Args:
-        start_iso: ISO format timestamp
-        end_iso: ISO format timestamp
+    # Show event table
+    df_events = pd.DataFrame(events)
+    if not df_events.empty:
+        # Format columns for display
+        display_cols = ["timestamp", "page", "action", "user_id"]
+        if "details" in df_events.columns:
+            display_cols.append("details")
         
-    Returns:
-        Human-readable duration string
-    """
-    try:
-        start = datetime.fromisoformat(start_iso)
-        end = datetime.fromisoformat(end_iso)
-        duration = end - start
+        # Truncate long details
+        if "details" in df_events.columns:
+            df_events["details"] = df_events["details"].apply(
+                lambda x: {k: str(v)[:50] + "..." if len(str(v)) > 50 else v 
+                          for k, v in (x or {}).items()}
+            )
         
-        minutes = duration.total_seconds() / 60
-        if minutes < 1:
-            return "< 1 min"
-        elif minutes < 60:
-            return f"{int(minutes)} min"
-        else:
-            hours = minutes / 60
-            return f"{hours:.1f} hr"
-    except Exception:
-        return "Unknown"
+        st.dataframe(
+            df_events[display_cols].tail(10),
+            width="stretch",
+            height=300
+        )
 
 
 # ============================================================================
-# AUDIT TRAIL HISTORY
+# AUTOMATIC SESSION TRACKING
 # ============================================================================
 
-def format_audit_trail_for_display() -> List[Dict]:
-    """
-    Format audit log for human-readable display.
+def init_audit_session():
+    """Initialize audit session tracking."""
+    if "session_id" not in st.session_state:
+        st.session_state.session_id = f"session_{int(time.time())}"
     
-    Returns:
-        List of formatted event dicts suitable for st.dataframe()
-    """
-    events = read_audit_log()
-    
-    formatted = []
-    for event in events:
-        # Parse timestamp
-        ts = event.get("timestamp", "")
-        try:
-            dt = datetime.fromisoformat(ts)
-            time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
-        except Exception:
-            time_str = ts
-        
-        # Format details as string
-        details = event.get("details", {})
-        details_str = ", ".join(f"{k}={v}" for k, v in details.items()) if details else "-"
-        
-        formatted.append({
-            "Time": time_str,
-            "Page": event.get("page", ""),
-            "Action": event.get("action", ""),
-            "Details": details_str,
-        })
-    
-    return formatted
-
-
-# ============================================================================
-# COMMON LOGGING PATTERNS (Copy-paste into pages)
-# ============================================================================
-
-"""
-# === PATTERN 1: Log data upload ===
-from helpers.audit import log_event
-
-log_event(
-    "Data Upload",
-    f"Uploaded {file.name}",
-    {
-        "filename": file.name,
-        "n_proteins": len(df),
-        "n_samples": len(numeric_cols),
-        "file_size_mb": file.size / 1e6,
-    }
-)
-
-# === PATTERN 2: Log filtering ===
-log_event(
-    "Preprocessing",
-    "Removed proteins by CV threshold",
-    {
-        "removed_count": n_removed,
-        "remaining_count": len(filtered_df),
-        "threshold": cv_threshold,
-        "filter_rate_pct": (n_removed / n_total * 100),
-    }
-)
-
-# === PATTERN 3: Log transformation ===
-log_event(
-    "Preprocessing",
-    f"Applied {transform_key} transformation",
-    {
-        "transform": transform_key,
-        "proteins": len(transformed_df),
-        "samples": len(numeric_cols),
-    }
-)
-
-# === PATTERN 4: Log analysis ===
-log_event(
-    "Analysis",
-    "Ran differential expression analysis",
-    {
-        "n_proteins": len(results_df),
-        "n_significant_up": n_up,
-        "n_significant_down": n_down,
-        "fc_threshold": fc_threshold,
-        "pval_threshold": pval_threshold,
-    }
-)
-
-# === PATTERN 5: Log error metrics ===
-log_event(
-    "Analysis",
-    "Calculated error metrics",
-    {
-        "rmse": f"{rmse:.3f}",
-        "mae": f"{mae:.3f}",
-        "sensitivity": f"{sensitivity:.2%}",
-        "specificity": f"{specificity:.2%}",
-    }
-)
-"""
+    log_event(
+        page="app_start",
+        action="session_started",
+        session_id=st.session_state.session_id
+    )
