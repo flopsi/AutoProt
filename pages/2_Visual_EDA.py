@@ -15,8 +15,11 @@ if "protein_data" not in st.session_state:
 
 protein_data = st.session_state.protein_data
 
-# Initialize transform cache in session (persists across reruns)
+# Initialize transform cache in session
 if "transform_cache" not in st.session_state:
+    st.session_state.transform_cache = TransformCache()
+elif not isinstance(st.session_state.transform_cache, TransformCache):
+    # Handle legacy dict cache
     st.session_state.transform_cache = TransformCache()
 
 cache = st.session_state.transform_cache
@@ -30,7 +33,7 @@ if not cache.has('log2'):
 else:
     df_log2 = cache.get('log2')
 
-# Prepare viz data (1.0 → NaN) - lightweight, compute on demand
+# Prepare viz data (1.0 → NaN)
 df_viz = protein_data.raw[protein_data.numeric_cols].copy()
 for col in protein_data.numeric_cols:
     df_viz.loc[df_viz[col] == 1.0, col] = np.nan
