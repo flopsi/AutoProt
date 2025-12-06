@@ -356,6 +356,30 @@ log_event(
         "proteins_dropped": rows_dropped
     }
 )
+# Add THIS section right before "# ============================================================================ # STEP 10: NEXT STEPS"
+
+# ============================================================================
+# CONFIRMATION BUTTON
+# ============================================================================
+
+st.markdown("---")
+st.subheader("🎯 Confirm & Save Configuration")
+
+st.info(f"""
+**Ready to proceed?** Click below to save your data configuration.
+
+- **File**: `{uploaded_file.name}`
+- **Proteins**: {n_proteins:,}
+- **Samples**: {n_samples}
+- **Species**: {len(species_series.unique())} detected
+""")
+
+if st.button("✅ Confirm & Proceed to Analysis", type="primary", use_container_width=True):
+    # Data already in protein_data object above - just confirm it's stored
+    st.success("🎉 Data successfully confirmed and stored in session!")
+    st.balloons()
+    
+    st.info("💡 Navigate to **2️⃣ Visual EDA** or **3️⃣ Statistical EDA** in the sidebar to continue.")
 
 st.success("✅ Data ready for analysis!")
 
