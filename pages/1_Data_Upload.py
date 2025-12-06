@@ -18,10 +18,13 @@ from helpers.io import (
     detect_protein_id_column,
     detect_species_column,
     clean_species_name,
-    drop_proteins_with_invalid_intensities
+    drop_proteins_with_invalid_intensities,
+    ensure_protein_id_string
 )
 from helpers.core import ProteinData
 from helpers.audit import log_event, init_audit_session
+
+
 
 # ============================================================================
 # HELPER FUNCTIONS (only those not in helpers)
@@ -299,6 +302,7 @@ with c1:
             non_numeric,
             index=non_numeric.index(protein_id_col) if protein_id_col in non_numeric else 0
         )
+        df = ensure_protein_id_string(df, protein_id_col)
     else:
         st.warning("⚠️ No non-numeric columns available. Using first column as ID.")
         protein_id_col = df.columns[0] if len(df.columns) > 0 else "ID"
