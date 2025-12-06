@@ -106,7 +106,7 @@ for method in available_methods:
 
 table_df = pd.DataFrame(rows)
 
-# Ranking (ignore Raw)
+# Ranking (ignore Raw for score)
 table_df["score"] = np.nan
 mask_tr = table_df["key"] != "raw"
 table_df.loc[mask_tr, "score"] = (
@@ -114,14 +114,16 @@ table_df.loc[mask_tr, "score"] = (
     + table_df.loc[mask_tr, "p"].rank(ascending=False)
 )
 
-# Add Show column: default Raw=True
-table_df["Show"] = table_df["key"].eq("raw")
+# Add Use column: default Raw=True
+table_df["Use"] = table_df["key"].eq("raw")
 
 # ----------------------------------------------------------------------
-# 3) Data editor with checkbox column
+# 3) Data editor with checkbox for selection
 # ----------------------------------------------------------------------
+st.subheader("3️⃣ Choose Preferred Transformation")
+
 edited = st.data_editor(
-    table_df[["Condition", "W", "p", "Skew", "Kurtosis", "n", "score", "Show"]],
+    table_df[["Condition", "W", "p", "Skew", "Kurtosis", "n", "score", "Use"]],
     use_container_width=True,
     num_rows="fixed",
     hide_index=True,
@@ -133,9 +135,9 @@ edited = st.data_editor(
         "Kurtosis": st.column_config.NumberColumn("Kurtosis", format="%.3f"),
         "n": st.column_config.NumberColumn("n", format="%d"),
         "score": st.column_config.NumberColumn("Score", format="%.1f", disabled=True),
-        "Show": st.column_config.CheckboxColumn(
-            "Plot",
-            help="Select exactly one condition to plot",
+        "Use": st.column_config.CheckboxColumn(
+            "Use",
+            help="Select exactly one condition as preferred",
             default=False,
         ),
     },
@@ -143,22 +145,26 @@ edited = st.data_editor(
     key="normality_table",
 )
 
-# Enforce single selection: if multiple True, keep the first; if none, default to Raw
-show_series = edited["Show"].copy()
-if show_series.sum() == 0:
-    # Default to Raw
-    show_series.iloc[0] = True
-elif show_series.sum() > 1:
-    first_true = show_series[show_series].index[0]
-    show_series[:] = False
-    show_series.loc[first_true] = True
+# Enforce single selection
+show = edited["Use"].copy()
 
-# Find selected key
-selected_idx = show_series.idxmax()
+if show.sum() == 0:
+    # default to Raw
+    show.iloc[0] = True
+elif show.sum() > 1:
+    first_true = show[show].index[0]
+    show[:] = False
+    show.loc[first_true] = True
+
+# Determine selected row
+selected_idx = show.idxmax()
 selected_condition = edited.loc[selected_idx, "Condition"]
 selected_key = table_df.loc[selected_idx, "key"]
 
-# Show best transformation info
+# Store selection into session_state for later pages (e.g., DE analysis)
+st.session_state.selected_transform_method = selected_key
+
+# Best by score (non-raw)
 if mask_tr.any():
     best_row = table_df.loc[mask_tr].sort_values("score").iloc[0]
     st.success(
@@ -166,34 +172,30 @@ if mask_tr.any():
         f"(W={best_row['W']:.3f}, p={best_row['p']:.2e})"
     )
 
-st.info(f"📌 Currently selected for plotting: **{selected_condition}**")
+st.info(f"📌 Preferred for downstream analyses: **{selected_condition}**")
 
 # ----------------------------------------------------------------------
-# 4) Plots on top of each other: Raw (top), selected (bottom)
+# 4) Diagnostic plot (Raw only, always shown)
 # ----------------------------------------------------------------------
-st.subheader("3️⃣ Diagnostic Plots (Raw vs Selected)")
+st.subheader("4️⃣ Diagnostic Plot (Raw Only)")
 
-# --- Top: Raw ---
-st.markdown("**Raw (top)**")
-raw_fig_top = create_raw_row_figure(
+raw_fig = create_raw_row_figure(
     df_raw=df_raw,
     raw_cols=eval_cols,
     title="Raw Data",
 )
-st.plotly_chart(raw_fig_top, use_container_width=True, key="raw_plot_top")
+st.plotly_chart(raw_fig, use_container_width=True, key="raw_plot")
 
-# --- Bottom: Selected condition ---
-st.markdown("**Selected condition (bottom)**")
-
-if selected_key == "raw":
-    # Either: don’t re-plot, just tell the user it’s the same as above
-    st.info("Selected condition is Raw – see the plot above.")
-else:
-    nice_name = TRANSFORM_NAMES.get(selected_key, selected_key)
-    df_trans_sel, trans_cols_sel = apply_transformation(df_raw, eval_cols, selected_key)
-    trans_fig = create_transformed_row_figure(
-        df_transformed=df_trans_sel,
-        trans_cols=trans_cols_sel,
-        title=nice_name,
-    )
-    st.plotly_chart(trans_fig, use_container_width=True, key=f"trans_plot_{selected_key}")
+# Optional: show selected transform plot on demand
+with st.expander("Show diagnostic plot for selected transformation"):
+    if selected_key == "raw":
+        st.info("Selected Raw; same as the plot above.")
+    else:
+        nice_name = TRANSFORM_NAMES.get(selected_key, selected_key)
+        df_trans_sel, trans_cols_sel = apply_transformation(df_raw, eval_cols, selected_key)
+        trans_fig = create_transformed_row_figure(
+            df_transformed=df_trans_sel,
+            trans_cols=trans_cols_sel,
+            title=nice_name,
+        )
+        st.plotly_chart(trans_fig, use_container_width=True, key=f"trans_plot_{selected_key}")
