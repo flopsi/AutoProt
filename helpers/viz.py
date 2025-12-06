@@ -935,80 +935,83 @@ def create_protein_count_stacked_bar(
     return fig, pd.DataFrame(summary_data)
 
 
-@st.cache_data(ttl=3600, show_spinner="Creating box plots...")
-def create_boxplot_by_condition(
+@st.cache_data(ttl=3600, show_spinner="Creating sample boxplots...")
+def create_sample_boxplots(
     df_log2: pd.DataFrame,
-    condition_dict: dict,
-    conditions_to_plot: list,
+    numeric_cols: list,
     theme: dict
 ) -> tuple[go.Figure, pd.DataFrame]:
     """
-    Create boxplots of log2 intensities grouped by experimental condition.
+    Create 6 boxplots (2×3 grid) of log2 intensities per sample.
+    
+    Includes all values without filtering (keeps missing = 1.0).
     
     Args:
-        df_log2: Log2-transformed data
-        condition_dict: Dict mapping condition → list of samples
-        conditions_to_plot: List of conditions to include (typically ["A", "B"])
+        df_log2: Log2-transformed data (all values)
+        numeric_cols: Sample column names
         theme: Theme colors dictionary
     
     Returns:
         (figure, summary_stats_dataframe) tuple
     """
-    fig = go.Figure()
+    from plotly.subplots import make_subplots
     
-    condition_colors = {
-        conditions_to_plot[0]: theme['color_human'],
-        conditions_to_plot[1]: theme['color_yeast'] if len(conditions_to_plot) > 1 else theme['color_ecoli']
-    }
-    
-    for cond in conditions_to_plot:
-        samples = condition_dict[cond]
-        
-        for sample in samples:
-            values = df_log2[sample].dropna()
-            values = values[values != 0.0]
-            
-            fig.add_trace(go.Box(
-                y=values,
-                name=sample,
-                marker_color=condition_colors[cond],
-                legendgroup=cond,
-                legendgrouptitle_text=f"Condition {cond}",
-                boxmean='sd',
-                hovertemplate=f"<b>{sample}</b><br>Intensity: %{{y:.2f}}<extra></extra>"
-            ))
-    
-    fig.update_layout(
-        title="Log2 Intensity Distribution by Condition",
-        xaxis_title="Sample",
-        yaxis_title="Log2 Intensity",
-        plot_bgcolor=theme['bg_primary'],
-        paper_bgcolor=theme['paper_bg'],
-        font=dict(family=FONT_FAMILY, size=14, color=theme['text_primary']),
-        showlegend=True,
-        height=600
+    # Create 2×3 grid
+    fig = make_subplots(
+        rows=2, cols=3,
+        subplot_titles=numeric_cols,
+        vertical_spacing=0.15,
+        horizontal_spacing=0.10
     )
     
-    fig.update_xaxes(showgrid=True, gridcolor=theme['grid'], tickangle=-45)
-    fig.update_yaxes(showgrid=True, gridcolor=theme['grid'])
-    
-    # Summary statistics
-    summary_stats = []
-    for cond in conditions_to_plot:
-        samples = condition_dict[cond]
-        vals = np.concatenate([
-            df_log2[s].dropna().values[df_log2[s].dropna() != 0.0]
-            for s in samples
-        ])
+    # Add boxplot for each sample
+    for idx, sample in enumerate(numeric_cols):
+        row = (idx // 3) + 1
+        col = (idx % 3) + 1
         
+        values = df_log2[sample].values
+        
+        fig.add_trace(
+            go.Box(
+                y=values,
+                name=sample,
+                marker_color=theme['accent'],
+                boxmean='sd',
+                jitter=0.3,
+                pointpos=-1.8,
+                hovertemplate=f"<b>{sample}</b><br>Log2 Intensity: %{{y:.2f}}<extra></extra>"
+            ),
+            row=row, col=col
+        )
+        
+        fig.update_yaxes(title_text="Log2 Intensity", row=row, col=col, showgrid=True, gridcolor=theme['grid'])
+        fig.update_xaxes(showgrid=False, row=row, col=col)
+    
+    fig.update_layout(
+        title_text="Log2 Intensity Distribution per Sample",
+        title_font_size=16,
+        height=700,
+        showlegend=False,
+        plot_bgcolor=theme['bg_primary'],
+        paper_bgcolor=theme['paper_bg'],
+        font=dict(family=FONT_FAMILY, size=11, color=theme['text_primary']),
+        hovermode='closest'
+    )
+    
+    # Summary statistics per sample
+    summary_stats = []
+    for sample in numeric_cols:
+        values = df_log2[sample].values
         summary_stats.append({
-            'Condition': cond,
-            'N Samples': len(samples),
-            'Mean': f"{np.mean(vals):.2f}",
-            'Median': f"{np.median(vals):.2f}",
-            'Std Dev': f"{np.std(vals):.2f}",
-            'Min': f"{np.min(vals):.2f}",
-            'Max': f"{np.max(vals):.2f}"
+            'Sample': sample,
+            'N': len(values),
+            'Mean': f"{np.mean(values):.2f}",
+            'Median': f"{np.median(values):.2f}",
+            'Std Dev': f"{np.std(values):.2f}",
+            'Min': f"{np.min(values):.2f}",
+            'Max': f"{np.max(values):.2f}",
+            'Q1': f"{np.percentile(values, 25):.2f}",
+            'Q3': f"{np.percentile(values, 75):.2f}"
         })
     
     return fig, pd.DataFrame(summary_stats)
