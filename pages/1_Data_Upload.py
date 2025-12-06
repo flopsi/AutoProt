@@ -12,7 +12,7 @@ from helpers.io import read_csv, read_tsv, read_excel
 from helpers.core import ProteinData
 from helpers.audit import log_event
 from helpers.core import get_theme
-from helpers.cleaning import drop_proteins_with_invalid_intensities
+from helpers.io import drop_proteins_with_invalid_intensities
 
 # ... [keep all existing helper functions: clean_species_name, clean_column_name, 
 # detect_numeric_columns, detect_protein_id_column, detect_species_column,
