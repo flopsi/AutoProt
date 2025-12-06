@@ -100,22 +100,55 @@ st.dataframe(summary_df1, width="stretch", hide_index=True)
 st.markdown("---")
 
 # ============================================================================
-# PLOT 2: BOXPLOTS (uses viz helper)
+# SPECIES BREAKDOWN BY SAMPLE
 # ============================================================================
 
-st.header("2️⃣ Log2 Intensity Distribution by Condition")
-st.markdown("Box plots showing log2-transformed intensities for conditions A and B.")
+if protein_data.species_mapping:
+    st.subheader("📊 Species Breakdown by Sample")
+    
+    # Build counts: for each sample, count proteins per species
+    import plotly.express as px
+    from helpers.core import get_theme
+    
+    chart_data = []
+    for sample_col in numeric_cols:
+        valid_mask = df_raw[sample_col] > 1.0
+        for protein_id in df_raw.loc[valid_mask].index:
+            species = protein_data.species_mapping.get(protein_id, "UNKNOWN")
+            chart_data.append({"Sample": sample_col, "Species": species, "Count": 1})
+    
+    if chart_data:
+        chart_df = pd.DataFrame(chart_data)
+        species_counts = chart_df.groupby(["Sample", "Species"])["Count"].sum().reset_index()
+        
+        theme = get_theme(st.session_state.get("theme", "dark"))
+        color_map = {
+            "HUMAN": theme["color_human"],
+            "YEAST": theme["color_yeast"],
+            "ECOLI": theme["color_ecoli"],
+        }
+        for sp in species_counts["Species"].unique():
+            if sp not in color_map:
+                color_map[sp] = theme["accent"]
+        
+        fig = px.bar(
+            species_counts,
+            x="Sample",
+            y="Count",
+            color="Species",
+            barmode="stack",
+            color_discrete_map=color_map,
+            height=400,
+        )
+        fig.update_layout(
+            plot_bgcolor=theme["bg_primary"],
+            paper_bgcolor=theme["paper_bg"],
+            font=dict(size=11, color=theme["text_primary"]),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning("⚠️ No valid intensity data")
 
-if condition_dict and len(condition_dict) >= 2:
-    conditions_to_plot = sorted(condition_dict.keys())[:2]
-    
-    fig2, summary_df2 = create_boxplot_by_condition(df_log2, condition_dict, conditions_to_plot, theme)
-    st.plotly_chart(fig2, width="stretch")
-    
-    st.markdown("**Summary Statistics by Condition:**")
-    st.dataframe(summary_df2, width="stretch", hide_index=True)
-else:
-    st.warning("⚠️ Need at least 2 conditions for comparison")
 
 # ============================================================================
 # LOG EVENT
