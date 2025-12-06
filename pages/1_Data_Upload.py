@@ -377,11 +377,9 @@ st.info(f"""
 if st.button("✅ Confirm & Proceed to Analysis", type="primary", use_container_width=True):
     # Data already in protein_data object above - just confirm it's stored
     st.success("🎉 Data successfully confirmed and stored in session!")
-    st.balloons()
-    
-    st.info("💡 Navigate to **2️⃣ Visual EDA** or **3️⃣ Statistical EDA** in the sidebar to continue.")
+    time.sleep(1.5)
+    st.switch_page("pages/2_Visual_EDA.py")
 
-st.success("✅ Data ready for analysis!")
 
 # Navigation hint
 st.markdown("---")
