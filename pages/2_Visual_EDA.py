@@ -114,12 +114,19 @@ table_df.loc[mask_tr, "score"] = (
     + table_df.loc[mask_tr, "p"].rank(ascending=False)
 )
 
-# Add Use column: default Raw=True
-table_df["Use"] = table_df["key"].eq("raw")
+# Initialize default selection
+if "editor_selection" not in st.session_state:
+    st.session_state.editor_selection = "raw"
+
+# Set Use column based on current selection (exactly one True)
+table_df["Use"] = table_df["key"] == st.session_state.editor_selection
 
 # ----------------------------------------------------------------------
-# 3) Data editor with checkbox for selection
+# 3) Data editor - need unique key to force reset on selection change
 # ----------------------------------------------------------------------
+# Use a composite key that includes the selection, forcing editor to reset when selection changes
+editor_key = f"normality_table_{st.session_state.editor_selection}"
+
 edited = st.data_editor(
     table_df[["Condition", "W", "p", "Skew", "Kurtosis", "n", "score", "Use"]],
     use_container_width=True,
@@ -135,28 +142,28 @@ edited = st.data_editor(
         "score": st.column_config.NumberColumn("Score", format="%.1f", disabled=True),
         "Use": st.column_config.CheckboxColumn(
             "Use",
-            help="Select exactly one condition as preferred",
+            help="Check one row, then click Update",
             default=False,
         ),
     },
     disabled=["Condition", "W", "p", "Skew", "Kurtosis", "n", "score"],
-    key="normality_table",
+    key=editor_key,
 )
 
-# Enforce single selection
-show = edited["Use"].copy()
+# Update button
+if st.button("🔄 Update Plots", type="primary"):
+    show = edited["Use"].copy()
+    
+    if show.sum() >= 1:
+        # Use first checked row
+        selected_idx = show[show].index[0]
+        st.session_state.editor_selection = table_df.loc[selected_idx, "key"]
+        st.rerun()
 
-if show.sum() == 0:
-    show.iloc[0] = True
-elif show.sum() > 1:
-    first_true = show[show].index[0]
-    show[:] = False
-    show.loc[first_true] = True
-
-# Determine selected row
-selected_idx = show.idxmax()
-selected_condition = edited.loc[selected_idx, "Condition"]
-selected_key = table_df.loc[selected_idx, "key"]
+# Read current selection
+selected_key = st.session_state.editor_selection
+selected_row = table_df[table_df["key"] == selected_key].iloc[0]
+selected_condition = selected_row["Condition"]
 
 # Store for downstream use
 st.session_state.selected_transform_method = selected_key
@@ -165,11 +172,11 @@ st.session_state.selected_transform_method = selected_key
 if mask_tr.any():
     best_row = table_df.loc[mask_tr].sort_values("score").iloc[0]
     st.success(
-        f"🏆 Best transformation by W & p: **{best_row['Condition']}** "
+        f"🏆 Best by W & p: **{best_row['Condition']}** "
         f"(W={best_row['W']:.3f}, p={best_row['p']:.2e})"
     )
 
-st.info(f"📌 Selected for plots: **{selected_condition}**")
+st.info(f"📌 Currently selected for plots: **{selected_condition}**")
 
 # ----------------------------------------------------------------------
 # 4) Diagnostic plots: Raw (top) + Selected (bottom)
@@ -184,7 +191,7 @@ raw_fig = create_raw_row_figure(
 )
 st.plotly_chart(raw_fig, use_container_width=True, key="plot_raw_top")
 
-st.markdown("**Selected condition (bottom)**")
+st.markdown(f"**{selected_condition} (bottom)**")
 if selected_key == "raw":
     st.info("Selected condition is Raw – same as above.")
 else:
