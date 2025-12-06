@@ -35,8 +35,9 @@ def clean_column_name(name: str) -> str:
 
 
 def detect_numeric_columns(df: pd.DataFrame) -> list:
-    """Detect numeric columns."""
-    return df.select_dtypes(include=["number"]).columns.tolist()
+    """Detect numeric columns - only float types (float64, float32)."""
+    # Only select float columns, not int (which are likely IDs or counts)
+    return df.select_dtypes(include=["float64", "float32"]).columns.tolist()
 
 
 def detect_protein_id_column(df: pd.DataFrame) -> str:
@@ -46,7 +47,7 @@ def detect_protein_id_column(df: pd.DataFrame) -> str:
     for col in df.columns:
         col_lower = col.lower()
         if any(p in col_lower for p in patterns):
-            if df[col].dtype not in ["int64", "float64"]:
+            if df[col].dtype not in ["int64", "float64", "float32"]:
                 return col
 
     # Fallback: first non-numeric column
@@ -110,6 +111,34 @@ def longest_common_prefix(strs):
         if c1 != c2:
             return s1[:i]
     return s1
+
+
+def generate_default_names(n_cols: int, samples_per_condition: int = 3) -> list:
+    """
+    Generate default column names in format A1, A2, A3, B1, B2, B3, etc.
+    
+    Args:
+        n_cols: Total number of columns to name
+        samples_per_condition: Number of replicates per condition (default 3)
+    
+    Returns:
+        List of default names
+    """
+    names = []
+    condition_letter = ord('A')  # Start with 'A'
+    
+    for i in range(n_cols):
+        # Determine which condition (A, B, C, etc.)
+        condition_idx = i // samples_per_condition
+        # Determine replicate number (1, 2, 3, etc.)
+        replicate_num = (i % samples_per_condition) + 1
+        
+        # Generate name like "A1", "A2", "B1", etc.
+        condition = chr(condition_letter + condition_idx)
+        name = f"{condition}{replicate_num}"
+        names.append(name)
+    
+    return names
 
 
 # ============================================================================
@@ -241,7 +270,7 @@ st.subheader("4️⃣ Select Quantitative Columns")
 st.markdown(
     """
     **Check the columns you want to use for quantitative analysis.**
-    Columns must be numeric (measurements, intensities, abundances).
+    Only float-type columns (float64/float32) are selected by default.
     """
 )
 
@@ -294,26 +323,69 @@ numeric_cols = selected_numeric_cols
 st.success(f"✅ Selected {len(numeric_cols)} quantitative columns")
 
 # ============================================================================
-# STEP 5: RENAME COLUMNS (OPTIONAL)
+# STEP 5: RENAME COLUMNS (DEFAULT TO A1, A2, B1, B2...)
 # ============================================================================
 
-st.subheader("5️⃣ Rename Columns (Optional)")
+st.subheader("5️⃣ Rename Columns")
+
+st.markdown(
+    """
+    **Default naming:** Columns will be renamed to A1, A2, A3, B1, B2, B3, etc.
+    You can customize the number of replicates per condition and edit individual names.
+    """
+)
 
 rename_dict = {}
 
 rc1, rc2 = st.columns(2)
 with rc1:
-    should_rename = st.checkbox(
-        "Enable column renaming?",
-        value=False,
-        help="Rename quantitative columns for clarity",
+    samples_per_condition = st.number_input(
+        "Replicates per condition:",
+        min_value=1,
+        max_value=10,
+        value=3,
+        help="How many samples per experimental condition? (e.g., 3 means A1-A3, B1-B3, etc.)"
     )
 
 with rc2:
-    if should_rename:
-        st.info("Enter new names below")
+    use_default_names = st.checkbox(
+        "Use default names (A1, A2, B1, B2...)",
+        value=True,
+        help="Automatically generate standard condition names"
+    )
 
-if should_rename:
+if use_default_names:
+    # Generate default names
+    default_names = generate_default_names(len(numeric_cols), samples_per_condition)
+    
+    # Create initial rename mapping
+    rename_dict = dict(zip(numeric_cols, default_names))
+    
+    st.info(f"✅ Generated {len(default_names)} default names")
+    
+    # Show preview with ability to edit
+    with st.expander("📋 Preview & Edit Names"):
+        st.markdown("**Original → New Name** (edit if needed)")
+        
+        # Create editable table
+        for idx, (old_col, new_name) in enumerate(rename_dict.items()):
+            c1, c2, c3 = st.columns([2, 1, 2])
+            
+            with c1:
+                st.text(old_col)
+            with c2:
+                st.write("→")
+            with c3:
+                custom_name = st.text_input(
+                    "New name",
+                    value=new_name,
+                    label_visibility="collapsed",
+                    key=f"rename_{idx}",
+                )
+                if custom_name != new_name and custom_name.strip():
+                    rename_dict[old_col] = custom_name
+else:
+    # Manual renaming (original behavior)
     st.markdown("**Original → New Name**")
 
     for col in numeric_cols:
@@ -328,21 +400,22 @@ if should_rename:
                 "New name",
                 value=col,
                 label_visibility="collapsed",
-                key=f"rename_{col}",
+                key=f"rename_manual_{col}",
             )
             if new_name != col and new_name.strip():
                 rename_dict[col] = new_name
 
-    if rename_dict:
-        df = df.rename(columns=rename_dict)
-        numeric_cols = [rename_dict.get(col, col) for col in numeric_cols]
-        st.success(f"✅ Renamed {len(rename_dict)} columns")
+# Apply renaming
+if rename_dict:
+    df = df.rename(columns=rename_dict)
+    numeric_cols = [rename_dict.get(col, col) for col in numeric_cols]
+    st.success(f"✅ Renamed {len(rename_dict)} columns")
 
-        with st.expander("📋 View Column Mapping"):
-            mapping_df = pd.DataFrame(
-                {"Original": list(rename_dict.keys()), "New": list(rename_dict.values())}
-            )
-            st.dataframe(mapping_df, use_container_width=True)
+    with st.expander("📋 View Final Column Mapping"):
+        mapping_df = pd.DataFrame(
+            {"Original": list(rename_dict.keys()), "New": list(rename_dict.values())}
+        )
+        st.dataframe(mapping_df, use_container_width=True)
 
 # ============================================================================
 # STEP 6: IDENTIFY METADATA COLUMNS
@@ -464,7 +537,7 @@ species_mapping = dict(zip(df[protein_id_col], species_series))
 
 n_proteins = len(df)
 n_samples = len(numeric_cols)
-n_conditions = max(1, n_samples // 3)
+n_conditions = max(1, n_samples // samples_per_condition)
 
 missing_count = 0
 for col in numeric_cols:
@@ -484,91 +557,9 @@ with bc3:
 with bc4:
     st.metric("Missing Values %", f"{missing_rate:.1f}%")
 
-theme_name = st.session_state.get("theme", "dark")
-theme = get_theme(theme_name)
-
-if species_mapping and species_col:
-    st.subheader("Species Breakdown by Sample")
-
-    chart_data = []
-    for sample in numeric_cols:
-        species_in_sample = df[df[sample] > 1.0][species_col].value_counts()
-        for sp, count in species_in_sample.items():
-            chart_data.append({"Sample": sample, "Species": sp, "Count": count})
-
-    if chart_data:
-        chart_df = pd.DataFrame(chart_data)
-
-        species_color_map = {
-            "HUMAN": theme["color_human"],
-            "YEAST": theme["color_yeast"],
-            "ECOLI": theme["color_ecoli"],
-        }
-
-        import plotly.express as px
-
-        fig = px.bar(
-            chart_df,
-            x="Sample",
-            y="Count",
-            color="Species",
-            title="Proteins per Sample by Species",
-            labels={"Count": "Number of Proteins"},
-            barmode="stack",
-            color_discrete_map=species_color_map,
-            height=400,
-        )
-
-        fig.update_xaxes(
-            tickangle=-45, showgrid=True, gridcolor=theme["grid"], gridwidth=1
-        )
-        fig.update_yaxes(
-            showgrid=True, gridcolor=theme["grid"], gridwidth=1
-        )
-        fig.update_layout(
-            plot_bgcolor=theme["bg_primary"],
-            paper_bgcolor=theme["paper_bg"],
-            font=dict(
-                family="Arial",
-                size=14,
-                color=theme["text_primary"],
-            ),
-            title_font=dict(size=16),
-            showlegend=True,
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1,
-            ),
-        )
-
-        st.plotly_chart(fig, use_container_width=True)
-
-st.subheader("Total Species Distribution")
-
-species_totals = species_series.value_counts()
-
-if len(species_totals) > 0:
-    # Force conversion to Python int
-    n_species = int(len(species_totals))
-    
-    # Limit columns to avoid layout issues
-    max_cols = min(n_species, 8)
-    cols = st.columns(max_cols)
-    
-    # Show top species
-    top_species = species_totals.head(max_cols)
-    
-    for col_idx, (species, count) in enumerate(top_species.items()):
-        with cols[col_idx]:
-            st.metric(species, f"{int(count):,}")
-    
-    if n_species > max_cols:
-        st.caption(f"and {int(n_species - max_cols)} more species...")
-else:
-    st.info("No species data available")
+# ============================================================================
+# STEP 9: FINALIZE WITH OPTIONAL CLEANING
+# ============================================================================
 
 st.subheader("9️⃣ Finalizing...")
 
@@ -593,10 +584,36 @@ if drop_invalid:
     )
     after_rows = len(df)
     rows_dropped = before_rows - after_rows
+    
     st.info(
         f"Dropped {rows_dropped} proteins with at least one NaN or 1.00 intensity. "
         f"Remaining: {after_rows} proteins."
     )
+    
+    # Recalculate statistics after dropping
+    n_proteins = len(df)
+    species_mapping = dict(zip(df[protein_id_col], df[species_col]))
+    
+    missing_count = 0
+    for col in numeric_cols:
+        missing_count += df[col].isna().sum()
+        missing_count += (df[col] == 1.0).sum()
+    
+    missing_rate = (missing_count / (n_proteins * n_samples) * 100) if n_proteins > 0 else 0.0
+    
+    # Display updated statistics
+    st.markdown("**Updated Statistics After Filtering:**")
+    
+    uc1, uc2, uc3, uc4 = st.columns(4)
+    
+    with uc1:
+        st.metric("Total Proteins", f"{n_proteins:,}", delta=f"-{rows_dropped}")
+    with uc2:
+        st.metric("Quantitative Samples", n_samples)
+    with uc3:
+        st.metric("Estimated Conditions", n_conditions)
+    with uc4:
+        st.metric("Missing Values %", f"{missing_rate:.1f}%")
 
 # Now create ProteinData with the (possibly cleaned) df
 protein_data = ProteinData(
