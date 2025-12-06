@@ -92,12 +92,12 @@ for species in unique_species:
     unique_counts_table[species] = {}
     
     for sample in protein_data.numeric_cols:
-        # Simple: count non-NaN and non-zero for this species
-        mask = (df_viz[sample].notna()) & (df_viz[sample] != 0.0)
-        species_mask = df_viz.index.map(lambda x: protein_data.species_mapping.get(x) == species)
+        # Count proteins: not NaN and not 0.0, for this species
+        valid = (df_viz[sample].notna()) * (df_viz[sample] != 0.0)
+        is_species = df_viz.index.map(lambda x: protein_data.species_mapping.get(x) == species)
         
-        count = (mask & species_mask).sum()
-        unique_counts_table[species][sample] = count
+        count = (valid * is_species).sum()
+        unique_counts_table[species][sample] = int(count)
     
     # Total unique proteins for this species (simplified)
     species_protein_ids = [
