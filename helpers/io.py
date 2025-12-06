@@ -189,6 +189,22 @@ def detect_protein_id_column(df: pd.DataFrame) -> Optional[str]:
     
     return None
 
+
+def ensure_protein_id_string(df: pd.DataFrame, id_col: str) -> pd.DataFrame:
+    """
+    Ensure protein ID column is string type.
+    
+    Args:
+        df: Input DataFrame
+        id_col: Protein ID column name
+    
+    Returns:
+        DataFrame with ID column converted to string
+    """
+    df = df.copy()
+    df[id_col] = df[id_col].astype(str)
+    return df
+    
 def clean_species_name(name: str) -> str:
     """
     Standardize species annotation format.
