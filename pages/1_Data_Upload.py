@@ -101,7 +101,7 @@ def cache_protein_data(
     Cached at resource level (survives navigation & reruns).
     
     Args:
-        raw_df: Processed DataFrame (after cleaning & column selection)
+        raw_df: Processed DataFrame (after cleaning & column selection, protein ID as index)
         numeric_cols: List of selected quantitative column names
         species_col: Species annotation column name
         species_mapping: Dict mapping protein ID → species
@@ -233,7 +233,7 @@ edited = st.data_editor(
         "Sample": st.column_config.TextColumn("Sample", disabled=True)
     },
     hide_index=True,
-    width="stretch"
+    use_container_width=True
 )
 
 # Get selected quantitative columns
@@ -321,7 +321,11 @@ if species_col and species_col not in columns_to_keep:
     columns_to_keep.append(species_col)
 
 df = df[columns_to_keep].copy()  # Explicit copy; dropped columns purged
+
+# === SET PROTEIN ID AS INDEX ===
+# CRITICAL: Make protein_id_col the index so species_mapping keys match
 df = df.set_index(protein_id_col)
+
 # === STEP 8: PREVIEW ===
 st.subheader("7️⃣ Preview")
 
@@ -330,7 +334,7 @@ df_preview = df.head(10).copy()
 for col in df_preview.select_dtypes(include=['float']).columns:
     df_preview[col] = df_preview[col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "")
 
-st.dataframe(df_preview, width="stretch", height=350)
+st.dataframe(df_preview, use_container_width=True, height=350)
 
 # === STEP 9: BUILD SPECIES MAPPING & CALCULATE INITIAL STATS ===
 st.subheader("8️⃣ Statistics")
@@ -339,12 +343,12 @@ st.subheader("8️⃣ Statistics")
 if species_col:
     species_series = df[species_col]
 else:
-    species_series = df[protein_id_col].apply(infer_species_from_protein_name)
+    species_series = df.index.map(infer_species_from_protein_name)
     # Add inferred species as temporary column
     species_col = "__INFERRED_SPECIES__"
     df[species_col] = species_series
 
-species_mapping = dict(zip(df[protein_id_col], species_series))
+species_mapping = dict(zip(df.index, species_series))
 
 # Calculate stats (before optional filtering)
 n_proteins = len(df)
@@ -373,7 +377,7 @@ if drop_invalid:
 
 # === RECALCULATE STATS (after filtering) ===
 n_proteins = len(df)
-species_mapping = dict(zip(df[protein_id_col], df[species_col]))
+species_mapping = dict(zip(df.index, df[species_col]))
 missing_count = sum((df[c].isna().sum() + (df[c] == 1.0).sum()) for c in numeric_cols)
 missing_rate = (missing_count / (n_proteins * n_samples) * 100) if n_proteins > 0 else 0
 
@@ -403,9 +407,8 @@ st.info(f"""
 
 Click below to **cache your data** and proceed to analysis.
 """)
-df = df.set_index(protein_id_col)  # <-- ADD THIS LINE
 
-if st.button("🎯 Confirm & Cache Data", type="primary", width="stretch"):
+if st.button("🎯 Confirm & Cache Data", type="primary", use_container_width=True):
     
     # === PERSIST DATA VIA CACHE ===
     try:
