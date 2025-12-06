@@ -72,7 +72,7 @@ st.subheader("2️⃣ Valid Proteins per Species per Sample")
 
 st.info("**Valid = intensity ≠ 1.00**. Each cell shows count of valid proteins.")
 
-fig2, summary_df2 = create_protein_count_stacked_bar(
+fig2, _ = create_protein_count_stacked_bar(
     df_viz,
     protein_data.numeric_cols,
     protein_data.species_mapping,
@@ -81,13 +81,50 @@ fig2, summary_df2 = create_protein_count_stacked_bar(
 
 st.plotly_chart(fig2, use_container_width=True)
 
-st.markdown("**Summary by Species:**")
-st.dataframe(summary_df2, use_container_width=True, height=250)
+# ============================================================================
+# BUILD DETAILED TABLE (Species × Samples + Total)
+# ============================================================================
 
+unique_counts_table = {}
+unique_species = sorted(set(protein_data.species_mapping.values()))
+
+for species in unique_species:
+    unique_counts_table[species] = {}
+    
+    # Count unique proteins per species per sample
+    for sample in protein_data.numeric_cols:
+        valid_mask = (df_viz[sample].notna()) & (df_viz[sample] != 0.0)
+        species_proteins = df_viz.index[valid_mask][
+            df_viz.index[valid_mask].map(lambda x: protein_data.species_mapping.get(x) == species)
+        ]
+        unique_counts_table[species][sample] = len(species_proteins)
+    
+    # Total unique proteins for this species
+    species_all_proteins = [
+        pid for pid, sp in protein_data.species_mapping.items() if sp == species
+    ]
+    total_valid = sum(
+        1 for pid in species_all_proteins 
+        if (df_viz.loc[pid] != 0.0).any() and df_viz.loc[pid].notna().any()
+    )
+    unique_counts_table[species]['Total'] = total_valid
+
+# Convert to DataFrame (sorted by total descending)
+df_table = pd.DataFrame(unique_counts_table).T
+df_table = df_table.sort_values('Total', ascending=False)
+
+# Add row totals
+df_table.loc['Total'] = df_table.sum()
+
+# Display table
+st.markdown("**Unique Proteins per Species per Sample:**")
+st.dataframe(df_table, use_container_width=True)
+
+# Download
 st.download_button(
-    label="📥 Download Summary (CSV)",
-    data=summary_df2.to_csv(index=False),
-    file_name="protein_counts_summary.csv",
+    label="📥 Download Table (CSV)",
+    data=df_table.to_csv(),
+    file_name="unique_proteins_per_species.csv",
     mime="text/csv"
 )
 
