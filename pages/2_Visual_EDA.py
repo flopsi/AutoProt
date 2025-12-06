@@ -54,7 +54,7 @@ st.title("📊 Visual Exploratory Data Analysis")
 
 st.subheader("2️⃣ Valid Proteins per Species per Sample")
 
-st.info("**Valid = intensity ≠ 1.00**. Stacked bar chart shows composition by species.")
+st.info("**Valid = intensity ≠ 1.00**. Unique protein counts per sample by species.")
 
 # Prepare data for viz helper: convert missing values (1.0) to NaN
 df_for_viz = protein_data.raw[protein_data.numeric_cols].copy()
@@ -66,10 +66,10 @@ for col in protein_data.numeric_cols:
 from helpers.core import get_theme
 theme = get_theme("light")
 
-# Use optimized viz helper to create stacked bar chart and summary
+# Use optimized viz helper
 from helpers.viz import create_protein_count_stacked_bar
 
-fig, summary_df = create_protein_count_stacked_bar(
+fig, summary_stats_df = create_protein_count_stacked_bar(
     df_for_viz,
     protein_data.numeric_cols,
     protein_data.species_mapping,
@@ -79,17 +79,64 @@ fig, summary_df = create_protein_count_stacked_bar(
 # Display stacked bar chart
 st.plotly_chart(fig, use_container_width=True)
 
-# Display summary table
-st.markdown("**Summary Statistics:**")
-st.dataframe(summary_df, use_container_width=True, height=250)
+# Create detailed table: unique counts per species per column + totals
+unique_counts_table = {}
+unique_species = sorted(set(protein_data.species_mapping.values()))
 
-# Download
-st.download_button(
-    label="📥 Download Summary (CSV)",
-    data=summary_df.to_csv(index=False),
-    file_name="protein_counts_summary.csv",
-    mime="text/csv"
-)
+for species in unique_species:
+    unique_counts_table[species] = {}
+    
+    # Count unique proteins per species per sample
+    for sample in protein_data.numeric_cols:
+        valid_mask = (df_for_viz[sample].notna()) & (df_for_viz[sample] != 0.0)
+        species_proteins = df_for_viz.index[valid_mask][
+            df_for_viz.index[valid_mask].map(lambda x: protein_data.species_mapping.get(x) == species)
+        ]
+        unique_counts_table[species][sample] = len(species_proteins)
+    
+    # Total unique proteins for this species (across all samples)
+    species_all_proteins = [
+        pid for pid, sp in protein_data.species_mapping.items() if sp == species
+    ]
+    total_valid = sum(
+        1 for pid in species_all_proteins 
+        if (df_for_viz.loc[pid] != 0.0).any() and df_for_viz.loc[pid].notna().any()
+    )
+    unique_counts_table[species]['Total'] = total_valid
+
+# Convert to DataFrame
+df_table = pd.DataFrame(unique_counts_table).T
+
+# Add row totals
+df_table.loc['Total'] = df_table.sum()
+
+# Display table
+st.markdown("**Detailed Counts Table (Unique Proteins per Species per Sample):**")
+st.dataframe(df_table, use_container_width=True)
+
+# Summary statistics
+st.markdown("**Summary Statistics:**")
+st.dataframe(summary_stats_df, use_container_width=True, height=200)
+
+# Download options
+col1, col2 = st.columns(2)
+
+with col1:
+    st.download_button(
+        label="📥 Download Detailed Table (CSV)",
+        data=df_table.to_csv(),
+        file_name="unique_proteins_per_species_per_sample.csv",
+        mime="text/csv"
+    )
+
+with col2:
+    st.download_button(
+        label="📊 Download Summary Stats (CSV)",
+        data=summary_stats_df.to_csv(index=False),
+        file_name="protein_counts_summary.csv",
+        mime="text/csv"
+    )
+
 
 # ============================================================================
 # Navigation
