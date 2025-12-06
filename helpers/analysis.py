@@ -275,3 +275,118 @@ def calculate_theoretical_fc(
             theo_fc[species] = 0.0
     
     return theo_fc
+
+# ============================================================================
+# DATA QUALITY METRICS (for Visual EDA)
+# Per-species protein counts and missing value analysis
+# ============================================================================
+
+def count_valid_proteins_per_species_sample(
+    df: pd.DataFrame,
+    numeric_cols: List[str],
+    species_mapping: Dict[str, str],
+    missing_value: float = 1.0
+) -> pd.DataFrame:
+    """
+    Count valid (non-missing) proteins per species per sample.
+    
+    A protein is "valid" in a sample if intensity ≠ missing_value.
+    
+    Args:
+        df: DataFrame with protein IDs as index
+        numeric_cols: List of sample column names
+        species_mapping: Dict mapping protein ID → species name
+        missing_value: Value indicating missing data (default 1.0)
+        
+    Returns:
+        DataFrame with shape (species, samples) showing count of valid proteins
+        
+    Example:
+        >>> df has 100 HUMAN proteins
+        >>> In A1: 90 have intensity ≠ 1.0, 10 have intensity = 1.0
+        >>> Result: HUMAN | A1: 90 | A2: 92 | ...
+    """
+    # Initialize result dict
+    result_dict = {}
+    
+    # Get unique species from mapping
+    unique_species = sorted(set(species_mapping.values()))
+    
+    # For each sample, count valid proteins per species
+    for sample in numeric_cols:
+        result_dict[sample] = {}
+        
+        for species in unique_species:
+            # Get proteins of this species
+            species_proteins = [
+                pid for pid, sp in species_mapping.items() 
+                if sp == species
+            ]
+            
+            if not species_proteins:
+                result_dict[sample][species] = 0
+                continue
+            
+            # Count valid (intensity ≠ missing_value) in this species for this sample
+            valid_count = 0
+            for protein_id in species_proteins:
+                if protein_id in df.index:
+                    intensity = df.loc[protein_id, sample]
+                    if pd.notna(intensity) and intensity != missing_value:
+                        valid_count += 1
+            
+            result_dict[sample][species] = valid_count
+    
+    # Convert to DataFrame (species as rows, samples as columns)
+    result_df = pd.DataFrame(result_dict).T
+    result_df.index.name = "Species"
+    
+    return result_df
+
+
+def count_missing_per_protein(
+    df: pd.DataFrame,
+    numeric_cols: List[str],
+    species_mapping: Dict[str, str],
+    missing_value: float = 1.0
+) -> pd.DataFrame:
+    """
+    Count number of missing values per protein (per row).
+    
+    A value is missing if intensity == missing_value.
+    Returns counts grouped by species.
+    
+    Args:
+        df: DataFrame with protein IDs as index
+        numeric_cols: List of sample column names
+        species_mapping: Dict mapping protein ID → species name
+        missing_value: Value indicating missing data (default 1.0)
+        
+    Returns:
+        DataFrame with columns:
+        - 'protein_id': Protein ID
+        - 'species': Species name
+        - 'missing_count': Number of missing values (0 to len(numeric_cols))
+        
+    Example:
+        >>> Protein P1 (HUMAN) has intensities [5.0, 1.0, 3.0, 1.0] across 4 samples
+        >>> missing_count = 2 (two 1.0 values)
+    """
+    results = []
+    
+    for protein_id in df.index:
+        # Get species for this protein
+        species = species_mapping.get(protein_id, "UNKNOWN")
+        
+        # Count missing values in this protein row
+        row = df.loc[protein_id, numeric_cols]
+        missing_count = (row == missing_value).sum()
+        
+        results.append({
+            'protein_id': protein_id,
+            'species': species,
+            'missing_count': int(missing_count)
+        })
+    
+    result_df = pd.DataFrame(results)
+    return result_df
