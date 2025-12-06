@@ -173,18 +173,21 @@ st.info(f"📌 Currently selected for plotting: **{selected_condition}**")
 # ----------------------------------------------------------------------
 st.subheader("3️⃣ Diagnostic Plots (Raw vs Selected)")
 
+# --- Top: Raw ---
 st.markdown("**Raw (top)**")
-raw_fig = create_raw_row_figure(
+raw_fig_top = create_raw_row_figure(
     df_raw=df_raw,
     raw_cols=eval_cols,
     title="Raw Data",
 )
-st.plotly_chart(raw_fig, use_container_width=True, key="raw_plot")
+st.plotly_chart(raw_fig_top, use_container_width=True, key="raw_plot_top")
 
+# --- Bottom: Selected condition ---
 st.markdown("**Selected condition (bottom)**")
+
 if selected_key == "raw":
-    # Show raw again with a different key
-    st.plotly_chart(raw_fig, use_container_width=True, key="raw_plot_bottom")
+    # Either: don’t re-plot, just tell the user it’s the same as above
+    st.info("Selected condition is Raw – see the plot above.")
 else:
     nice_name = TRANSFORM_NAMES.get(selected_key, selected_key)
     df_trans_sel, trans_cols_sel = apply_transformation(df_raw, eval_cols, selected_key)
