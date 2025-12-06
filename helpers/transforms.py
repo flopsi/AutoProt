@@ -5,13 +5,12 @@ Data transformation functions for proteomics intensity normalization
 Includes log, power, and quantile transformations with caching
 """
 
+import streamlit as st
 import numpy as np
 import pandas as pd
 from scipy import stats
 from sklearn.preprocessing import PowerTransformer, QuantileTransformer
 from typing import Dict, List, Tuple
-import streamlit as st
-
 # ============================================================================
 # TRANSFORMATION METADATA
 # Human-readable names and descriptions for UI display
