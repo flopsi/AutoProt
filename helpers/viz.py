@@ -933,6 +933,7 @@ def create_protein_count_stacked_bar(
         })
     
     return fig, pd.DataFrame(summary_data)
+# Add to helpers/viz.py
 
 @st.cache_data(ttl=3600, show_spinner="Creating boxplots...")
 def create_sample_boxplots(
@@ -941,38 +942,35 @@ def create_sample_boxplots(
     theme: dict
 ) -> tuple[go.Figure, pd.DataFrame]:
     """
-    Create single boxplot with 6 traces (samples) grouped by condition.
+    Create single boxplot with N traces (samples) grouped by condition.
     
-    Condition A (A1, A2, A3): Green
-    Condition B (B1, B2, B3): Teal
-    
-    Includes all values without filtering.
+    Automatically detects conditions from sample names (A1, B1, C1, etc.).
+    Colors assigned from theme palette.
     
     Args:
         df_log2: Log2-transformed data
-        numeric_cols: Sample column names [A1, A2, A3, B1, B2, B3]
+        numeric_cols: Sample column names [A1, A2, A3, B1, B2, B3, ...]
         theme: Theme colors dictionary
     
     Returns:
         (figure, summary_stats_dataframe) tuple
     """
+    from helpers.core import get_condition_colors
+    
     fig = go.Figure()
     
-    # Color mapping by condition
-    colors = {
-        'A': theme['color_human'],    # Green
-        'B': theme['color_yeast']     # Teal/Orange
-    }
+    # Get automatic color mapping
+    condition_colors = get_condition_colors(theme)
     
     # Add trace for each sample
     for sample in numeric_cols:
-        condition = sample[0]  # First letter: A or B
+        condition = sample[0]  # First letter: A, B, C, etc.
         values = df_log2[sample].values
         
         fig.add_trace(go.Box(
             y=values,
             name=sample,
-            marker_color=colors.get(condition, theme['accent']),
+            marker_color=condition_colors.get(condition, theme['accent']),
             boxmean='sd',
             jitter=0.3,
             pointpos=-1.8,
@@ -1013,3 +1011,198 @@ def create_sample_boxplots(
         })
     
     return fig, pd.DataFrame(summary_stats)
+
+
+@st.cache_data(ttl=3600, show_spinner="Creating violin plots...")
+def create_sample_violins(
+    df_log2: pd.DataFrame,
+    numeric_cols: list,
+    theme: dict
+) -> tuple[go.Figure, pd.DataFrame]:
+    """
+    Create violin plot with N traces (samples) grouped by condition.
+    
+    Combines violin distribution with box plot inside.
+    Automatically detects conditions from sample names (A1, B1, C1, etc.).
+    
+    Args:
+        df_log2: Log2-transformed data
+        numeric_cols: Sample column names [A1, A2, A3, B1, B2, B3, ...]
+        theme: Theme colors dictionary
+    
+    Returns:
+        (figure, summary_stats_dataframe) tuple
+    """
+    from helpers.core import get_condition_colors
+    
+    fig = go.Figure()
+    
+    # Get automatic color mapping
+    condition_colors = get_condition_colors(theme)
+    
+    # Add trace for each sample
+    for sample in numeric_cols:
+        condition = sample[0]  # First letter: A, B, C, etc.
+        values = df_log2[sample].values
+        
+        fig.add_trace(go.Violin(
+            y=values,
+            name=sample,
+            marker_color=condition_colors.get(condition, theme['accent']),
+            box_visible=True,           # Show box plot inside
+            meanline_visible=True,      # Show mean line
+            pointpos=0,                 # Points at center
+            jitter=0.1,
+            scalemode='width',
+            width=0.7,
+            legendgroup=condition,
+            legendgrouptitle_text=f"Condition {condition}",
+            hovertemplate=f"<b>{sample}</b><br>Log2 Intensity: %{{y:.2f}}<extra></extra>"
+        ))
+    
+    fig.update_layout(
+        title="Log2 Intensity Distribution by Sample (Violin + Box)",
+        xaxis_title="Sample",
+        yaxis_title="Log2 Intensity",
+        height=600,
+        plot_bgcolor=theme['bg_primary'],
+        paper_bgcolor=theme['paper_bg'],
+        font=dict(family=FONT_FAMILY, size=12, color=theme['text_primary']),
+        showlegend=True,
+        hovermode='closest'
+    )
+    
+    fig.update_xaxes(showgrid=True, gridcolor=theme['grid'], tickangle=-45)
+    fig.update_yaxes(showgrid=True, gridcolor=theme['grid'])
+    
+    # Summary statistics per sample
+    summary_stats = []
+    for sample in numeric_cols:
+        values = df_log2[sample].values
+        summary_stats.append({
+            'Sample': sample,
+            'N': len(values),
+            'Mean': f"{np.mean(values):.2f}",
+            'Median': f"{np.median(values):.2f}",
+            'Std Dev': f"{np.std(values):.2f}",
+            'Min': f"{np.min(values):.2f}",
+            'Max': f"{np.max(values):.2f}",
+            'Q1': f"{np.percentile(values, 25):.2f}",
+            'Q3': f"{np.percentile(values, 75):.2f}"
+        })
+    
+    return fig, pd.DataFrame(summary_stats)
+
+
+@st.cache_data(ttl=3600, show_spinner="Computing protein counts...")
+def create_protein_count_stacked_bar(
+    df_log2: pd.DataFrame,
+    numeric_cols: list,
+    species_mapping: dict,
+    theme: dict
+) -> tuple[go.Figure, pd.DataFrame]:
+    """
+    Create stacked bar chart of UNIQUE protein counts per sample, grouped by species.
+    
+    Each protein counted once per species, regardless of how many samples it appears in.
+    Bars sorted by total protein count (ascending display).
+    
+    Args:
+        df_log2: Data with numeric columns (protein IDs as index), missing=NaN
+        numeric_cols: Sample column names
+        species_mapping: Dict mapping protein ID → species
+        theme: Theme colors dictionary
+    
+    Returns:
+        (figure, summary_stats_dataframe) tuple
+    """
+    # Map species for all proteins
+    species_series = pd.Series(
+        [species_mapping.get(pid, "UNKNOWN") for pid in df_log2.index],
+        index=df_log2.index
+    )
+    
+    # For each sample: count UNIQUE proteins per species with valid intensity
+    protein_counts = {}
+    all_species = set()
+    
+    for sample in numeric_cols:
+        # Mask: valid (not NaN, not 0.0)
+        valid_mask = (df_log2[sample].notna()) & (df_log2[sample] != 0.0)
+        
+        # Count unique proteins per species in this sample
+        valid_species = species_series[valid_mask].value_counts().to_dict()
+        protein_counts[sample] = valid_species
+        all_species.update(valid_species.keys())
+    
+    all_species = sorted(all_species)
+    
+    # Create stacked bar chart
+    fig = go.Figure()
+    
+    colors = {
+        'HUMAN': theme['color_human'],
+        'YEAST': theme['color_yeast'],
+        'ECOLI': theme['color_ecoli'],
+        'MOUSE': '#9467bd',
+        'UNKNOWN': '#999999'
+    }
+    
+    # Pre-calculate unique protein counts per species (NOT summed across samples)
+    unique_protein_counts = {}
+    for species in all_species:
+        # Get ALL proteins of this species that have ANY valid intensity
+        species_proteins = species_series[species_series == species].index
+        valid_in_any_sample = (
+            (df_log2.loc[species_proteins].notna()) & 
+            (df_log2.loc[species_proteins] != 0.0)
+        ).any(axis=1).sum()
+        unique_protein_counts[species] = valid_in_any_sample
+    
+    # Add bars in reverse order (largest FIRST for bottom of stack)
+    for species in reversed(sorted(all_species, key=lambda s: unique_protein_counts[s])):
+        counts = [protein_counts[sample].get(species, 0) for sample in numeric_cols]
+        unique_total = unique_protein_counts[species]
+        
+        fig.add_trace(go.Bar(
+            name=f"{species} (Total: {unique_total})",
+            x=numeric_cols,
+            y=counts,
+            marker_color=colors.get(species, '#cccccc'),
+            hovertemplate=f"<b>{species}</b><br>Sample: %{{x}}<br>Proteins: %{{y}}<extra></extra>"
+        ))
+    
+    fig.update_layout(
+        barmode='stack',
+        title="Valid Proteins per Sample",
+        xaxis_title="Sample",
+        yaxis_title="Number of Proteins",
+        plot_bgcolor=theme['bg_primary'],
+        paper_bgcolor=theme['paper_bg'],
+        font=dict(family=FONT_FAMILY, size=14, color=theme['text_primary']),
+        showlegend=True,
+        legend=dict(title="Species (Total Proteins)", orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
+        height=500,
+        hovermode='x unified'
+    )
+    
+    fig.update_xaxes(showgrid=True, gridcolor=theme['grid'], tickangle=-45)
+    fig.update_yaxes(showgrid=True, gridcolor=theme['grid'])
+    
+    # Summary: unique proteins per species
+    summary_data = []
+    for species in sorted(all_species, key=lambda s: unique_protein_counts[s], reverse=True):
+        unique_total = unique_protein_counts[species]
+        min_per_sample = min([protein_counts[sample].get(species, 0) for sample in numeric_cols])
+        max_per_sample = max([protein_counts[sample].get(species, 0) for sample in numeric_cols])
+        avg_per_sample = unique_total / len(numeric_cols)
+        
+        summary_data.append({
+            'Species': species,
+            'Unique Proteins': unique_total,
+            'Min/Sample': min_per_sample,
+            'Max/Sample': max_per_sample,
+            'Avg/Sample': f"{avg_per_sample:.1f}"
+        })
+    
+    return fig, pd.DataFrame(summary_data)
