@@ -837,8 +837,10 @@ def create_protein_count_stacked_bar(
     """
     Create stacked bar chart of protein counts per sample, grouped by species.
     
+    Optimized: Vectorized species lookup and counting.
+    
     Args:
-        df_log2: Log2-transformed data
+        df_log2: Data with numeric columns (protein IDs as index)
         numeric_cols: Sample column names
         species_mapping: Dict mapping protein ID → species
         theme: Theme colors dictionary
@@ -846,20 +848,26 @@ def create_protein_count_stacked_bar(
     Returns:
         (figure, summary_dataframe) tuple
     """
-    # Count proteins per sample per species
+    # Map species for all proteins at once (vectorized)
+    species_series = pd.Series(
+        [species_mapping.get(pid, "UNKNOWN") for pid in df_log2.index],
+        index=df_log2.index
+    )
+    
+    # Count valid proteins per sample per species
     protein_counts = {}
+    all_species = set()
     
     for sample in numeric_cols:
-        valid_proteins = df_log2[df_log2[sample].notna() & (df_log2[sample] != 0.0)].index
-        species_counts = {}
-        for protein_id in valid_proteins:
-            species = species_mapping.get(protein_id, "UNKNOWN")
-            if species:
-                species_counts[species] = species_counts.get(species, 0) + 1
-        protein_counts[sample] = species_counts
+        # Mask: valid (not NaN, not 0.0)
+        valid_mask = (df_log2[sample].notna()) & (df_log2[sample] != 0.0)
+        
+        # Count species in valid proteins
+        valid_species = species_series[valid_mask].value_counts().to_dict()
+        protein_counts[sample] = valid_species
+        all_species.update(valid_species.keys())
     
-    # Get all species
-    all_species = sorted(set(sp for counts in protein_counts.values() for sp in counts.keys()))
+    all_species = sorted(all_species)
     
     # Create stacked bar chart
     fig = go.Figure()
@@ -886,7 +894,7 @@ def create_protein_count_stacked_bar(
     
     fig.update_layout(
         barmode='stack',
-        title="Protein Counts per Sample",
+        title="Valid Proteins per Sample",
         xaxis_title="Sample",
         yaxis_title="Number of Proteins",
         plot_bgcolor=theme['bg_primary'],
@@ -901,13 +909,15 @@ def create_protein_count_stacked_bar(
     fig.update_xaxes(showgrid=True, gridcolor=theme['grid'], tickangle=-45)
     fig.update_yaxes(showgrid=True, gridcolor=theme['grid'])
     
-    # Summary dataframe
+    # Summary statistics
     summary_data = []
     for species in all_species:
         total = sum(protein_counts[sample].get(species, 0) for sample in numeric_cols)
         avg = total / len(numeric_cols)
-        min_count = min(protein_counts[sample].get(species, 0) for sample in numeric_cols)
-        max_count = max(protein_counts[sample].get(species, 0) for sample in numeric_cols)
+        counts_per_sample = [protein_counts[sample].get(species, 0) for sample in numeric_cols]
+        min_count = min(counts_per_sample)
+        max_count = max(counts_per_sample)
+        
         summary_data.append({
             'Species': species,
             'Total': total,
@@ -917,6 +927,7 @@ def create_protein_count_stacked_bar(
         })
     
     return fig, pd.DataFrame(summary_data)
+
 
 @st.cache_data(ttl=3600, show_spinner="Creating box plots...")
 def create_boxplot_by_condition(
