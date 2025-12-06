@@ -233,7 +233,7 @@ edited = st.data_editor(
         "Sample": st.column_config.TextColumn("Sample", disabled=True)
     },
     hide_index=True,
-    use_container_width=True
+    width=True
 )
 
 # Get selected quantitative columns
@@ -330,7 +330,7 @@ df_preview = df.head(10).copy()
 for col in df_preview.select_dtypes(include=['float']).columns:
     df_preview[col] = df_preview[col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "")
 
-st.dataframe(df_preview, use_container_width=True, height=350)
+st.dataframe(df_preview, width=True, height=350)
 
 # === STEP 9: BUILD SPECIES MAPPING & CALCULATE INITIAL STATS ===
 st.subheader("8️⃣ Statistics")
@@ -404,7 +404,7 @@ st.info(f"""
 Click below to **cache your data** and proceed to analysis.
 """)
 
-if st.button("🎯 Confirm & Cache Data", type="primary", use_container_width=True):
+if st.button("🎯 Confirm & Cache Data", type="primary", width=True):
     
     # === PERSIST DATA VIA CACHE ===
     try:
