@@ -29,22 +29,23 @@ st.set_page_config(page_title="Visual EDA", layout="wide")
 # CHECK DATA LOADED
 # ============================================================================
 
-if "protein_data" not in st.session_state or not st.session_state.get("data_locked"):
-    st.warning("⚠️ No data loaded. Please upload data on the **Data Upload** page first.")
+if "protein_data" not in st.session_state:
+    st.warning("⚠️ No data loaded")
+    if st.button("← Go to Upload"):
+        st.switch_page("pages/1_Data_Upload.py")
     st.stop()
 
-# Load cached protein data
 protein_data: ProteinData = st.session_state.protein_data
+df_raw = protein_data.raw
+numeric_cols = protein_data.numeric_cols
+species_mapping = protein_data.species_mapping
+theme = get_theme(st.session_state.get("theme", "dark"))
+
+st.info(f"📁 **{protein_data.file_path}** | {protein_data.n_proteins:,} proteins × {protein_data.n_samples} samples")
+st.markdown("---")
 
 st.title("📊 Visual Exploratory Data Analysis")
 
-st.info(f"""
-**Loaded Data:**
-- **File**: {protein_data.file_path} ({protein_data.file_format})
-- **Proteins**: {protein_data.n_proteins:,}
-- **Samples**: {protein_data.n_samples}
-- **Conditions**: {protein_data.n_conditions}
-""")
 
 # ============================================================================
 # SECTION 1: TOTAL PROTEINS
@@ -73,35 +74,65 @@ with c4:
     st.metric("Avg Proteins/Species", avg_per_species)
 
 # ============================================================================
-# SECTION 2: VALID PROTEINS PER SPECIES PER REPLICATE
+# SECTION 2: VALID PROTEINS PER SPECIES PER REPLICATE (using viz.py helper)
 # ============================================================================
 
 st.subheader("2️⃣ Valid Proteins per Species per Sample")
 
 st.info("**Valid = intensity ≠ 1.00** (missing value threshold). Shows data completeness by species.")
 
-# Calculate valid proteins per species per sample
-valid_per_sample = count_valid_proteins_per_species_sample(
-    protein_data.raw,
+# Prepare data for viz helper: convert missing values (1.0) to NaN
+# so the viz function treats them as invalid (checks != 0.0)
+df_for_viz = protein_data.raw[protein_data.numeric_cols].copy()
+
+# Convert 1.0 (our missing marker) to NaN for the viz function
+for col in protein_data.numeric_cols:
+    df_for_viz.loc[df_for_viz[col] == 1.0, col] = np.nan
+
+# Get theme
+from helpers.core import get_theme
+theme = get_theme("light")
+
+# Use viz helper to create stacked bar chart and summary
+from helpers.viz import create_protein_count_stacked_bar
+
+fig_stacked, summary_df = create_protein_count_stacked_bar(
+    df_for_viz,
     protein_data.numeric_cols,
     protein_data.species_mapping,
-    missing_value==1.0
+    theme
 )
 
-# Display as table with simple formatting (no gradient - no matplotlib dependency)
+# Display stacked bar chart
+st.plotly_chart(fig_stacked, use_container_width=True)
+
+# Display summary table (from viz helper output)
+st.markdown("**Summary by Species:**")
+
 st.dataframe(
-    valid_per_sample.style.format("{:,}"),
-    use_container_width=True
+    summary_df.style.format({"Avg/Sample": "{:.1f}"}),
+    use_container_width=True,
+    height=200
 )
 
-# Download option
-csv = valid_per_sample.to_csv()
-st.download_button(
-    label="📥 Download Valid Counts (CSV)",
-    data=csv,
-    file_name="valid_proteins_per_species.csv",
-    mime="text/csv"
-)
+# Download options
+col1, col2 = st.columns(2)
+
+with col1:
+    st.download_button(
+        label="📥 Download Summary (CSV)",
+        data=summary_df.to_csv(index=False),
+        file_name="protein_counts_summary.csv",
+        mime="text/csv"
+    )
+
+with col2:
+    st.download_button(
+        label="📋 Download Stacked Data (CSV)",
+        data=df_for_viz.to_csv(),
+        file_name="valid_proteins_per_sample.csv",
+        mime="text/csv"
+    )
 
 # ============================================================================
 # SECTION 3: MISSING VALUE DISTRIBUTION BY SPECIES (BOXPLOT)
