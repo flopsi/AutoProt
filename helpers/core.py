@@ -99,13 +99,14 @@ THEMES: Dict[str, Dict] = {
     "journal": THEME_JOURNAL,
 }
 
+
 # ============================================================================
 # ANALYSIS CONSTANTS
 # Default thresholds and parameters for statistical analysis
 # ============================================================================
 
-DEFAULT_FC_THRESHOLD = 1.0           # log2FC = 1.0 equals 2-fold change
-DEFAULT_PVAL_THRESHOLD = 0.05        # P-value cutoff for significance
+DEFAULT_FC_THRESHOLD = 0.58           # log2FC = 1.0 equals 2-fold change
+DEFAULT_PVAL_THRESHOLD = 0.01        # P-value cutoff for significance
 DEFAULT_MIN_VALID = 2                # Minimum values per group for t-test
 SPECIES_LIST = ["HUMAN", "YEAST", "ECOLI", "MOUSE"]
 TRANSFORMS = [
@@ -154,6 +155,30 @@ def get_theme(theme_name: str = "light") -> Dict:
 def get_theme_names() -> List[str]:
     """Get list of available theme names."""
     return list(THEMES.keys())
+    
+def get_condition_colors(theme: dict) -> dict:
+    """
+    Get color palette for experimental conditions (A, B, C, D, ...).
+    
+    Automatically maps condition letters to theme colors.
+    Extensible for >2 conditions.
+    
+    Args:
+        theme: Theme dictionary from get_theme()
+    
+    Returns:
+        Dict mapping condition letter → color
+    """
+    return {
+        'A': theme['color_human'],      # Green
+        'B': theme['color_yeast'],      # Orange
+        'C': theme['color_ecoli'],      # Purple
+        'D': '#9467bd',                 # Darker purple
+        'E': '#e377c2',                 # Pink
+        'F': '#7f7f7f',                 # Gray
+        'G': '#bcbd22',                 # Olive
+        'H': '#17becf'                  # Cyan
+    }
 
 # ============================================================================
 # DATA STRUCTURES
