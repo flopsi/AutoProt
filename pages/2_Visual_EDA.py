@@ -48,7 +48,6 @@ st.markdown("---")
 st.title("📊 Visual Exploratory Data Analysis")
 
 
-
 # ============================================================================
 # SECTION 2: VALID PROTEINS PER SPECIES PER REPLICATE
 # ============================================================================
@@ -57,24 +56,39 @@ st.subheader("2️⃣ Valid Proteins per Species per Sample")
 
 st.info("**Valid = intensity ≠ 1.00**. Each cell shows count of valid proteins.")
 
-# Build table using ProteinData structure
+# DEBUG
+st.write("**DEBUG INFO:**")
+st.write(f"Raw index (first 5): {protein_data.raw.index[:5].tolist()}")
+st.write(f"Species mapping (first 5): {list(protein_data.species_mapping.items())[:5]}")
+st.write(f"Numeric cols: {protein_data.numeric_cols}")
+st.write(f"Sample data A1: {protein_data.raw[protein_data.numeric_cols[0]].head()}")
+st.write(f"Value types: {protein_data.raw[protein_data.numeric_cols[0]].dtype}")
+st.write(f"Unique values in A1: {protein_data.raw[protein_data.numeric_cols[0]].unique()[:20]}")
+
+# Build table from ProteinData
 table_data = {}
 
-for species in sorted(set(protein_data.species_mapping.values())):
+# Get unique species from species_mapping
+unique_species = sorted(set(protein_data.species_mapping.values()))
+
+for species in unique_species:
     table_data[species] = {}
     
     for sample in protein_data.numeric_cols:
-        # Mask: proteins of this species
-        species_mask = protein_data.raw.index.map(
-            lambda x: protein_data.species_mapping.get(x) == species
-        )
+        # Get protein IDs for this species
+        proteins_in_species = [
+            protein_id for protein_id, sp in protein_data.species_mapping.items()
+            if sp == species
+        ]
         
-        # Mask: valid intensities (≠ 1.0 and not NaN)
-        valid_mask = (protein_data.raw[sample] != 1.0) & (protein_data.raw[sample].notna())
+        # Count valid intensities (≠ 1.0, not NaN) in this sample for this species
+        valid_count = 0
+        for protein_id in proteins_in_species:
+            intensity = protein_data.raw.loc[protein_id, sample]
+            if pd.notna(intensity) and intensity != 1.0:
+                valid_count += 1
         
-        # Count
-        valid_count = (species_mask & valid_mask).sum()
-        table_data[species][sample] = int(valid_count)
+        table_data[species][sample] = valid_count
 
 # Convert to DataFrame
 df_valid = pd.DataFrame(table_data).T
@@ -82,15 +96,6 @@ df_valid.loc['Total'] = df_valid.sum()
 
 # Display
 st.dataframe(df_valid, use_container_width=True)
-
-# Download
-st.download_button(
-    label="📥 Download Table",
-    data=df_valid.to_csv(),
-    file_name="valid_proteins_per_species.csv",
-    mime="text/csv"
-)
-
 # ============================================================================
 # Navigation
 # ============================================================================
