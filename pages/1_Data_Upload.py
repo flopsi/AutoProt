@@ -1,453 +1,162 @@
-"""
-pages/1_Data_Upload.py
-
-Data upload and validation page
-Handles file parsing, column detection, data cleaning, and species annotation
-"""
-
-import streamlit as st
-import pandas as pd
-from helpers.io import (
-    read_file, detect_numeric_columns, detect_protein_id_column,
-    detect_species_column, validate_numeric_data, clean_species_name,
-    drop_proteins_with_invalid_intensities, filter_by_missing_rate, filter_by_cv
-)
-from helpers.core import ProteinData
-from helpers.ui import show_data_summary, download_button_csv, metric_card
-from helpers.audit import log_file_upload
-from helpers.viz import create_qc_dashboard
-from helpers.core import get_theme
-
 # ============================================================================
-# PAGE CONFIGURATION
-# Title and description
+# SECTION: DATA CLEANING (NEW)
+# Replace missing/invalid values and filter by quality metrics
 # ============================================================================
 
-st.title("📁 Data Upload & Validation")
-st.markdown("""
-Upload your proteomics data file (CSV, TSV, or Excel) and validate data quality.
-The system will auto-detect numeric intensity columns, protein IDs, and species annotations.
-""")
+st.header("5️⃣ Data Cleaning (Optional)")
 
-# ============================================================================
-# SECTION: FILE UPLOAD
-# File uploader widget with format validation
-# ============================================================================
-
-st.header("1️⃣ Upload Data File")
-
-uploaded_file = st.file_uploader(
-    "Choose a proteomics data file",
-    type=["csv", "tsv", "txt", "xlsx"],
-    help="Supported formats: CSV, TSV, TXT, XLSX (max 100 MB)"
-)
-
-if uploaded_file is not None:
+with st.expander("🧹 Clean Data", expanded=False):
+    st.markdown("""
+    **Data Cleaning Strategy:**
+    1. Replace NaN and zero values with **1.0** (placeholder for missing/invalid)
+    2. Filter proteins by missing rate (count intensities == 1.0)
+    3. Filter by coefficient of variation (CV)
     
-    # --- Load file with caching ---
-    try:
-        with st.spinner("📖 Reading file..."):
-            df_raw = read_file(uploaded_file)
-            file_size = uploaded_file.size
-        
-        st.success(f"✅ File loaded: **{uploaded_file.name}** ({file_size / 1024:.1f} KB)")
-        
-    except Exception as e:
-        st.error(f"❌ Error reading file: {str(e)}")
-        st.stop()
+    **Why 1.0?** Using 1.0 as a placeholder allows easy counting:
+    - `sum(intensities == 1.0)` = number of missing values
+    - Distinguishes missing from actual low intensities
+    """)
     
-    # ============================================================================
-    # SECTION: COLUMN RENAMING (NEW)
-    # Allow user to rename columns for consistency
-    # ============================================================================
+    # Track original data
+    n_proteins_original = len(df_raw)
+    n_samples = len(selected_numeric)
     
-    st.header("2️⃣ Column Renaming (Optional)")
-    
-    with st.expander("🏷️ Rename Columns", expanded=False):
-        st.markdown("""
-        Rename columns to standardize naming conventions before analysis.
-        This is useful for:
-        - Fixing inconsistent naming (e.g., "Sample 1" → "A1")
-        - Removing special characters
-        - Standardizing condition labels
-        """)
-        
-        # Create two-column layout for renaming interface
-        rename_map = {}
-        
-        # Option 1: Bulk rename with pattern
-        st.subheader("Bulk Rename with Pattern")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            find_pattern = st.text_input(
-                "Find pattern:",
-                placeholder="e.g., 'Sample_'",
-                help="Text to find in column names"
-            )
-        
-        with col2:
-            replace_pattern = st.text_input(
-                "Replace with:",
-                placeholder="e.g., ''",
-                help="Text to replace with (leave empty to remove)"
-            )
-        
-        if find_pattern:
-            preview_renames = {
-                col: col.replace(find_pattern, replace_pattern)
-                for col in df_raw.columns
-                if find_pattern in col
-            }
-            
-            if preview_renames:
-                st.info(f"📋 Preview: {len(preview_renames)} columns will be renamed")
-                st.dataframe(
-                    pd.DataFrame({
-                        "Original": list(preview_renames.keys()),
-                        "New Name": list(preview_renames.values())
-                    }),
-                    hide_index=True,
-                    height=200
-                )
-                
-                if st.button("✅ Apply Bulk Rename"):
-                    df_raw.rename(columns=preview_renames, inplace=True)
-                    st.success(f"✅ Renamed {len(preview_renames)} columns")
-                    st.rerun()
-        
-        st.markdown("---")
-        
-        # Option 2: Individual column rename
-        st.subheader("Individual Column Rename")
-        
-        selected_col_to_rename = st.selectbox(
-            "Select column to rename:",
-            options=[""] + list(df_raw.columns),
-            help="Choose a column to give it a new name"
-        )
-        
-        if selected_col_to_rename:
-            new_col_name = st.text_input(
-                f"New name for '{selected_col_to_rename}':",
-                value=selected_col_to_rename,
-                key="individual_rename"
-            )
-            
-            if st.button("✅ Rename Column") and new_col_name != selected_col_to_rename:
-                if new_col_name in df_raw.columns:
-                    st.error(f"❌ Column '{new_col_name}' already exists")
-                else:
-                    df_raw.rename(columns={selected_col_to_rename: new_col_name}, inplace=True)
-                    st.success(f"✅ Renamed '{selected_col_to_rename}' → '{new_col_name}'")
-                    st.rerun()
-    
-    # ============================================================================
-    # SECTION: COLUMN DETECTION
-    # Auto-detect special columns and validate structure
-    # ============================================================================
-    
-    st.header("3️⃣ Column Detection")
+    # --- Step 1: Replace NaN and 0 with 1.0 ---
+    st.subheader("1. Replace Missing & Zero Values")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("Numeric Columns")
-        numeric_cols = detect_numeric_columns(df_raw)
-        
-        if len(numeric_cols) > 0:
-            st.success(f"Found **{len(numeric_cols)}** numeric columns")
-            
-            # Allow user to manually adjust selection
-            selected_numeric = st.multiselect(
-                "Select intensity columns to use:",
-                options=numeric_cols,
-                default=numeric_cols,
-                help="Uncheck columns to exclude from analysis"
-            )
-            
-            if len(selected_numeric) < 4:
-                st.warning("⚠️ At least 4 samples recommended for statistical analysis")
-        else:
-            st.error("❌ No numeric columns detected")
-            st.stop()
+        replace_nan = st.checkbox(
+            "Replace NaN with 1.0",
+            value=True,
+            help="Convert all missing values to 1.0"
+        )
     
     with col2:
-        st.subheader("Metadata Columns")
-        
-        # Detect protein ID column
-        protein_col = detect_protein_id_column(df_raw)
-        if protein_col:
-            st.info(f"🔑 Protein ID column: **{protein_col}**")
-        else:
-            st.warning("⚠️ No protein ID column detected")
-        
-        # Allow manual selection
-        protein_col = st.selectbox(
-            "Protein ID column:",
-            options=df_raw.columns,
-            index=list(df_raw.columns).index(protein_col) if protein_col else 0,
-            help="Column containing unique protein/gene identifiers"
+        replace_zero = st.checkbox(
+            "Replace 0 with 1.0",
+            value=True,
+            help="Convert zero intensities to 1.0 (often invalid)"
         )
-        
-        # Detect species column
-        species_col = detect_species_column(df_raw)
-        if species_col:
-            st.info(f"🧬 Species column: **{species_col}**")
-            
-            # Clean and show species counts
-            species_clean = df_raw[species_col].apply(clean_species_name)
-            species_counts = species_clean.value_counts()
-            st.dataframe(species_counts, use_container_width=True)
-        else:
-            st.info("ℹ️ No species column detected")
     
-    # ============================================================================
-    # SECTION: MANUAL SPECIES ANNOTATION (NEW)
-    # Add species column if not present
-    # ============================================================================
-    
-    if species_col is None or species_col not in df_raw.columns:
-        st.header("4️⃣ Add Species Annotation (Optional)")
+    # Preview impact
+    if replace_nan or replace_zero:
+        preview_stats = {
+            "Metric": [],
+            "Count": [],
+            "Percentage": []
+        }
         
-        with st.expander("🧬 Manually Add Species Column", expanded=False):
-            st.markdown("""
-            If your data doesn't have a species column, you can add one manually.
-            This is useful for multi-species experiments (e.g., HUMAN + YEAST + ECOLI spike-ins).
-            """)
-            
-            annotation_method = st.radio(
-                "Choose annotation method:",
-                options=[
-                    "Extract from Protein ID (pattern matching)",
-                    "Upload separate annotation file",
-                    "Manual entry by protein ID"
-                ],
-                help="Different ways to add species information"
-            )
-            
-            if annotation_method == "Extract from Protein ID (pattern matching)":
-                st.subheader("Pattern-Based Extraction")
-                
-                # Define patterns
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown("**Pattern → Species Mapping**")
-                    patterns = {}
-                    patterns['HUMAN'] = st.text_input("Pattern for HUMAN:", value="_HUMAN")
-                    patterns['YEAST'] = st.text_input("Pattern for YEAST:", value="_YEAST")
-                    patterns['ECOLI'] = st.text_input("Pattern for ECOLI:", value="_ECOLI")
-                
-                with col2:
-                    st.markdown("**Preview Matches**")
-                    preview_counts = {}
-                    
-                    for species, pattern in patterns.items():
-                        if pattern:
-                            count = df_raw[protein_col].str.contains(pattern, case=False, na=False).sum()
-                            preview_counts[species] = count
-                    
-                    if preview_counts:
-                        st.dataframe(
-                            pd.DataFrame({
-                                "Species": list(preview_counts.keys()),
-                                "Matches": list(preview_counts.values())
-                            }),
-                            hide_index=True
-                        )
-                
-                if st.button("✅ Apply Pattern-Based Annotation"):
-                    species_col_new = "Species"
-                    df_raw[species_col_new] = "UNKNOWN"
-                    
-                    for species, pattern in patterns.items():
-                        if pattern:
-                            mask = df_raw[protein_col].str.contains(pattern, case=False, na=False)
-                            df_raw.loc[mask, species_col_new] = species
-                    
-                    species_col = species_col_new
-                    st.success(f"✅ Added species column with {(df_raw[species_col_new] != 'UNKNOWN').sum()} annotations")
-                    st.rerun()
-            
-            elif annotation_method == "Upload separate annotation file":
-                st.subheader("Upload Annotation File")
-                
-                st.markdown("""
-                Upload a CSV file with two columns:
-                1. Protein ID (matching your data)
-                2. Species (HUMAN, YEAST, ECOLI, etc.)
-                """)
-                
-                annotation_file = st.file_uploader(
-                    "Upload annotation CSV:",
-                    type=["csv"],
-                    key="annotation_upload"
-                )
-                
-                if annotation_file:
-                    try:
-                        annot_df = pd.read_csv(annotation_file)
-                        
-                        if len(annot_df.columns) < 2:
-                            st.error("❌ File must have at least 2 columns")
-                        else:
-                            # Let user select columns
-                            col1, col2 = st.columns(2)
-                            
-                            with col1:
-                                annot_id_col = st.selectbox(
-                                    "Protein ID column:",
-                                    options=annot_df.columns
-                                )
-                            
-                            with col2:
-                                annot_species_col = st.selectbox(
-                                    "Species column:",
-                                    options=annot_df.columns,
-                                    index=1 if len(annot_df.columns) > 1 else 0
-                                )
-                            
-                            # Preview merge
-                            st.markdown("**Preview Annotation**")
-                            st.dataframe(annot_df[[annot_id_col, annot_species_col]].head(10))
-                            
-                            if st.button("✅ Merge Annotations"):
-                                # Create mapping
-                                annot_map = dict(zip(
-                                    annot_df[annot_id_col],
-                                    annot_df[annot_species_col]
-                                ))
-                                
-                                # Apply to dataframe
-                                species_col_new = "Species"
-                                df_raw[species_col_new] = df_raw[protein_col].map(annot_map).fillna("UNKNOWN")
-                                
-                                species_col = species_col_new
-                                matched = (df_raw[species_col_new] != "UNKNOWN").sum()
-                                st.success(f"✅ Merged annotations: {matched}/{len(df_raw)} proteins matched")
-                                st.rerun()
-                    
-                    except Exception as e:
-                        st.error(f"❌ Error reading annotation file: {e}")
-            
-            elif annotation_method == "Manual entry by protein ID":
-                st.subheader("Manual Entry")
-                st.warning("⚠️ This method is only practical for small datasets")
-                
-                # Show first 10 proteins for manual entry
-                st.markdown("**Annotate Proteins**")
-                
-                manual_annotations = {}
-                for idx, protein_id in enumerate(df_raw[protein_col].head(10)):
-                    species_input = st.selectbox(
-                        f"{protein_id}:",
-                        options=["UNKNOWN", "HUMAN", "YEAST", "ECOLI", "MOUSE"],
-                        key=f"manual_species_{idx}"
-                    )
-                    manual_annotations[protein_id] = species_input
-                
-                if st.button("✅ Apply Manual Annotations"):
-                    species_col_new = "Species"
-                    df_raw[species_col_new] = df_raw[protein_col].map(manual_annotations).fillna("UNKNOWN")
-                    species_col = species_col_new
-                    st.success(f"✅ Added {len(manual_annotations)} manual annotations")
-                    st.rerun()
-    
-    # ============================================================================
-    # SECTION: DATA CLEANING (NEW)
-    # Drop invalid intensities and filter by quality metrics
-    # ============================================================================
-    
-    st.header("5️⃣ Data Cleaning (Optional)")
-    
-    with st.expander("🧹 Clean Data", expanded=False):
-        st.markdown("""
-        Remove low-quality proteins based on:
-        - Invalid intensity values (e.g., 1.0 placeholder values)
-        - High missing data rate
-        - High coefficient of variation (CV)
-        """)
+        if replace_nan:
+            n_nan = df_raw[selected_numeric].isna().sum().sum()
+            preview_stats["Metric"].append("NaN values")
+            preview_stats["Count"].append(n_nan)
+            preview_stats["Percentage"].append(f"{n_nan / (len(df_raw) * n_samples) * 100:.2f}%")
         
-        # Track original size
-        n_proteins_original = len(df_raw)
+        if replace_zero:
+            n_zero = (df_raw[selected_numeric] == 0).sum().sum()
+            preview_stats["Metric"].append("Zero values")
+            preview_stats["Count"].append(n_zero)
+            preview_stats["Percentage"].append(f"{n_zero / (len(df_raw) * n_samples) * 100:.2f}%")
         
-        # --- Option 1: Drop invalid intensities ---
-        st.subheader("1. Remove Invalid Intensities")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            drop_nan = st.checkbox(
-                "Drop rows with NaN",
-                value=False,
-                help="Remove proteins with any missing values"
-            )
-        
-        with col2:
-            drop_value_enabled = st.checkbox(
-                "Drop specific value",
-                value=False,
-                help="Remove proteins with specific placeholder value"
-            )
-        
-        with col3:
-            drop_value = st.number_input(
-                "Value to drop:",
-                value=1.0,
-                disabled=not drop_value_enabled,
-                help="Common placeholder value (e.g., 1.0)"
-            )
-        
-        if st.button("🗑️ Apply Invalid Value Filter"):
-            df_cleaned = drop_proteins_with_invalid_intensities(
-                df_raw,
-                selected_numeric,
-                drop_value=drop_value if drop_value_enabled else None,
-                drop_nan=drop_nan
-            )
-            
-            n_removed = n_proteins_original - len(df_cleaned)
-            st.success(f"✅ Removed {n_removed} proteins ({n_removed/n_proteins_original*100:.1f}%)")
-            df_raw = df_cleaned
-            st.rerun()
-        
-        st.markdown("---")
-        
-        # --- Option 2: Filter by missing rate ---
-        st.subheader("2. Filter by Missing Data Rate")
-        
-        max_missing_rate = st.slider(
-            "Maximum missing rate per protein:",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.5,
-            step=0.05,
-            format="%.0f%%",
-            help="Proteins exceeding this threshold will be removed"
+        st.dataframe(
+            pd.DataFrame(preview_stats),
+            hide_index=True,
+            use_container_width=True
         )
+    
+    if st.button("🔄 Apply Replacement", key="replace_btn"):
+        df_cleaned = df_raw.copy()
         
-        # Preview impact
-        missing_per_protein = df_raw[selected_numeric].isna().sum(axis=1) / len(selected_numeric)
-        n_would_remove = (missing_per_protein > max_missing_rate).sum()
+        total_replaced = 0
         
-        st.info(f"📊 Preview: {n_would_remove} proteins would be removed ({n_would_remove/len(df_raw)*100:.1f}%)")
+        # Replace NaN with 1.0
+        if replace_nan:
+            n_nan_before = df_cleaned[selected_numeric].isna().sum().sum()
+            df_cleaned[selected_numeric] = df_cleaned[selected_numeric].fillna(1.0)
+            total_replaced += n_nan_before
+            st.info(f"✅ Replaced {n_nan_before} NaN values with 1.0")
         
-        if st.button("🗑️ Apply Missing Rate Filter"):
-            df_cleaned = filter_by_missing_rate(
-                df_raw,
-                selected_numeric,
-                max_missing_rate=max_missing_rate
-            )
-            
-            n_removed = len(df_raw) - len(df_cleaned)
-            st.success(f"✅ Removed {n_removed} proteins")
-            df_raw = df_cleaned
-            st.rerun()
+        # Replace 0 with 1.0
+        if replace_zero:
+            mask_zero = df_cleaned[selected_numeric] == 0
+            n_zero = mask_zero.sum().sum()
+            df_cleaned[selected_numeric] = df_cleaned[selected_numeric].mask(mask_zero, 1.0)
+            total_replaced += n_zero
+            st.info(f"✅ Replaced {n_zero} zero values with 1.0")
         
-        st.markdown("---")
+        df_raw = df_cleaned
+        st.success(f"✅ Total replaced: {total_replaced} values ({total_replaced / (len(df_raw) * n_samples) * 100:.2f}%)")
+        st.rerun()
+    
+    st.markdown("---")
+    
+    # --- Step 2: Filter by missing rate (count of 1.0 values) ---
+    st.subheader("2. Filter by Missing Data Rate")
+    
+    st.markdown("""
+    Remove proteins with too many missing/invalid values (intensities == 1.0).
+    """)
+    
+    max_missing_rate = st.slider(
+        "Maximum missing rate per protein:",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.5,
+        step=0.05,
+        format="%.0f%%",
+        help="Proteins exceeding this threshold will be removed"
+    )
+    
+    # Calculate missing rate by counting 1.0 values
+    count_ones = (df_raw[selected_numeric] == 1.0).sum(axis=1)
+    missing_rate_per_protein = count_ones / n_samples
+    n_would_remove = (missing_rate_per_protein > max_missing_rate).sum()
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.metric(
+            "Proteins to remove",
+            n_would_remove,
+            delta=f"-{n_would_remove/len(df_raw)*100:.1f}%"
+        )
+    
+    with col2:
+        st.metric(
+            "Proteins remaining",
+            len(df_raw) - n_would_remove,
+            delta=f"{(len(df_raw) - n_would_remove)/len(df_raw)*100:.1f}%"
+        )
+    
+    # Show distribution of missing rates
+    st.markdown("**Missing Rate Distribution**")
+    missing_dist = pd.DataFrame({
+        "Missing Rate": ["0-25%", "25-50%", "50-75%", "75-100%"],
+        "Count": [
+            ((missing_rate_per_protein >= 0) & (missing_rate_per_protein < 0.25)).sum(),
+            ((missing_rate_per_protein >= 0.25) & (missing_rate_per_protein < 0.5)).sum(),
+            ((missing_rate_per_protein >= 0.5) & (missing_rate_per_protein < 0.75)).sum(),
+            (missing_rate_per_protein >= 0.75).sum(),
+        ]
+    })
+    st.dataframe(missing_dist, hide_index=True, use_container_width=True)
+    
+    if st.button("🗑️ Apply Missing Rate Filter", key="missing_filter_btn"):
+        # Keep proteins below threshold
+        df_cleaned = df_raw[missing_rate_per_protein <= max_missing_rate].copy()
         
-       # --- Step 3: Filter by Coefficient of Variation ---
+        n_removed = len(df_raw) - len(df_cleaned)
+        st.success(f"✅ Removed {n_removed} proteins ({n_removed/len(df_raw)*100:.1f}%)")
+        
+        # Update dataframe
+        df_raw = df_cleaned
+        st.rerun()
+    
+    st.markdown("---")
+    
+   # --- Step 3: Filter by Coefficient of Variation ---
 st.subheader("3. Filter by Coefficient of Variation")
 
 st.markdown("""
@@ -751,168 +460,84 @@ download_button_csv(
 )
 
     
-    # ============================================================================
-    # SECTION: DATA VALIDATION
-    # Quality checks and summary statistics
-    # ============================================================================
-    
-    st.header("6️⃣ Data Validation")
-    
-    # Run validation
-    is_valid, message = validate_numeric_data(df_raw, selected_numeric)
-    
-    if is_valid:
-        st.success(message)
-    else:
-        st.error(message)
-        st.stop()
-    
-    # Show summary metrics
-    st.subheader("Data Summary")
-    show_data_summary(df_raw, selected_numeric)
-    
-    # Missing data analysis
-    st.subheader("Missing Data Analysis")
+    # Preview impact
+    n_would_remove_cv = (cv_series_clean > max_cv).sum()
     
     col1, col2 = st.columns(2)
     
     with col1:
-        # Missing per protein
-        missing_per_protein = df_raw[selected_numeric].isna().sum(axis=1) / len(selected_numeric) * 100
-        
-        st.markdown("**Missing Rate Distribution (per protein)**")
-        st.dataframe({
-            "Metric": ["Mean", "Median", "Max"],
-            "Value": [
-                f"{missing_per_protein.mean():.1f}%",
-                f"{missing_per_protein.median():.1f}%",
-                f"{missing_per_protein.max():.1f}%"
-            ]
-        }, hide_index=True, use_container_width=True)
+        st.metric(
+            "Proteins to remove",
+            n_would_remove_cv,
+            delta=f"-{n_would_remove_cv/len(cv_series_clean)*100:.1f}%"
+        )
     
     with col2:
-        # Missing per sample
-        missing_per_sample = df_raw[selected_numeric].isna().sum() / len(df_raw) * 100
+        if len(cv_series_clean) > 0:
+            st.metric(
+                "Median CV",
+                f"{cv_series_clean.median():.2f}",
+                help="Lower is better (less variable)"
+            )
+    
+    # Show CV distribution
+    st.markdown("**CV Distribution**")
+    cv_dist = pd.DataFrame({
+        "CV Range": ["0-0.5", "0.5-1.0", "1.0-1.5", ">1.5"],
+        "Count": [
+            ((cv_series_clean >= 0) & (cv_series_clean < 0.5)).sum(),
+            ((cv_series_clean >= 0.5) & (cv_series_clean < 1.0)).sum(),
+            ((cv_series_clean >= 1.0) & (cv_series_clean < 1.5)).sum(),
+            (cv_series_clean >= 1.5).sum(),
+        ]
+    })
+    st.dataframe(cv_dist, hide_index=True, use_container_width=True)
+    
+    if st.button("🗑️ Apply CV Filter", key="cv_filter_btn"):
+        # Keep proteins below threshold
+        keep_indices = cv_series_clean[cv_series_clean <= max_cv].index
+        df_cleaned = df_raw.loc[keep_indices].copy()
         
-        st.markdown("**Missing Rate per Sample**")
-        st.dataframe(
-            pd.DataFrame({
-                "Sample": missing_per_sample.index,
-                "Missing %": missing_per_sample.values.round(1)
-            }).sort_values("Missing %", ascending=False).head(10),
-            hide_index=True,
-            use_container_width=True
-        )
-    
-    # ============================================================================
-    # SECTION: DATA PREVIEW
-    # Show first rows and basic statistics
-    # ============================================================================
-    
-    st.header("7️⃣ Data Preview")
-    
-    tab1, tab2, tab3 = st.tabs(["📋 Raw Data", "📊 Statistics", "📈 QC Dashboard"])
-    
-    with tab1:
-        st.dataframe(df_raw.head(20), use_container_width=True, height=400)
+        n_removed = len(df_raw) - len(df_cleaned)
+        st.success(f"✅ Removed {n_removed} proteins ({n_removed/len(df_raw)*100:.1f}%)")
         
-        # Download option
-        download_button_csv(
-            df_raw,
-            filename="raw_data.csv",
-            label="📥 Download Raw Data"
-        )
-    
-    with tab2:
-        st.markdown("**Descriptive Statistics**")
-        stats_df = df_raw[selected_numeric].describe().T
-        st.dataframe(stats_df, use_container_width=True)
-    
-    with tab3:
-        # Generate QC dashboard
-        theme = get_theme(st.session_state.get("theme", "light"))
-        fig_qc = create_qc_dashboard(
-            df_raw,
-            selected_numeric,
-            theme_name=st.session_state.get("theme", "light")
-        )
-        st.plotly_chart(fig_qc, use_container_width=True)
-    
-    # ============================================================================
-    # SECTION: SAVE TO SESSION STATE
-    # Create ProteinData object and store in session
-    # ============================================================================
-    
-    st.header("8️⃣ Confirm & Proceed")
-    
-    if st.button("✅ Confirm Data & Continue", type="primary", use_container_width=True):
-        
-        # Create species mapping if species column exists
-        species_mapping = {}
-        if species_col and species_col in df_raw.columns:
-            for idx, row in df_raw.iterrows():
-                species_mapping[idx] = clean_species_name(row[species_col])
-        
-        # Create ProteinData object
-        protein_data = ProteinData(
-            raw=df_raw.copy(),
-            numeric_cols=selected_numeric,
-            species_col=species_col if species_col in df_raw.columns else None,
-            species_mapping=species_mapping,
-            index_col=protein_col,
-            file_path=uploaded_file.name,
-            file_format=uploaded_file.name.split('.')[-1]
-        )
-        
-        # Store in session state
-        st.session_state.protein_data = protein_data
-        
-        # Log upload event
-        log_file_upload(
-            filename=uploaded_file.name,
-            file_size=file_size,
-            n_rows=len(df_raw),
-            n_cols=len(df_raw.columns),
-            numeric_cols=len(selected_numeric)
-        )
-        
-        st.success("✅ Data saved to session! Navigate to **2_Visual_EDA** to continue.")
-        st.balloons()
-
-else:
-    # Show instructions when no file uploaded
-    st.info("👆 Please upload a data file to begin")
+        # Update dataframe
+        df_raw = df_cleaned
+        st.rerun()
     
     st.markdown("---")
     
-    st.subheader("📋 Data Format Requirements")
+    # --- Summary of all cleaning operations ---
+    st.subheader("📊 Cleaning Summary")
     
-    st.markdown("""
-    Your data file should contain:
+    col1, col2, col3 = st.columns(3)
     
-    1. **Protein/Gene ID column** (text)
-       - Examples: "Protein ID", "Gene Name", "Accession"
+    with col1:
+        st.metric(
+            "Original Proteins",
+            n_proteins_original
+        )
     
-    2. **Numeric intensity columns** (numbers)
-       - One column per sample
-       - Recommended naming: A1, A2, B1, B2 (letter = condition, number = replicate)
+    with col2:
+        st.metric(
+            "Current Proteins",
+            len(df_raw),
+            delta=f"{len(df_raw) - n_proteins_original}"
+        )
     
-    3. **Optional: Species column** (text)
-       - For multi-species experiments
-       - Values: HUMAN, YEAST, ECOLI, etc.
+    with col3:
+        retention_rate = len(df_raw) / n_proteins_original * 100
+        st.metric(
+            "Retention Rate",
+            f"{retention_rate:.1f}%"
+        )
     
-    **Example structure:**
+    # Count current missing values (1.0)
+    current_missing = (df_raw[selected_numeric] == 1.0).sum().sum()
+    total_values = len(df_raw) * n_samples
     
-    | Protein | Species | A1 | A2 | A3 | B1 | B2 | B3 |
-    |---------|---------|----|----|----|----|----|----|
-    | P12345  | HUMAN   | 1500 | 1600 | 1550 | 2000 | 2100 | 2050 |
-    | P67890  | YEAST   | 800  | 850  | 820  | 400  | 420  | 410  |
+    st.info(f"""
+    **Current Data Quality:**
+    - Missing/Invalid values (==1.0): {current_missing} ({current_missing/total_values*100:.2f}%)
+    - Valid measurements: {total_values - current_missing} ({(total_values - current_missing)/total_values*100:.2f}%)
     """)
-
-# ============================================================================
-# FOOTER
-# Navigation hints
-# ============================================================================
-
-st.markdown("---")
-st.caption("**Next Step:** After confirming data, proceed to **📊 2_Visual_EDA** for transformation and exploration.")
