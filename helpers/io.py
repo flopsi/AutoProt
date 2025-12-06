@@ -93,6 +93,26 @@ def read_file(filepath, file_format: str = None) -> pd.DataFrame:
 # COLUMN DETECTION
 # Heuristic detection of special columns (IDs, species, intensities)
 # ============================================================================
+def detect_quantitative_columns(df: pd.DataFrame) -> List[str]:
+    """
+    Detect which columns contain quantitative intensity data (float64 only).
+    
+    Quantitative columns must be float64 dtype for statistical analysis.
+    For other numeric types (int32, int64, etc.), users must explicitly select.
+    
+    Args:
+        df: Input DataFrame
+        
+    Returns:
+        List of column names with float64 dtype
+        
+    Example:
+        >>> df = pd.DataFrame({'A': [1.0, 2.0], 'B': [1, 2], 'C': ['x', 'y']})
+        >>> detect_quantitative_columns(df)
+        ['A']  # Only float64, not int64
+    """
+    quantitative_cols = df.select_dtypes(include=['float64']).columns.tolist()
+    return quantitative_cols
 
 def detect_numeric_columns(df: pd.DataFrame) -> List[str]:
     """
