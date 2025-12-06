@@ -99,15 +99,20 @@ for species in unique_species:
         ]
         unique_counts_table[species][sample] = len(species_proteins)
     
-    # Total unique proteins for this species
-    species_all_proteins = [
+    # Total unique proteins for this species (simplified)
+    species_protein_ids = [
         pid for pid, sp in protein_data.species_mapping.items() if sp == species
     ]
-    total_valid = sum(
-        1 for pid in species_all_proteins 
-        if (df_viz.loc[pid] != 0.0).any() and df_viz.loc[pid].notna().any()
-    )
+    # Check if ANY value is valid (not NaN and not 0.0) for each protein
+    total_valid = 0
+    for pid in species_protein_ids:
+        if pid in df_viz.index:
+            row = df_viz.loc[pid]
+            if ((row.notna()) & (row != 0.0)).any():
+                total_valid += 1
+    
     unique_counts_table[species]['Total'] = total_valid
+
 
 # Convert to DataFrame (sorted by total descending)
 df_table = pd.DataFrame(unique_counts_table).T
