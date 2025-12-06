@@ -91,13 +91,13 @@ unique_species = sorted(set(protein_data.species_mapping.values()))
 for species in unique_species:
     unique_counts_table[species] = {}
     
-    # Count unique proteins per species per sample
     for sample in protein_data.numeric_cols:
-        valid_mask = (df_viz[sample].notna()) & (df_viz[sample] != 0.0)
-        species_proteins = df_viz.index[valid_mask][
-            df_viz.index[valid_mask].map(lambda x: protein_data.species_mapping.get(x) == species)
-        ]
-        unique_counts_table[species][sample] = len(species_proteins)
+        # Simple: count non-NaN and non-zero for this species
+        mask = (df_viz[sample].notna()) & (df_viz[sample] != 0.0)
+        species_mask = df_viz.index.map(lambda x: protein_data.species_mapping.get(x) == species)
+        
+        count = (mask & species_mask).sum()
+        unique_counts_table[species][sample] = count
     
     # Total unique proteins for this species (simplified)
     species_protein_ids = [
