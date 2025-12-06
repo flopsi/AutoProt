@@ -1,3 +1,77 @@
+"""
+pages/2_Visual_EDA.py
+
+Visual Exploratory Data Analysis
+- Data quality assessment
+- Per-species protein counts
+- Missing value distribution analysis
+"""
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from helpers.core import ProteinData
+from helpers.analysis import (
+    count_valid_proteins_per_species_sample,
+    count_missing_per_protein,
+    count_proteins_by_species
+)
+from helpers.audit import log_event
+
+# ============================================================================
+# PAGE CONFIGURATION
+# ============================================================================
+
+st.set_page_config(page_title="Visual EDA", layout="wide")
+
+# ============================================================================
+# CHECK DATA LOADED
+# ============================================================================
+
+if "protein_data" not in st.session_state or not st.session_state.get("data_locked"):
+    st.warning("⚠️ No data loaded. Please upload data on the **Data Upload** page first.")
+    st.stop()
+
+# Load cached protein data
+protein_data: ProteinData = st.session_state.protein_data
+
+st.title("📊 Visual Exploratory Data Analysis")
+
+st.info(f"""
+**Loaded Data:**
+- **File**: {protein_data.file_path} ({protein_data.file_format})
+- **Proteins**: {protein_data.n_proteins:,}
+- **Samples**: {protein_data.n_samples}
+- **Conditions**: {protein_data.n_conditions}
+""")
+
+# ============================================================================
+# SECTION 1: TOTAL PROTEINS
+# ============================================================================
+
+st.subheader("1️⃣ Dataset Overview")
+
+c1, c2, c3, c4 = st.columns(4)
+
+with c1:
+    st.metric("Total Proteins", f"{protein_data.n_proteins:,}")
+
+with c2:
+    st.metric("Total Samples", protein_data.n_samples)
+
+with c3:
+    species_count = len(set(protein_data.species_mapping.values()))
+    st.metric("Species", species_count)
+
+with c4:
+    proteins_per_species = count_proteins_by_species(
+        protein_data.raw, 
+        protein_data.species_mapping
+    )
+    avg_per_species = int(protein_data.n_proteins / species_count) if species_count > 0 else 0
+    st.metric("Avg Proteins/Species", avg_per_species)
+
 # ============================================================================
 # SECTION 2: VALID PROTEINS PER SPECIES PER REPLICATE
 # ============================================================================
@@ -160,3 +234,19 @@ with col2:
         file_name="missing_values_per_protein.csv",
         mime="text/csv"
     )
+
+
+# ============================================================================
+# Navigation
+# ============================================================================
+
+st.markdown("---")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    if st.button("← Back to Upload", use_container_width=True):
+        st.switch_page("pages/1_Data_Upload.py")
+
+with col2:
+    st.info("**Next:** Statistical transformation & differential expression analysis (coming soon)")
