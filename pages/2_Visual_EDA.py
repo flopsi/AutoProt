@@ -54,48 +54,43 @@ st.title("📊 Visual Exploratory Data Analysis")
 
 st.subheader("2️⃣ Valid Proteins per Species per Sample")
 
-st.info("**Valid = intensity ≠ 1.00**. Each cell shows count of valid proteins.")
+st.info("**Valid = intensity ≠ 1.00**. Stacked bar chart shows composition by species.")
 
-# DEBUG
-st.write("**DEBUG INFO:**")
-st.write(f"Raw index (first 5): {protein_data.raw.index[:5].tolist()}")
-st.write(f"Species mapping (first 5): {list(protein_data.species_mapping.items())[:5]}")
-st.write(f"Numeric cols: {protein_data.numeric_cols}")
-st.write(f"Sample data A1: {protein_data.raw[protein_data.numeric_cols[0]].head()}")
-st.write(f"Value types: {protein_data.raw[protein_data.numeric_cols[0]].dtype}")
-st.write(f"Unique values in A1: {protein_data.raw[protein_data.numeric_cols[0]].unique()[:20]}")
+# Prepare data for viz helper: convert missing values (1.0) to NaN
+df_for_viz = protein_data.raw[protein_data.numeric_cols].copy()
 
-# Build table from ProteinData
-table_data = {}
+for col in protein_data.numeric_cols:
+    df_for_viz.loc[df_for_viz[col] == 1.0, col] = np.nan
 
-# Get unique species from species_mapping
-unique_species = sorted(set(protein_data.species_mapping.values()))
+# Get theme
+from helpers.core import get_theme
+theme = get_theme("light")
 
-for species in unique_species:
-    table_data[species] = {}
-    
-    for sample in protein_data.numeric_cols:
-        # Get protein IDs for this species
-        proteins_in_species = [
-            protein_id for protein_id, sp in protein_data.species_mapping.items()
-            if sp == species
-        ]
-        
-        # Count valid intensities (≠ 1.0, not NaN) in this sample for this species
-        valid_count = 0
-        for protein_id in proteins_in_species:
-            intensity = protein_data.raw.loc[protein_id, sample]
-            if pd.notna(intensity) and intensity != 1.0:
-                valid_count += 1
-        
-        table_data[species][sample] = valid_count
+# Use optimized viz helper to create stacked bar chart and summary
+from helpers.viz import create_protein_count_stacked_bar
 
-# Convert to DataFrame
-df_valid = pd.DataFrame(table_data).T
-df_valid.loc['Total'] = df_valid.sum()
+fig, summary_df = create_protein_count_stacked_bar(
+    df_for_viz,
+    protein_data.numeric_cols,
+    protein_data.species_mapping,
+    theme
+)
 
-# Display
-st.dataframe(df_valid, use_container_width=True)
+# Display stacked bar chart
+st.plotly_chart(fig, use_container_width=True)
+
+# Display summary table
+st.markdown("**Summary Statistics:**")
+st.dataframe(summary_df, use_container_width=True, height=250)
+
+# Download
+st.download_button(
+    label="📥 Download Summary (CSV)",
+    data=summary_df.to_csv(index=False),
+    file_name="protein_counts_summary.csv",
+    mime="text/csv"
+)
+
 # ============================================================================
 # Navigation
 # ============================================================================
