@@ -44,7 +44,7 @@ st.info(f"""
 - **Proteins**: {protein_data.n_proteins:,}
 - **Samples**: {protein_data.n_samples}
 - **Conditions**: {protein_data.n_conditions}
-- **Species**: {len(species_series.unique())}
+- **Species**: {len(species_col.unique())}
 """)
 
 # ============================================================================
