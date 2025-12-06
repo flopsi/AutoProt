@@ -163,6 +163,47 @@ with col1:
 with col2:
     st.info("✅ Table sorted: most proteins at top, least at bottom (ascending)")
 
+# ============================================================================
+# SECTION 3: LOG2 INTENSITY DISTRIBUTIONS PER SAMPLE (6 Boxplots)
+# ============================================================================
+
+st.subheader("3️⃣ Log2 Intensity Distribution per Sample")
+
+st.info("**Boxplots of log2-transformed intensities** (all values including missing = 1.0).")
+
+# Log2-transform the raw data (keep all values)
+df_log2 = protein_data.raw[protein_data.numeric_cols].copy()
+
+for col in protein_data.numeric_cols:
+    df_log2[col] = np.log2(df_log2[col].clip(lower=0.1))
+
+# Get theme
+from helpers.core import get_theme
+theme = get_theme("light")
+
+# Use optimized helper
+from helpers.viz import create_sample_boxplots
+
+fig, df_stats = create_sample_boxplots(
+    df_log2,
+    protein_data.numeric_cols,
+    theme
+)
+
+# Display boxplots
+st.plotly_chart(fig, use_container_width=True)
+
+# Display statistics
+st.markdown("**Summary Statistics per Sample:**")
+st.dataframe(df_stats, use_container_width=True)
+
+# Download
+st.download_button(
+    label="📥 Download Statistics (CSV)",
+    data=df_stats.to_csv(index=False),
+    file_name="log2_intensity_statistics.csv",
+    mime="text/csv"
+)
 
 
 # ============================================================================
