@@ -114,6 +114,7 @@ for species in unique_species:
     unique_counts_table[species]['Total'] = total_valid
 
 
+
 # Convert to DataFrame (sorted by total descending)
 df_table = pd.DataFrame(unique_counts_table).T
 df_table = df_table.sort_values('Total', ascending=False)
