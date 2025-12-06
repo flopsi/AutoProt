@@ -1,77 +1,3 @@
-"""
-pages/2_Visual_EDA.py
-
-Visual Exploratory Data Analysis
-- Data quality assessment
-- Per-species protein counts
-- Missing value distribution analysis
-"""
-
-import streamlit as st
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-from helpers.core import ProteinData
-from helpers.analysis import (
-    count_valid_proteins_per_species_sample,
-    count_missing_per_protein,
-    count_proteins_by_species
-)
-from helpers.audit import log_event
-
-# ============================================================================
-# PAGE CONFIGURATION
-# ============================================================================
-
-st.set_page_config(page_title="Visual EDA", layout="wide")
-
-# ============================================================================
-# CHECK DATA LOADED
-# ============================================================================
-
-if "protein_data" not in st.session_state or not st.session_state.get("data_locked"):
-    st.warning("⚠️ No data loaded. Please upload data on the **Data Upload** page first.")
-    st.stop()
-
-# Load cached protein data
-protein_data: ProteinData = st.session_state.protein_data
-
-st.title("📊 Visual Exploratory Data Analysis")
-
-st.info(f"""
-**Loaded Data:**
-- **File**: {protein_data.file_path} ({protein_data.file_format})
-- **Proteins**: {protein_data.n_proteins:,}
-- **Samples**: {protein_data.n_samples}
-- **Conditions**: {protein_data.n_conditions}
-""")
-
-# ============================================================================
-# SECTION 1: TOTAL PROTEINS
-# ============================================================================
-
-st.subheader("1️⃣ Dataset Overview")
-
-c1, c2, c3, c4 = st.columns(4)
-
-with c1:
-    st.metric("Total Proteins", f"{protein_data.n_proteins:,}")
-
-with c2:
-    st.metric("Total Samples", protein_data.n_samples)
-
-with c3:
-    species_count = len(set(protein_data.species_mapping.values()))
-    st.metric("Species", species_count)
-
-with c4:
-    proteins_per_species = count_proteins_by_species(
-        protein_data.raw, 
-        protein_data.species_mapping
-    )
-    avg_per_species = int(protein_data.n_proteins / species_count) if species_count > 0 else 0
-    st.metric("Avg Proteins/Species", avg_per_species)
-
 # ============================================================================
 # SECTION 2: VALID PROTEINS PER SPECIES PER REPLICATE
 # ============================================================================
@@ -88,9 +14,9 @@ valid_per_sample = count_valid_proteins_per_species_sample(
     missing_value=1.0
 )
 
-# Display as table with formatting
+# Display as table with simple formatting (no gradient - no matplotlib dependency)
 st.dataframe(
-    valid_per_sample.style.format("{:,}").background_gradient(cmap="RdYlGn"),
+    valid_per_sample.style.format("{:,}"),
     use_container_width=True
 )
 
@@ -111,13 +37,16 @@ st.subheader("3️⃣ Missing Value Distribution by Species")
 
 st.info("**Distribution of missing count per protein**: Shows how many samples have intensity = 1.00 for each protein, grouped by species.")
 
-# Calculate missing values per protein
+# Calculate missing values per protein (one row per protein)
 missing_per_protein_df = count_missing_per_protein(
     protein_data.raw,
     protein_data.numeric_cols,
     protein_data.species_mapping,
     missing_value=1.0
 )
+
+# Ensure unique proteins only (no duplicates)
+missing_per_protein_df = missing_per_protein_df.drop_duplicates(subset=['protein_id'])
 
 # Create boxplot
 fig = go.Figure()
@@ -164,7 +93,7 @@ fig.update_layout(
 
 st.plotly_chart(fig, use_container_width=True)
 
-# Statistics table
+# Statistics table (formatted without matplotlib gradient)
 st.markdown("**Summary Statistics by Species:**")
 
 stats_by_species = missing_per_protein_df.groupby('species')['missing_count'].agg([
@@ -176,7 +105,11 @@ stats_by_species = missing_per_protein_df.groupby('species')['missing_count'].ag
     ('Max', 'max')
 ]).round(2)
 
-st.dataframe(stats_by_species.style.format("{:.2f}"), use_container_width=True)
+# Simple formatting without gradient
+st.dataframe(
+    stats_by_species.style.format("{:.2f}"),
+    use_container_width=True
+)
 
 # ============================================================================
 # SECTION 4: DATA SUMMARY EXPORT
@@ -184,7 +117,11 @@ st.dataframe(stats_by_species.style.format("{:.2f}"), use_container_width=True)
 
 st.subheader("4️⃣ Export Data Quality Report")
 
-# Create summary report
+# Create summary report (count each protein once)
+unique_protein_count = missing_per_protein_df['protein_id'].nunique()
+mean_missing = missing_per_protein_df['missing_count'].mean()
+median_missing = missing_per_protein_df['missing_count'].median()
+
 report_data = {
     "Metric": [
         "Total Proteins",
@@ -195,12 +132,12 @@ report_data = {
         "Median Missing Count (all proteins)"
     ],
     "Value": [
-        protein_data.n_proteins,
+        unique_protein_count,
         protein_data.n_samples,
         len(set(protein_data.species_mapping.values())),
         "1.00",
-        f"{missing_per_protein_df['missing_count'].mean():.2f}",
-        f"{missing_per_protein_df['missing_count'].median():.0f}"
+        f"{mean_missing:.2f}",
+        f"{median_missing:.0f}"
     ]
 }
 
@@ -223,29 +160,3 @@ with col2:
         file_name="missing_values_per_protein.csv",
         mime="text/csv"
     )
-
-# Log page view
-log_event(
-    page="2_Visual_EDA",
-    action="page_viewed",
-    details={
-        "n_proteins": protein_data.n_proteins,
-        "n_samples": protein_data.n_samples,
-        "n_species": len(set(protein_data.species_mapping.values()))
-    }
-)
-
-# ============================================================================
-# Navigation
-# ============================================================================
-
-st.markdown("---")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    if st.button("← Back to Upload", use_container_width=True):
-        st.switch_page("pages/1_Data_Upload.py")
-
-with col2:
-    st.info("**Next:** Statistical transformation & differential expression analysis (coming soon)")
