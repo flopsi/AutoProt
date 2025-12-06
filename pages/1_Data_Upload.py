@@ -233,7 +233,7 @@ edited = st.data_editor(
         "Sample": st.column_config.TextColumn("Sample", disabled=True)
     },
     hide_index=True,
-    width=True
+    width="stretch"
 )
 
 # Get selected quantitative columns
