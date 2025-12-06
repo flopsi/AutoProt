@@ -179,12 +179,12 @@ raw_fig = create_raw_row_figure(
     raw_cols=eval_cols,
     title="Raw Data",
 )
-st.plotly_chart(raw_fig, use_container_width=True)
+st.plotly_chart(raw_fig, use_container_width=True, key="raw_plot")
 
 st.markdown("**Selected condition (bottom)**")
 if selected_key == "raw":
-    # Show raw again
-    st.plotly_chart(raw_fig, use_container_width=True)
+    # Show raw again with a different key
+    st.plotly_chart(raw_fig, use_container_width=True, key="raw_plot_bottom")
 else:
     nice_name = TRANSFORM_NAMES.get(selected_key, selected_key)
     df_trans_sel, trans_cols_sel = apply_transformation(df_raw, eval_cols, selected_key)
@@ -193,4 +193,4 @@ else:
         trans_cols=trans_cols_sel,
         title=nice_name,
     )
-    st.plotly_chart(trans_fig, use_container_width=True)
+    st.plotly_chart(trans_fig, use_container_width=True, key=f"trans_plot_{selected_key}")
