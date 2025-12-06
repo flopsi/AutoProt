@@ -179,7 +179,12 @@ def detect_protein_id_column(df: pd.DataFrame) -> Optional[str]:
     
     # Fallback: first non-numeric column
     for col in df.columns:
-        if df[col].dtype == "object":
+        if df[col].dtype == "object" or df[col].dtype == "string":
+            return col
+    
+    # Last fallback: first column that's not purely numeric
+    for col in df.columns:
+        if not pd.api.types.is_numeric_dtype(df[col]):
             return col
     
     return None
