@@ -14,6 +14,36 @@ import streamlit as st
 # FILE READERS
 # Multi-format readers with automatic encoding detection
 # ============================================================================
+def download_button_excel(df: pd.DataFrame, filename: str, label: str = "Download Excel"):
+    """
+    Create download button for DataFrame as Excel.
+    Falls back to openpyxl if xlsxwriter unavailable.
+    
+    Args:
+        df: DataFrame to download
+        filename: Output filename (should end with .xlsx)
+        label: Button label
+    """
+    from io import BytesIO
+    
+    buffer = BytesIO()
+    try:
+        engine = 'xlsxwriter'
+        with pd.ExcelWriter(buffer, engine=engine) as writer:
+            df.to_excel(writer, index=True)
+    except ImportError:
+        # Fallback to openpyxl
+        engine = 'openpyxl'
+        with pd.ExcelWriter(buffer, engine=engine) as writer:
+            df.to_excel(writer, index=True)
+    
+    st.download_button(
+        label=label,
+        data=buffer.getvalue(),
+        file_name=filename,
+        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+
 
 @st.cache_data(show_spinner="Loading file...", max_entries=5)
 def read_csv(filepath, sep: str = ",") -> pd.DataFrame:
