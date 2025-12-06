@@ -120,8 +120,6 @@ table_df["Use"] = table_df["key"].eq("raw")
 # ----------------------------------------------------------------------
 # 3) Data editor with checkbox for selection
 # ----------------------------------------------------------------------
-st.subheader("3️⃣ Choose Preferred Transformation")
-
 edited = st.data_editor(
     table_df[["Condition", "W", "p", "Skew", "Kurtosis", "n", "score", "Use"]],
     use_container_width=True,
@@ -149,7 +147,6 @@ edited = st.data_editor(
 show = edited["Use"].copy()
 
 if show.sum() == 0:
-    # default to Raw
     show.iloc[0] = True
 elif show.sum() > 1:
     first_true = show[show].index[0]
@@ -161,10 +158,10 @@ selected_idx = show.idxmax()
 selected_condition = edited.loc[selected_idx, "Condition"]
 selected_key = table_df.loc[selected_idx, "key"]
 
-# Store selection into session_state for later pages (e.g., DE analysis)
+# Store for downstream use
 st.session_state.selected_transform_method = selected_key
 
-# Best by score (non-raw)
+# Best by score
 if mask_tr.any():
     best_row = table_df.loc[mask_tr].sort_values("score").iloc[0]
     st.success(
@@ -172,30 +169,30 @@ if mask_tr.any():
         f"(W={best_row['W']:.3f}, p={best_row['p']:.2e})"
     )
 
-st.info(f"📌 Preferred for downstream analyses: **{selected_condition}**")
+st.info(f"📌 Selected for plots: **{selected_condition}**")
 
 # ----------------------------------------------------------------------
-# 4) Diagnostic plot (Raw only, always shown)
+# 4) Diagnostic plots: Raw (top) + Selected (bottom)
 # ----------------------------------------------------------------------
-st.subheader("4️⃣ Diagnostic Plot (Raw Only)")
+st.subheader("3️⃣ Diagnostic Plots")
 
+st.markdown("**Raw (top)**")
 raw_fig = create_raw_row_figure(
     df_raw=df_raw,
     raw_cols=eval_cols,
     title="Raw Data",
 )
-st.plotly_chart(raw_fig, use_container_width=True, key="raw_plot")
+st.plotly_chart(raw_fig, use_container_width=True, key="plot_raw_top")
 
-# Optional: show selected transform plot on demand
-with st.expander("Show diagnostic plot for selected transformation"):
-    if selected_key == "raw":
-        st.info("Selected Raw; same as the plot above.")
-    else:
-        nice_name = TRANSFORM_NAMES.get(selected_key, selected_key)
-        df_trans_sel, trans_cols_sel = apply_transformation(df_raw, eval_cols, selected_key)
-        trans_fig = create_transformed_row_figure(
-            df_transformed=df_trans_sel,
-            trans_cols=trans_cols_sel,
-            title=nice_name,
-        )
-        st.plotly_chart(trans_fig, use_container_width=True, key=f"trans_plot_{selected_key}")
+st.markdown("**Selected condition (bottom)**")
+if selected_key == "raw":
+    st.info("Selected condition is Raw – same as above.")
+else:
+    nice_name = TRANSFORM_NAMES.get(selected_key, selected_key)
+    df_trans_sel, trans_cols_sel = apply_transformation(df_raw, eval_cols, selected_key)
+    trans_fig = create_transformed_row_figure(
+        df_transformed=df_trans_sel,
+        trans_cols=trans_cols_sel,
+        title=nice_name,
+    )
+    st.plotly_chart(trans_fig, use_container_width=True, key=f"plot_trans_{selected_key}")
