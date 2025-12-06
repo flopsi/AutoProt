@@ -39,7 +39,7 @@ protein_data: ProteinData = st.session_state.protein_data
 df_raw = protein_data.raw
 numeric_cols = protein_data.numeric_cols
 species_mapping = protein_data.species_mapping
-theme = get_theme(st.session_state.get("theme", "dark"))
+
 
 st.info(f"📁 **{protein_data.file_path}** | {protein_data.n_proteins:,} proteins × {protein_data.n_samples} samples")
 st.markdown("---")
