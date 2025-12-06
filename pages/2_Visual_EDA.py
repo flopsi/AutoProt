@@ -130,13 +130,25 @@ st.download_button(
 
 st.markdown("---")
 
-# ============================================================================
-# SECTION 3: LOG2 INTENSITY DISTRIBUTIONS
-# ============================================================================
-
 st.subheader("3️⃣ Log2 Intensity Distribution by Sample")
 
 st.info("**Single boxplot with 6 traces**: Condition A (A1-A3, green) vs Condition B (B1-B3, teal).")
+
+# Get cached log2 data (already transformed with correct clipping)
+if not cache.has('log2'):
+    df_log2 = protein_data.raw[protein_data.numeric_cols].copy()
+    for col in protein_data.numeric_cols:
+        df_log2[col] = np.log2(df_log2[col].clip(lower=1.0))  # Clip to 1.0
+    cache.log2 = df_log2
+else:
+    df_log2 = cache.get('log2')
+
+# Get theme
+from helpers.core import get_theme
+theme = get_theme("light")
+
+# Use helper with cached log2 data
+from helpers.viz import create_sample_boxplots
 
 fig3, df_stats3 = create_sample_violins(
     df_log2,
