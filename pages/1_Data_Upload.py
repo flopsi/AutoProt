@@ -8,7 +8,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import re
-from helpers.fileio import read_csv, read_tsv, read_excel
+from helpers.io import read_csv, read_tsv, read_excel
 from helpers.core import ProteinData
 from helpers.audit import log_event
 from helpers.core import get_theme
