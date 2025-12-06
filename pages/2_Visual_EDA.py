@@ -88,17 +88,6 @@ else:
 # PLOT 1: PROTEIN COUNTS (uses viz helper)
 # ============================================================================
 
-st.header("1️⃣ Protein Counts per Sample")
-st.markdown("Number of quantified proteins in each sample, stacked by species.")
-
-fig1, summary_df1 = create_protein_count_stacked_bar(df_log2, numeric_cols, species_mapping, theme)
-st.plotly_chart(fig1, width="stretch")
-
-st.markdown("**Summary by Species:**")
-st.dataframe(summary_df1, width="stretch", hide_index=True)
-
-st.markdown("---")
-
 # ============================================================================
 # SPECIES BREAKDOWN BY SAMPLE
 # ============================================================================
