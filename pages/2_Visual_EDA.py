@@ -1,171 +1,251 @@
 """
 pages/2_Visual_EDA.py
 
-Visual exploratory data analysis - uses helpers from viz.py
+Visual Exploratory Data Analysis
+- Data quality assessment
+- Per-species protein counts
+- Missing value distribution analysis
 """
 
 import streamlit as st
-from helpers.core import ProteinData, get_theme
-from helpers.transforms import apply_transformation
-from helpers.analysis import detect_conditions_from_columns, create_group_dict
-from helpers.viz import create_protein_count_stacked_bar, create_boxplot_by_condition
-from helpers.audit import log_event
 import pandas as pd
-# ============================================================================
-# CONTROL FUNCTIONS
-# ============================================================================
-
-def restart_pipeline():
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-    st.switch_page("pages/1_Data_Upload.py")
-
-def reset_eda():
-    keys = ['eda_log2_data', 'eda_conditions', 'eda_logged']
-    for k in keys:
-        st.session_state.pop(k, None)
-    st.cache_data.clear()
-    st.rerun()
+import numpy as np
+import plotly.graph_objects as go
+from helpers.core import ProteinData
+from helpers.analysis import (
+    count_valid_proteins_per_species_sample,
+    count_missing_per_protein,
+    count_proteins_by_species
+)
+from helpers.audit import log_event
 
 # ============================================================================
-# PAGE CONFIG
+# PAGE CONFIGURATION
 # ============================================================================
 
 st.set_page_config(page_title="Visual EDA", layout="wide")
 
-with st.sidebar:
-    st.title("⚙️ Options")
-    if st.button("🔄 Reset This Page", width="stretch"):
-        reset_eda()
-    st.markdown("---")
-    if st.button("🏠 Restart Pipeline", width="stretch"):
-        restart_pipeline()
-
 # ============================================================================
-# LOAD DATA
+# CHECK DATA LOADED
 # ============================================================================
 
-st.title("📊 Visual EDA")
-
-if "protein_data" not in st.session_state:
-    st.warning("⚠️ No data loaded")
-    if st.button("← Go to Upload"):
-        st.switch_page("pages/1_Data_Upload.py")
+if "protein_data" not in st.session_state or not st.session_state.get("data_locked"):
+    st.warning("⚠️ No data loaded. Please upload data on the **Data Upload** page first.")
     st.stop()
 
+# Load cached protein data
 protein_data: ProteinData = st.session_state.protein_data
-df_raw = protein_data.raw
-numeric_cols = protein_data.numeric_cols
-species_mapping = protein_data.species_mapping
-theme = get_theme(st.session_state.get("theme", "dark"))
 
-st.info(f"📁 **{protein_data.file_path}** | {protein_data.n_proteins:,} proteins × {protein_data.n_samples} samples")
-st.markdown("---")
+st.title("📊 Visual Exploratory Data Analysis")
 
-# ============================================================================
-# LOG2 TRANSFORMATION (cached)
-# ============================================================================
-
-if 'eda_log2_data' not in st.session_state:
-    with st.spinner("Applying log2 transformation..."):
-        df_log2, _ = apply_transformation(df_raw, numeric_cols, method="log2")
-        st.session_state.eda_log2_data = df_log2
-else:
-    df_log2 = st.session_state.eda_log2_data
+st.info(f"""
+**Loaded Data:**
+- **File**: {protein_data.file_path} ({protein_data.file_format})
+- **Proteins**: {protein_data.n_proteins:,}
+- **Samples**: {protein_data.n_samples}
+- **Conditions**: {protein_data.n_conditions}
+""")
 
 # ============================================================================
-# DETECT CONDITIONS (cached)
+# SECTION 1: TOTAL PROTEINS
 # ============================================================================
 
-if 'eda_conditions' not in st.session_state:
-    conditions = detect_conditions_from_columns(numeric_cols)
-    condition_dict = create_group_dict(numeric_cols, conditions)
-    st.session_state.eda_conditions = condition_dict
-else:
-    condition_dict = st.session_state.eda_conditions
+st.subheader("1️⃣ Dataset Overview")
 
-# ============================================================================
-# PLOT 1: PROTEIN COUNTS (uses viz helper)
-# ============================================================================
-
-# ============================================================================
-# SPECIES BREAKDOWN BY SAMPLE
-# ============================================================================
-
-if protein_data.species_mapping:
-    st.subheader("📊 Species Breakdown by Sample")
-    
-    # Build counts: for each sample, count proteins per species
-    import plotly.express as px
-    from helpers.core import get_theme
-    
-    chart_data = []
-    for sample_col in numeric_cols:
-        valid_mask = df_raw[sample_col] > 1.0
-        for idx in df_raw.loc[valid_mask].index:
-            species = df_raw.loc[idx, protein_data.species_col]
-            chart_data.append({"Sample": sample_col, "Species": species, "Count": 1})
-
-    
-    if chart_data:
-        chart_df = pd.DataFrame(chart_data)
-        species_counts = chart_df.groupby(["Sample", "Species"])["Count"].sum().reset_index()
-        
-        theme = get_theme(st.session_state.get("theme", "dark"))
-        color_map = {
-            "HUMAN": theme["color_human"],
-            "YEAST": theme["color_yeast"],
-            "ECOLI": theme["color_ecoli"],
-        }
-        for sp in species_counts["Species"].unique():
-            if sp not in color_map:
-                color_map[sp] = theme["accent"]
-        
-        fig = px.bar(
-            species_counts,
-            x="Sample",
-            y="Count",
-            color="Species",
-            barmode="stack",
-            color_discrete_map=color_map,
-            height=400,
-        )
-        fig.update_layout(
-            plot_bgcolor=theme["bg_primary"],
-            paper_bgcolor=theme["paper_bg"],
-            font=dict(size=11, color=theme["text_primary"]),
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.warning("⚠️ No valid intensity data")
-
-
-# ============================================================================
-# LOG EVENT
-# ============================================================================
-
-if 'eda_logged' not in st.session_state:
-    log_event("Visual EDA", "Page viewed", {"n_proteins": protein_data.n_proteins, "n_samples": protein_data.n_samples})
-    st.session_state.eda_logged = True
-
-# ============================================================================
-# NAVIGATION
-# ============================================================================
-
-st.markdown("---")
 c1, c2, c3, c4 = st.columns(4)
 
 with c1:
-    if st.button("← Upload", width="stretch"):
-        st.switch_page("pages/1_Data_Upload.py")
-with c2:
-    if st.button("Statistical EDA →", width="stretch", type="primary"):
-        st.switch_page("pages/3_Statistical_EDA.py")
-with c3:
-    if st.button("🔄 Reset", width="stretch"):
-        reset_eda()
-with c4:
-    if st.button("🏠 Restart", width="stretch"):
-        restart_pipeline()
+    st.metric("Total Proteins", f"{protein_data.n_proteins:,}")
 
-st.caption("✅ All computations cached | Fast reruns")
+with c2:
+    st.metric("Total Samples", protein_data.n_samples)
+
+with c3:
+    species_count = len(set(protein_data.species_mapping.values()))
+    st.metric("Species", species_count)
+
+with c4:
+    proteins_per_species = count_proteins_by_species(
+        protein_data.raw, 
+        protein_data.species_mapping
+    )
+    avg_per_species = int(protein_data.n_proteins / species_count) if species_count > 0 else 0
+    st.metric("Avg Proteins/Species", avg_per_species)
+
+# ============================================================================
+# SECTION 2: VALID PROTEINS PER SPECIES PER REPLICATE
+# ============================================================================
+
+st.subheader("2️⃣ Valid Proteins per Species per Sample")
+
+st.info("**Valid = intensity ≠ 1.00** (missing value threshold). Shows data completeness by species.")
+
+# Calculate valid proteins per species per sample
+valid_per_sample = count_valid_proteins_per_species_sample(
+    protein_data.raw,
+    protein_data.numeric_cols,
+    protein_data.species_mapping,
+    missing_value=1.0
+)
+
+# Display as table with formatting
+st.dataframe(
+    valid_per_sample.style.format("{:,}").background_gradient(cmap="RdYlGn"),
+    use_container_width=True
+)
+
+# Download option
+csv = valid_per_sample.to_csv()
+st.download_button(
+    label="📥 Download Valid Counts (CSV)",
+    data=csv,
+    file_name="valid_proteins_per_species.csv",
+    mime="text/csv"
+)
+
+# ============================================================================
+# SECTION 3: MISSING VALUE DISTRIBUTION BY SPECIES (BOXPLOT)
+# ============================================================================
+
+st.subheader("3️⃣ Missing Value Distribution by Species")
+
+st.info("**Distribution of missing count per protein**: Shows how many samples have intensity = 1.00 for each protein, grouped by species.")
+
+# Calculate missing values per protein
+missing_per_protein_df = count_missing_per_protein(
+    protein_data.raw,
+    protein_data.numeric_cols,
+    protein_data.species_mapping,
+    missing_value=1.0
+)
+
+# Create boxplot
+fig = go.Figure()
+
+# Species order: HUMAN (first/largest), YEAST, ECOLI
+species_order = ["HUMAN", "YEAST", "ECOLI"]
+species_in_data = sorted(missing_per_protein_df['species'].unique())
+
+# Use defined order, but only include species in data
+ordered_species = [s for s in species_order if s in species_in_data]
+
+# Color scheme: progressively lighter/different for stacking visual
+color_map = {
+    "HUMAN": "#1f77b4",   # Blue (bottom/base)
+    "YEAST": "#ff7f0e",   # Orange (middle)
+    "ECOLI": "#2ca02c"    # Green (top)
+}
+
+for species in ordered_species:
+    species_data = missing_per_protein_df[missing_per_protein_df['species'] == species]
+    missing_counts = species_data['missing_count'].values
+    
+    fig.add_trace(go.Box(
+        y=missing_counts,
+        name=species,
+        marker=dict(color=color_map.get(species, "#808080")),
+        boxmean='sd',  # Show mean and std dev
+        jitter=0.3,
+        pointpos=-1.8,
+        hovertemplate=f"{species}<br>Missing Count: %{{y}}<extra></extra>"
+    ))
+
+fig.update_layout(
+    title="Distribution of Missing Values per Protein by Species",
+    yaxis_title="Number of Missing Values (intensity = 1.00)",
+    xaxis_title="Species",
+    height=500,
+    showlegend=True,
+    hovermode="closest",
+    plot_bgcolor="rgba(240,240,240,0.5)",
+    yaxis=dict(gridcolor="rgba(200,200,200,0.3)"),
+    font=dict(size=11)
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+# Statistics table
+st.markdown("**Summary Statistics by Species:**")
+
+stats_by_species = missing_per_protein_df.groupby('species')['missing_count'].agg([
+    ('Count', 'count'),
+    ('Mean', 'mean'),
+    ('Median', 'median'),
+    ('Std Dev', 'std'),
+    ('Min', 'min'),
+    ('Max', 'max')
+]).round(2)
+
+st.dataframe(stats_by_species.style.format("{:.2f}"), use_container_width=True)
+
+# ============================================================================
+# SECTION 4: DATA SUMMARY EXPORT
+# ============================================================================
+
+st.subheader("4️⃣ Export Data Quality Report")
+
+# Create summary report
+report_data = {
+    "Metric": [
+        "Total Proteins",
+        "Total Samples",
+        "Number of Species",
+        "Missing Value Threshold",
+        "Mean Missing Count (all proteins)",
+        "Median Missing Count (all proteins)"
+    ],
+    "Value": [
+        protein_data.n_proteins,
+        protein_data.n_samples,
+        len(set(protein_data.species_mapping.values())),
+        "1.00",
+        f"{missing_per_protein_df['missing_count'].mean():.2f}",
+        f"{missing_per_protein_df['missing_count'].median():.0f}"
+    ]
+}
+
+report_df = pd.DataFrame(report_data)
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.download_button(
+        label="📊 Download Quality Report (CSV)",
+        data=report_df.to_csv(index=False),
+        file_name="data_quality_report.csv",
+        mime="text/csv"
+    )
+
+with col2:
+    st.download_button(
+        label="📋 Download Missing Value Details (CSV)",
+        data=missing_per_protein_df.to_csv(index=False),
+        file_name="missing_values_per_protein.csv",
+        mime="text/csv"
+    )
+
+# Log page view
+log_event(
+    page="2_Visual_EDA",
+    action="page_viewed",
+    details={
+        "n_proteins": protein_data.n_proteins,
+        "n_samples": protein_data.n_samples,
+        "n_species": len(set(protein_data.species_mapping.values()))
+    }
+)
+
+# ============================================================================
+# Navigation
+# ============================================================================
+
+st.markdown("---")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    if st.button("← Back to Upload", use_container_width=True):
+        st.switch_page("pages/1_Data_Upload.py")
+
+with col2:
+    st.info("**Next:** Statistical transformation & differential expression analysis (coming soon)")
