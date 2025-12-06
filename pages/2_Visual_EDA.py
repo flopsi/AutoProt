@@ -167,9 +167,13 @@ with col2:
 # SECTION 3: LOG2 INTENSITY DISTRIBUTIONS PER SAMPLE (6 Boxplots)
 # ============================================================================
 
-st.subheader("3️⃣ Log2 Intensity Distribution per Sample")
+# ============================================================================
+# SECTION 3: LOG2 INTENSITY DISTRIBUTIONS PER SAMPLE
+# ============================================================================
 
-st.info("**Boxplots of log2-transformed intensities** (all values including missing = 1.0).")
+st.subheader("3️⃣ Log2 Intensity Distribution by Sample")
+
+st.info("**Single boxplot with 6 traces**: Condition A (A1-A3, green) vs Condition B (B1-B3, teal).")
 
 # Log2-transform the raw data (keep all values)
 df_log2 = protein_data.raw[protein_data.numeric_cols].copy()
@@ -181,7 +185,7 @@ for col in protein_data.numeric_cols:
 from helpers.core import get_theme
 theme = get_theme("light")
 
-# Use optimized helper
+# Use helper
 from helpers.viz import create_sample_boxplots
 
 fig, df_stats = create_sample_boxplots(
@@ -190,11 +194,11 @@ fig, df_stats = create_sample_boxplots(
     theme
 )
 
-# Display boxplots
+# Display
 st.plotly_chart(fig, use_container_width=True)
 
-# Display statistics
-st.markdown("**Summary Statistics per Sample:**")
+# Statistics
+st.markdown("**Summary Statistics:**")
 st.dataframe(df_stats, use_container_width=True)
 
 # Download
@@ -204,7 +208,6 @@ st.download_button(
     file_name="log2_intensity_statistics.csv",
     mime="text/csv"
 )
-
 
 # ============================================================================
 # Navigation
