@@ -55,45 +55,38 @@ st.title("📊 Visual Exploratory Data Analysis")
 
 st.subheader("2️⃣ Valid Proteins per Species per Sample")
 
-st.info("**Valid = intensity ≠ 1.00** (missing value threshold). Each cell shows count of valid proteins.")
+st.info("**Valid = intensity ≠ 1.00**. Each cell shows count of valid proteins.")
 
-# Create table: species (rows) × samples (columns)
+# Build table using ProteinData structure
 table_data = {}
 
 for species in sorted(set(protein_data.species_mapping.values())):
     table_data[species] = {}
     
     for sample in protein_data.numeric_cols:
-        # Get proteins of this species
-        species_proteins = [
-            pid for pid, sp in protein_data.species_mapping.items() 
-            if sp == species
-        ]
+        # Mask: proteins of this species
+        species_mask = protein_data.raw.index.map(
+            lambda x: protein_data.species_mapping.get(x) == species
+        )
         
-        # Count valid (intensity ≠ 1.0) for this species in this sample
-        valid_count = 0
-        for protein_id in species_proteins:
-            if protein_id in protein_data.raw.index:
-                intensity = protein_data.raw.loc[protein_id, sample]
-                if pd.notna(intensity) and intensity != 1.0:
-                    valid_count += 1
+        # Mask: valid intensities (≠ 1.0 and not NaN)
+        valid_mask = (protein_data.raw[sample] != 1.0) & (protein_data.raw[sample].notna())
         
-        table_data[species][sample] = valid_count
+        # Count
+        valid_count = (species_mask & valid_mask).sum()
+        table_data[species][sample] = int(valid_count)
 
 # Convert to DataFrame
 df_valid = pd.DataFrame(table_data).T
-
-# Add Total row
 df_valid.loc['Total'] = df_valid.sum()
 
-# Display table
+# Display
 st.dataframe(df_valid, use_container_width=True)
 
 # Download
-csv_data = df_valid.to_csv()
 st.download_button(
     label="📥 Download Table",
-    data=csv_data,
+    data=df_valid.to_csv(),
     file_name="valid_proteins_per_species.csv",
     mime="text/csv"
 )
