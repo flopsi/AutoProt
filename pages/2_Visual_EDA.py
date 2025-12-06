@@ -102,9 +102,10 @@ if protein_data.species_mapping:
     chart_data = []
     for sample_col in numeric_cols:
         valid_mask = df_raw[sample_col] > 1.0
-        for protein_id in df_raw.loc[valid_mask].index:
-            species = protein_data.species_mapping.get(protein_id, "UNKNOWN")
+        for idx in df_raw.loc[valid_mask].index:
+            species = df_raw.loc[idx, protein_data.species_col]
             chart_data.append({"Sample": sample_col, "Species": species, "Count": 1})
+
     
     if chart_data:
         chart_df = pd.DataFrame(chart_data)
