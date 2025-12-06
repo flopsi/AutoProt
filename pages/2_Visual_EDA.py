@@ -108,7 +108,7 @@ for species in unique_species:
     for pid in species_protein_ids:
         if pid in df_viz.index:
             row = df_viz.loc[pid]
-            if ((row.notna()) & (row != 0.0)).any():
+            if ((row.notna()) * (row != 0.0)).any():
                 total_valid += 1
     
     unique_counts_table[species]['Total'] = total_valid
