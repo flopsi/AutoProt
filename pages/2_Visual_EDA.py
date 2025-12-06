@@ -10,7 +10,7 @@ from helpers.transforms import apply_transformation
 from helpers.analysis import detect_conditions_from_columns, create_group_dict
 from helpers.viz import create_protein_count_stacked_bar, create_boxplot_by_condition
 from helpers.audit import log_event
-
+import pandas as pd
 # ============================================================================
 # CONTROL FUNCTIONS
 # ============================================================================
