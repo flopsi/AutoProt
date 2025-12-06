@@ -92,27 +92,42 @@ for species in unique_species:
     unique_counts_table[species] = {}
     
     for sample in protein_data.numeric_cols:
-        # Count proteins: not NaN and not 0.0, for this species
-        valid = (df_viz[sample].notna()) * (df_viz[sample] != 0.0)
-        is_species = df_viz.index.map(lambda x: protein_data.species_mapping.get(x) == species)
+        # Get proteins of this species
+        species_proteins = [
+            pid for pid, sp in protein_data.species_mapping.items() 
+            if sp == species
+        ]
         
-        count = (valid * is_species).sum()
-        unique_counts_table[species][sample] = int(count)
+        # Count valid (not NaN and not 0.0) for this species in this sample
+        valid_count = 0
+        for protein_id in species_proteins:
+            try:
+                intensity = df_viz.loc[protein_id, sample]
+                if pd.notna(intensity) and intensity != 0.0:
+                    valid_count += 1
+            except (KeyError, TypeError):
+                # Handle case where protein_id not in index or other issues
+                continue
+        
+        unique_counts_table[species][sample] = valid_count
     
-    # Total unique proteins for this species (simplified)
-    species_protein_ids = [
-        pid for pid, sp in protein_data.species_mapping.items() if sp == species
+    # Total unique proteins for this species
+    species_proteins = [
+        pid for pid, sp in protein_data.species_mapping.items() 
+        if sp == species
     ]
-    # Check if ANY value is valid (not NaN and not 0.0) for each protein
+    
     total_valid = 0
-    for pid in species_protein_ids:
-        if pid in df_viz.index:
-            row = df_viz.loc[pid]
+    for protein_id in species_proteins:
+        try:
+            row = df_viz.loc[protein_id]
+            # Check if any value is valid (not NaN, not 0.0)
             if ((row.notna()) * (row != 0.0)).any():
                 total_valid += 1
+        except (KeyError, TypeError):
+            continue
     
     unique_counts_table[species]['Total'] = total_valid
-
 
 
 # Convert to DataFrame (sorted by total descending)
