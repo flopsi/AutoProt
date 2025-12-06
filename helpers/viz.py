@@ -934,69 +934,67 @@ def create_protein_count_stacked_bar(
     
     return fig, pd.DataFrame(summary_data)
 
-
-@st.cache_data(ttl=3600, show_spinner="Creating sample boxplots...")
+@st.cache_data(ttl=3600, show_spinner="Creating boxplots...")
 def create_sample_boxplots(
     df_log2: pd.DataFrame,
     numeric_cols: list,
     theme: dict
 ) -> tuple[go.Figure, pd.DataFrame]:
     """
-    Create 6 boxplots (2×3 grid) of log2 intensities per sample.
+    Create single boxplot with 6 traces (samples) grouped by condition.
     
-    Includes all values without filtering (keeps missing = 1.0).
+    Condition A (A1, A2, A3): Green
+    Condition B (B1, B2, B3): Teal
+    
+    Includes all values without filtering.
     
     Args:
-        df_log2: Log2-transformed data (all values)
-        numeric_cols: Sample column names
+        df_log2: Log2-transformed data
+        numeric_cols: Sample column names [A1, A2, A3, B1, B2, B3]
         theme: Theme colors dictionary
     
     Returns:
         (figure, summary_stats_dataframe) tuple
     """
-    from plotly.subplots import make_subplots
+    fig = go.Figure()
     
-    # Create 2×3 grid
-    fig = make_subplots(
-        rows=2, cols=3,
-        subplot_titles=numeric_cols,
-        vertical_spacing=0.15,
-        horizontal_spacing=0.10
-    )
+    # Color mapping by condition
+    colors = {
+        'A': theme['color_human'],    # Green
+        'B': theme['color_yeast']     # Teal/Orange
+    }
     
-    # Add boxplot for each sample
-    for idx, sample in enumerate(numeric_cols):
-        row = (idx // 3) + 1
-        col = (idx % 3) + 1
-        
+    # Add trace for each sample
+    for sample in numeric_cols:
+        condition = sample[0]  # First letter: A or B
         values = df_log2[sample].values
         
-        fig.add_trace(
-            go.Box(
-                y=values,
-                name=sample,
-                marker_color=theme['accent'],
-                boxmean='sd',
-                jitter=0.3,
-                pointpos=-1.8,
-                hovertemplate=f"<b>{sample}</b><br>Log2 Intensity: %{{y:.2f}}<extra></extra>"
-            ),
-            row=row, col=col
-        )
-        
-        fig.update_yaxes(title_text="Log2 Intensity", row=row, col=col, showgrid=True, gridcolor=theme['grid'])
-        fig.update_xaxes(showgrid=False, row=row, col=col)
+        fig.add_trace(go.Box(
+            y=values,
+            name=sample,
+            marker_color=colors.get(condition, theme['accent']),
+            boxmean='sd',
+            jitter=0.3,
+            pointpos=-1.8,
+            legendgroup=condition,
+            legendgrouptitle_text=f"Condition {condition}",
+            hovertemplate=f"<b>{sample}</b><br>Log2 Intensity: %{{y:.2f}}<extra></extra>"
+        ))
     
     fig.update_layout(
-        title_text="Log2 Intensity Distribution per Sample",
-        title_font_size=16,
-        height=700,
-        showlegend=False,
+        title="Log2 Intensity Distribution by Sample",
+        xaxis_title="Sample",
+        yaxis_title="Log2 Intensity",
+        height=600,
         plot_bgcolor=theme['bg_primary'],
         paper_bgcolor=theme['paper_bg'],
-        font=dict(family=FONT_FAMILY, size=11, color=theme['text_primary']),
+        font=dict(family=FONT_FAMILY, size=12, color=theme['text_primary']),
+        showlegend=True,
         hovermode='closest'
     )
+    
+    fig.update_xaxes(showgrid=True, gridcolor=theme['grid'], tickangle=-45)
+    fig.update_yaxes(showgrid=True, gridcolor=theme['grid'])
     
     # Summary statistics per sample
     summary_stats = []
