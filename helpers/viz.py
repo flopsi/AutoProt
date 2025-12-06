@@ -821,3 +821,177 @@ def create_qc_dashboard(
     )
     
     return fig
+
+# ============================================================================
+# EDA-SPECIFIC PLOTS
+# Protein counts and condition-based boxplots
+# ============================================================================
+
+@st.cache_data(ttl=3600, show_spinner="Computing protein counts...")
+def create_protein_count_stacked_bar(
+    df_log2: pd.DataFrame,
+    numeric_cols: list,
+    species_mapping: dict,
+    theme: dict
+) -> tuple[go.Figure, pd.DataFrame]:
+    """
+    Create stacked bar chart of protein counts per sample, grouped by species.
+    
+    Args:
+        df_log2: Log2-transformed data
+        numeric_cols: Sample column names
+        species_mapping: Dict mapping protein ID → species
+        theme: Theme colors dictionary
+    
+    Returns:
+        (figure, summary_dataframe) tuple
+    """
+    # Count proteins per sample per species
+    protein_counts = {}
+    
+    for sample in numeric_cols:
+        valid_proteins = df_log2[df_log2[sample].notna() & (df_log2[sample] != 0.0)].index
+        species_counts = {}
+        for protein_id in valid_proteins:
+            species = species_mapping.get(protein_id, "UNKNOWN")
+            if species:
+                species_counts[species] = species_counts.get(species, 0) + 1
+        protein_counts[sample] = species_counts
+    
+    # Get all species
+    all_species = sorted(set(sp for counts in protein_counts.values() for sp in counts.keys()))
+    
+    # Create stacked bar chart
+    fig = go.Figure()
+    
+    colors = {
+        'HUMAN': theme['color_human'],
+        'YEAST': theme['color_yeast'],
+        'ECOLI': theme['color_ecoli'],
+        'MOUSE': '#9467bd',
+        'UNKNOWN': '#999999'
+    }
+    
+    for species in all_species:
+        counts = [protein_counts[sample].get(species, 0) for sample in numeric_cols]
+        total_count = sum(counts)
+        
+        fig.add_trace(go.Bar(
+            name=f"{species} (n={total_count})",
+            x=numeric_cols,
+            y=counts,
+            marker_color=colors.get(species, '#cccccc'),
+            hovertemplate=f"<b>{species}</b><br>Sample: %{{x}}<br>Proteins: %{{y}}<extra></extra>"
+        ))
+    
+    fig.update_layout(
+        barmode='stack',
+        title="Protein Counts per Sample",
+        xaxis_title="Sample",
+        yaxis_title="Number of Proteins",
+        plot_bgcolor=theme['bg_primary'],
+        paper_bgcolor=theme['paper_bg'],
+        font=dict(family=FONT_FAMILY, size=14, color=theme['text_primary']),
+        showlegend=True,
+        legend=dict(title="Species", orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
+        height=500,
+        hovermode='x unified'
+    )
+    
+    fig.update_xaxes(showgrid=True, gridcolor=theme['grid'], tickangle=-45)
+    fig.update_yaxes(showgrid=True, gridcolor=theme['grid'])
+    
+    # Summary dataframe
+    summary_data = []
+    for species in all_species:
+        total = sum(protein_counts[sample].get(species, 0) for sample in numeric_cols)
+        avg = total / len(numeric_cols)
+        min_count = min(protein_counts[sample].get(species, 0) for sample in numeric_cols)
+        max_count = max(protein_counts[sample].get(species, 0) for sample in numeric_cols)
+        summary_data.append({
+            'Species': species,
+            'Total': total,
+            'Avg/Sample': f"{avg:.1f}",
+            'Min': min_count,
+            'Max': max_count
+        })
+    
+    return fig, pd.DataFrame(summary_data)
+
+@st.cache_data(ttl=3600, show_spinner="Creating box plots...")
+def create_boxplot_by_condition(
+    df_log2: pd.DataFrame,
+    condition_dict: dict,
+    conditions_to_plot: list,
+    theme: dict
+) -> tuple[go.Figure, pd.DataFrame]:
+    """
+    Create boxplots of log2 intensities grouped by experimental condition.
+    
+    Args:
+        df_log2: Log2-transformed data
+        condition_dict: Dict mapping condition → list of samples
+        conditions_to_plot: List of conditions to include (typically ["A", "B"])
+        theme: Theme colors dictionary
+    
+    Returns:
+        (figure, summary_stats_dataframe) tuple
+    """
+    fig = go.Figure()
+    
+    condition_colors = {
+        conditions_to_plot[0]: theme['color_human'],
+        conditions_to_plot[1]: theme['color_yeast'] if len(conditions_to_plot) > 1 else theme['color_ecoli']
+    }
+    
+    for cond in conditions_to_plot:
+        samples = condition_dict[cond]
+        
+        for sample in samples:
+            values = df_log2[sample].dropna()
+            values = values[values != 0.0]
+            
+            fig.add_trace(go.Box(
+                y=values,
+                name=sample,
+                marker_color=condition_colors[cond],
+                legendgroup=cond,
+                legendgrouptitle_text=f"Condition {cond}",
+                boxmean='sd',
+                hovertemplate=f"<b>{sample}</b><br>Intensity: %{{y:.2f}}<extra></extra>"
+            ))
+    
+    fig.update_layout(
+        title="Log2 Intensity Distribution by Condition",
+        xaxis_title="Sample",
+        yaxis_title="Log2 Intensity",
+        plot_bgcolor=theme['bg_primary'],
+        paper_bgcolor=theme['paper_bg'],
+        font=dict(family=FONT_FAMILY, size=14, color=theme['text_primary']),
+        showlegend=True,
+        height=600
+    )
+    
+    fig.update_xaxes(showgrid=True, gridcolor=theme['grid'], tickangle=-45)
+    fig.update_yaxes(showgrid=True, gridcolor=theme['grid'])
+    
+    # Summary statistics
+    summary_stats = []
+    for cond in conditions_to_plot:
+        samples = condition_dict[cond]
+        vals = np.concatenate([
+            df_log2[s].dropna().values[df_log2[s].dropna() != 0.0]
+            for s in samples
+        ])
+        
+        summary_stats.append({
+            'Condition': cond,
+            'N Samples': len(samples),
+            'Mean': f"{np.mean(vals):.2f}",
+            'Median': f"{np.median(vals):.2f}",
+            'Std Dev': f"{np.std(vals):.2f}",
+            'Min': f"{np.min(vals):.2f}",
+            'Max': f"{np.max(vals):.2f}"
+        })
+    
+    return fig, pd.DataFrame(summary_stats)
