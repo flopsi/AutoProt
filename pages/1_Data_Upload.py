@@ -447,37 +447,309 @@ if uploaded_file is not None:
         
         st.markdown("---")
         
-        # --- Option 3: Filter by CV ---
-        st.subheader("3. Filter by Coefficient of Variation")
+       # --- Step 3: Filter by Coefficient of Variation ---
+st.subheader("3. Filter by Coefficient of Variation")
+
+st.markdown("""
+Remove proteins with high variability across samples.
+**CV = std / mean** (excludes intensities == 1.0 from calculation)
+""")
+
+# Detect conditions from column names
+from helpers.analysis import detect_conditions_from_columns, group_columns_by_condition
+
+conditions = detect_conditions_from_columns(selected_numeric)
+
+# Calculate CVs
+cv_data = {
+    'Protein': [],
+    'CV_Overall': [],
+}
+
+# Add per-condition CV columns
+for cond in conditions:
+    cv_data[f'CV_{cond}'] = []
+
+for protein_id, row in df_raw.iterrows():
+    cv_data['Protein'].append(protein_id)
+    
+    # --- Overall CV ---
+    vals_overall = row[selected_numeric]
+    valid_vals_overall = vals_overall[vals_overall != 1.0]
+    
+    if len(valid_vals_overall) >= 2:
+        mean_val = valid_vals_overall.mean()
+        std_val = valid_vals_overall.std()
+        cv_overall = std_val / mean_val if mean_val > 0 else np.nan
+    else:
+        cv_overall = np.nan
+    
+    cv_data['CV_Overall'].append(cv_overall)
+    
+    # --- Per-condition CV ---
+    for cond in conditions:
+        cond_cols = group_columns_by_condition(selected_numeric, cond)
         
-        max_cv = st.slider(
-            "Maximum CV per protein:",
-            min_value=0.1,
-            max_value=2.0,
-            value=1.0,
-            step=0.1,
-            help="CV = std/mean, measures relative variability"
-        )
-        
-        # Preview impact
-        means = df_raw[selected_numeric].mean(axis=1)
-        stds = df_raw[selected_numeric].std(axis=1)
-        cvs = stds / means
-        n_would_remove_cv = (cvs > max_cv).sum()
-        
-        st.info(f"📊 Preview: {n_would_remove_cv} proteins would be removed ({n_would_remove_cv/len(df_raw)*100:.1f}%)")
-        
-        if st.button("🗑️ Apply CV Filter"):
-            df_cleaned = filter_by_cv(
-                df_raw,
-                selected_numeric,
-                max_cv=max_cv
-            )
+        if len(cond_cols) >= 2:
+            vals_cond = row[cond_cols]
+            valid_vals_cond = vals_cond[vals_cond != 1.0]
             
-            n_removed = len(df_raw) - len(df_cleaned)
-            st.success(f"✅ Removed {n_removed} proteins")
-            df_raw = df_cleaned
-            st.rerun()
+            if len(valid_vals_cond) >= 2:
+                mean_cond = valid_vals_cond.mean()
+                std_cond = valid_vals_cond.std()
+                cv_cond = std_cond / mean_cond if mean_cond > 0 else np.nan
+            else:
+                cv_cond = np.nan
+        else:
+            cv_cond = np.nan
+        
+        cv_data[f'CV_{cond}'].append(cv_cond)
+
+# Create CV DataFrame
+cv_df = pd.DataFrame(cv_data).set_index('Protein')
+
+# --- Filter Options ---
+st.markdown("**Filter Strategy**")
+
+filter_strategy = st.radio(
+    "Choose CV filter strategy:",
+    options=[
+        "Overall CV only",
+        "Per-condition CV (all must pass)",
+        "Per-condition CV (any must pass)",
+        "Custom thresholds per condition"
+    ],
+    help="""
+    - Overall: Filter by CV across all samples
+    - All must pass: Protein must have low CV in ALL conditions
+    - Any must pass: Protein must have low CV in AT LEAST ONE condition
+    - Custom: Set different thresholds for each condition
+    """
+)
+
+# --- Threshold Selection ---
+if filter_strategy == "Overall CV only":
+    max_cv_overall = st.slider(
+        "Maximum overall CV:",
+        min_value=0.1,
+        max_value=2.0,
+        value=1.0,
+        step=0.1,
+        help="CV > 1.0 means std > mean (high variability)"
+    )
+    
+    # Apply filter
+    mask_pass = cv_df['CV_Overall'] <= max_cv_overall
+    n_would_remove = (~mask_pass).sum()
+
+elif filter_strategy == "Per-condition CV (all must pass)":
+    max_cv_condition = st.slider(
+        "Maximum CV per condition:",
+        min_value=0.1,
+        max_value=2.0,
+        value=0.8,
+        step=0.1,
+        help="All conditions must be below this threshold"
+    )
+    
+    # Apply filter: all conditions must pass
+    mask_pass = True
+    for cond in conditions:
+        mask_pass = mask_pass & (cv_df[f'CV_{cond}'] <= max_cv_condition)
+    
+    n_would_remove = (~mask_pass).sum()
+
+elif filter_strategy == "Per-condition CV (any must pass)":
+    max_cv_condition = st.slider(
+        "Maximum CV per condition:",
+        min_value=0.1,
+        max_value=2.0,
+        value=0.8,
+        step=0.1,
+        help="At least one condition must be below this threshold"
+    )
+    
+    # Apply filter: any condition can pass
+    mask_pass = False
+    for cond in conditions:
+        mask_pass = mask_pass | (cv_df[f'CV_{cond}'] <= max_cv_condition)
+    
+    n_would_remove = (~mask_pass).sum()
+
+else:  # Custom thresholds
+    st.markdown("**Set Custom Thresholds**")
+    
+    custom_thresholds = {}
+    cols = st.columns(len(conditions))
+    
+    for idx, cond in enumerate(conditions):
+        with cols[idx]:
+            custom_thresholds[cond] = st.number_input(
+                f"Max CV for {cond}:",
+                min_value=0.1,
+                max_value=2.0,
+                value=1.0,
+                step=0.1,
+                key=f"cv_threshold_{cond}"
+            )
+    
+    # Apply custom filters (all must pass)
+    mask_pass = True
+    for cond, threshold in custom_thresholds.items():
+        mask_pass = mask_pass & (cv_df[f'CV_{cond}'] <= threshold)
+    
+    n_would_remove = (~mask_pass).sum()
+
+# --- Preview Impact ---
+st.markdown("**Filter Impact Preview**")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.metric(
+        "Proteins to remove",
+        int(n_would_remove),
+        delta=f"-{n_would_remove/len(cv_df)*100:.1f}%"
+    )
+
+with col2:
+    if len(cv_df['CV_Overall'].dropna()) > 0:
+        st.metric(
+            "Median Overall CV",
+            f"{cv_df['CV_Overall'].median():.2f}",
+            help="Lower is better (less variable)"
+        )
+
+# --- CV Statistics Table ---
+st.markdown("**CV Statistics by Condition**")
+
+cv_stats = pd.DataFrame({
+    'Condition': ['Overall'] + conditions,
+    'Mean CV': [cv_df['CV_Overall'].mean()] + [cv_df[f'CV_{cond}'].mean() for cond in conditions],
+    'Median CV': [cv_df['CV_Overall'].median()] + [cv_df[f'CV_{cond}'].median() for cond in conditions],
+    'Std CV': [cv_df['CV_Overall'].std()] + [cv_df[f'CV_{cond}'].std() for cond in conditions],
+    'Min CV': [cv_df['CV_Overall'].min()] + [cv_df[f'CV_{cond}'].min() for cond in conditions],
+    'Max CV': [cv_df['CV_Overall'].max()] + [cv_df[f'CV_{cond}'].max() for cond in conditions],
+})
+
+st.dataframe(
+    cv_stats.style.format({
+        'Mean CV': '{:.3f}',
+        'Median CV': '{:.3f}',
+        'Std CV': '{:.3f}',
+        'Min CV': '{:.3f}',
+        'Max CV': '{:.3f}',
+    }),
+    hide_index=True,
+    use_container_width=True
+)
+
+# --- CV Distribution Visualization ---
+with st.expander("📊 View CV Distributions", expanded=False):
+    
+    # Create distribution table
+    st.markdown("**Overall CV Distribution**")
+    cv_overall_clean = cv_df['CV_Overall'].dropna()
+    
+    cv_dist_overall = pd.DataFrame({
+        "CV Range": ["0-0.25", "0.25-0.5", "0.5-0.75", "0.75-1.0", "1.0-1.5", ">1.5"],
+        "Count": [
+            ((cv_overall_clean >= 0) & (cv_overall_clean < 0.25)).sum(),
+            ((cv_overall_clean >= 0.25) & (cv_overall_clean < 0.5)).sum(),
+            ((cv_overall_clean >= 0.5) & (cv_overall_clean < 0.75)).sum(),
+            ((cv_overall_clean >= 0.75) & (cv_overall_clean < 1.0)).sum(),
+            ((cv_overall_clean >= 1.0) & (cv_overall_clean < 1.5)).sum(),
+            (cv_overall_clean >= 1.5).sum(),
+        ]
+    })
+    cv_dist_overall['Percentage'] = (cv_dist_overall['Count'] / len(cv_overall_clean) * 100).round(1)
+    
+    st.dataframe(cv_dist_overall, hide_index=True, use_container_width=True)
+    
+    st.markdown("---")
+    
+    # Per-condition distributions
+    for cond in conditions:
+        st.markdown(f"**Condition {cond} - CV Distribution**")
+        cv_cond_clean = cv_df[f'CV_{cond}'].dropna()
+        
+        if len(cv_cond_clean) > 0:
+            cv_dist_cond = pd.DataFrame({
+                "CV Range": ["0-0.25", "0.25-0.5", "0.5-0.75", "0.75-1.0", "1.0-1.5", ">1.5"],
+                "Count": [
+                    ((cv_cond_clean >= 0) & (cv_cond_clean < 0.25)).sum(),
+                    ((cv_cond_clean >= 0.25) & (cv_cond_clean < 0.5)).sum(),
+                    ((cv_cond_clean >= 0.5) & (cv_cond_clean < 0.75)).sum(),
+                    ((cv_cond_clean >= 0.75) & (cv_cond_clean < 1.0)).sum(),
+                    ((cv_cond_clean >= 1.0) & (cv_cond_clean < 1.5)).sum(),
+                    (cv_cond_clean >= 1.5).sum(),
+                ]
+            })
+            cv_dist_cond['Percentage'] = (cv_dist_cond['Count'] / len(cv_cond_clean) * 100).round(1)
+            
+            st.dataframe(cv_dist_cond, hide_index=True, use_container_width=True)
+        else:
+            st.warning(f"No valid CV data for condition {cond}")
+
+# --- Top Variable Proteins ---
+with st.expander("🔍 View Most Variable Proteins", expanded=False):
+    st.markdown("**Top 20 Proteins by Overall CV**")
+    
+    top_variable = cv_df.nlargest(20, 'CV_Overall')[['CV_Overall'] + [f'CV_{cond}' for cond in conditions]]
+    
+    st.dataframe(
+        top_variable.style.format({col: '{:.3f}' for col in top_variable.columns}),
+        use_container_width=True
+    )
+
+# --- Apply CV Filter ---
+if st.button("🗑️ Apply CV Filter", key="cv_filter_btn"):
+    # Get proteins that pass the filter
+    keep_proteins = cv_df[mask_pass].index
+    df_cleaned = df_raw.loc[keep_proteins].copy()
+    
+    n_removed = len(df_raw) - len(df_cleaned)
+    st.success(f"✅ Removed {n_removed} proteins ({n_removed/len(df_raw)*100:.1f}%)")
+    
+    # Show per-condition removal stats
+    st.markdown("**Removal Details by Condition:**")
+    removal_details = []
+    
+    for cond in conditions:
+        cv_cond = cv_df[f'CV_{cond}']
+        if filter_strategy == "Custom thresholds":
+            threshold = custom_thresholds[cond]
+        elif filter_strategy == "Overall CV only":
+            threshold = max_cv_overall
+        else:
+            threshold = max_cv_condition
+        
+        n_fail = (cv_cond > threshold).sum()
+        removal_details.append({
+            'Condition': cond,
+            'Threshold': f'{threshold:.2f}',
+            'Failed': int(n_fail),
+            'Pass Rate': f'{(1 - n_fail/len(cv_cond))*100:.1f}%'
+        })
+    
+    st.dataframe(
+        pd.DataFrame(removal_details),
+        hide_index=True,
+        use_container_width=True
+    )
+    
+    # Update dataframe
+    df_raw = df_cleaned
+    st.rerun()
+
+# --- Export CV Data ---
+st.markdown("**Export CV Data**")
+download_button_csv(
+    cv_df,
+    filename="cv_analysis.csv",
+    label="📥 Download CV Data"
+)
+
     
     # ============================================================================
     # SECTION: DATA VALIDATION
