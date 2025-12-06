@@ -35,10 +35,10 @@ st.set_page_config(page_title="Visual EDA", layout="wide")
 
 with st.sidebar:
     st.title("⚙️ Options")
-    if st.button("🔄 Reset This Page", use_container_width=True):
+    if st.button("🔄 Reset This Page", width="stretch"):
         reset_eda()
     st.markdown("---")
-    if st.button("🏠 Restart Pipeline", use_container_width=True):
+    if st.button("🏠 Restart Pipeline", width="stretch"):
         restart_pipeline()
 
 # ============================================================================
@@ -92,10 +92,10 @@ st.header("1️⃣ Protein Counts per Sample")
 st.markdown("Number of quantified proteins in each sample, stacked by species.")
 
 fig1, summary_df1 = create_protein_count_stacked_bar(df_log2, numeric_cols, species_mapping, theme)
-st.plotly_chart(fig1, use_container_width=True)
+st.plotly_chart(fig1, width="stretch")
 
 st.markdown("**Summary by Species:**")
-st.dataframe(summary_df1, use_container_width=True, hide_index=True)
+st.dataframe(summary_df1, width="stretch", hide_index=True)
 
 st.markdown("---")
 
@@ -110,10 +110,10 @@ if condition_dict and len(condition_dict) >= 2:
     conditions_to_plot = sorted(condition_dict.keys())[:2]
     
     fig2, summary_df2 = create_boxplot_by_condition(df_log2, condition_dict, conditions_to_plot, theme)
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width="stretch")
     
     st.markdown("**Summary Statistics by Condition:**")
-    st.dataframe(summary_df2, use_container_width=True, hide_index=True)
+    st.dataframe(summary_df2, width="stretch", hide_index=True)
 else:
     st.warning("⚠️ Need at least 2 conditions for comparison")
 
@@ -133,16 +133,16 @@ st.markdown("---")
 c1, c2, c3, c4 = st.columns(4)
 
 with c1:
-    if st.button("← Upload", use_container_width=True):
+    if st.button("← Upload", width="stretch"):
         st.switch_page("pages/1_Data_Upload.py")
 with c2:
-    if st.button("Statistical EDA →", use_container_width=True, type="primary"):
+    if st.button("Statistical EDA →", width="stretch", type="primary"):
         st.switch_page("pages/3_Statistical_EDA.py")
 with c3:
-    if st.button("🔄 Reset", use_container_width=True):
+    if st.button("🔄 Reset", width="stretch"):
         reset_eda()
 with c4:
-    if st.button("🏠 Restart", use_container_width=True):
+    if st.button("🏠 Restart", width="stretch"):
         restart_pipeline()
 
 st.caption("✅ All computations cached | Fast reruns")
