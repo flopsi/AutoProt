@@ -18,7 +18,8 @@ from helpers.analysis import (
     count_proteins_by_species
 )
 from helpers.audit import log_event
-
+from helpers.viz import create_protein_count_stacked_bar
+from helpers.core import get_theme
 # ============================================================================
 # PAGE CONFIGURATION
 # ============================================================================
