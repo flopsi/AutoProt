@@ -321,7 +321,7 @@ if species_col and species_col not in columns_to_keep:
     columns_to_keep.append(species_col)
 
 df = df[columns_to_keep].copy()  # Explicit copy; dropped columns purged
-
+df = df.set_index(protein_id_col)
 # === STEP 8: PREVIEW ===
 st.subheader("7️⃣ Preview")
 
@@ -403,6 +403,7 @@ st.info(f"""
 
 Click below to **cache your data** and proceed to analysis.
 """)
+df = df.set_index(protein_id_col)  # <-- ADD THIS LINE
 
 if st.button("🎯 Confirm & Cache Data", type="primary", width="stretch"):
     
