@@ -85,7 +85,7 @@ valid_per_sample = count_valid_proteins_per_species_sample(
     protein_data.raw,
     protein_data.numeric_cols,
     protein_data.species_mapping,
-    missing_value=1.0
+    missing_value==1.0
 )
 
 # Display as table with simple formatting (no gradient - no matplotlib dependency)
