@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from plotly import graph_objects as go
 from helpers.core import ProteinData, get_theme, TransformCache
-from helpers.viz import create_protein_count_stacked_bar, create_sample_boxplots
+from helpers.viz import create_protein_count_stacked_bar, create_sample_violins
 
 # ============================================================================
 # LOAD DATA & CACHE
@@ -138,7 +138,7 @@ st.subheader("3️⃣ Log2 Intensity Distribution by Sample")
 
 st.info("**Single boxplot with 6 traces**: Condition A (A1-A3, green) vs Condition B (B1-B3, teal).")
 
-fig3, df_stats3 = create_sample_boxplots(
+fig3, df_stats3 = create_sample_violins(
     df_log2,
     protein_data.numeric_cols,
     theme
