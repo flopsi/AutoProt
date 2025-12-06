@@ -822,11 +822,6 @@ def create_qc_dashboard(
     
     return fig
 
-# ============================================================================
-# EDA-SPECIFIC PLOTS
-# Protein counts and condition-based boxplots
-# ============================================================================
-
 @st.cache_data(ttl=3600, show_spinner="Computing protein counts...")
 def create_protein_count_stacked_bar(
     df_log2: pd.DataFrame,
@@ -835,9 +830,9 @@ def create_protein_count_stacked_bar(
     theme: dict
 ) -> tuple[go.Figure, pd.DataFrame]:
     """
-    Create stacked bar chart of protein counts per sample, grouped by species.
+    Create stacked bar chart of UNIQUE protein counts per sample, grouped by species.
     
-    Optimized: Vectorized species lookup and counting.
+    Each protein counted once per species, regardless of how many samples it appears in.
     
     Args:
         df_log2: Data with numeric columns (protein IDs as index)
@@ -848,13 +843,13 @@ def create_protein_count_stacked_bar(
     Returns:
         (figure, summary_dataframe) tuple
     """
-    # Map species for all proteins at once (vectorized)
+    # Map species for all proteins
     species_series = pd.Series(
         [species_mapping.get(pid, "UNKNOWN") for pid in df_log2.index],
         index=df_log2.index
     )
     
-    # Count valid proteins per sample per species
+    # For each sample: count UNIQUE proteins per species with valid intensity
     protein_counts = {}
     all_species = set()
     
@@ -862,7 +857,7 @@ def create_protein_count_stacked_bar(
         # Mask: valid (not NaN, not 0.0)
         valid_mask = (df_log2[sample].notna()) & (df_log2[sample] != 0.0)
         
-        # Count species in valid proteins
+        # Count unique proteins per species in this sample
         valid_species = species_series[valid_mask].value_counts().to_dict()
         protein_counts[sample] = valid_species
         all_species.update(valid_species.keys())
@@ -880,12 +875,24 @@ def create_protein_count_stacked_bar(
         'UNKNOWN': '#999999'
     }
     
+    # Pre-calculate unique protein counts per species (NOT summed across samples)
+    unique_protein_counts = {}
+    for species in all_species:
+        # Get ALL proteins of this species that have ANY valid intensity
+        species_proteins = species_series[species_series == species].index
+        valid_in_any_sample = (
+            (df_log2.loc[species_proteins].notna()) & 
+            (df_log2.loc[species_proteins] != 0.0)
+        ).any(axis=1).sum()
+        unique_protein_counts[species] = valid_in_any_sample
+    
+    # Add bars: show counts per sample, but legend shows total unique proteins
     for species in all_species:
         counts = [protein_counts[sample].get(species, 0) for sample in numeric_cols]
-        total_count = sum(counts)
+        unique_total = unique_protein_counts[species]
         
         fig.add_trace(go.Bar(
-            name=f"{species} (n={total_count})",
+            name=f"{species} (Unique: {unique_total})",
             x=numeric_cols,
             y=counts,
             marker_color=colors.get(species, '#cccccc'),
@@ -901,7 +908,7 @@ def create_protein_count_stacked_bar(
         paper_bgcolor=theme['paper_bg'],
         font=dict(family=FONT_FAMILY, size=14, color=theme['text_primary']),
         showlegend=True,
-        legend=dict(title="Species", orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
+        legend=dict(title="Species (Unique Proteins)", orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
         height=500,
         hovermode='x unified'
     )
@@ -909,21 +916,20 @@ def create_protein_count_stacked_bar(
     fig.update_xaxes(showgrid=True, gridcolor=theme['grid'], tickangle=-45)
     fig.update_yaxes(showgrid=True, gridcolor=theme['grid'])
     
-    # Summary statistics
+    # Summary: unique proteins per species
     summary_data = []
     for species in all_species:
-        total = sum(protein_counts[sample].get(species, 0) for sample in numeric_cols)
-        avg = total / len(numeric_cols)
-        counts_per_sample = [protein_counts[sample].get(species, 0) for sample in numeric_cols]
-        min_count = min(counts_per_sample)
-        max_count = max(counts_per_sample)
+        unique_total = unique_protein_counts[species]
+        min_per_sample = min([protein_counts[sample].get(species, 0) for sample in numeric_cols])
+        max_per_sample = max([protein_counts[sample].get(species, 0) for sample in numeric_cols])
+        avg_per_sample = unique_total / len(numeric_cols)
         
         summary_data.append({
             'Species': species,
-            'Total': total,
-            'Avg/Sample': f"{avg:.1f}",
-            'Min': min_count,
-            'Max': max_count
+            'Unique Proteins': unique_total,
+            'Min/Sample': min_per_sample,
+            'Max/Sample': max_per_sample,
+            'Avg/Sample': f"{avg_per_sample:.1f}"
         })
     
     return fig, pd.DataFrame(summary_data)
