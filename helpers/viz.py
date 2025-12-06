@@ -532,4 +532,292 @@ def create_volcano_plot(
                 color=color_map[cat],
                 size=size,
                 opacity=opacity,
-                line=dict
+                line=dict(width=0)
+            ),
+            hovertemplate="log2FC: %{x:.2f}<br>-log10(p): %{y:.2f}<extra></extra>"
+        ))
+    
+    # Add threshold lines
+    fig.add_vline(
+        x=fc_threshold,
+        line_dash="dash",
+        line_color=theme["text_secondary"],
+        opacity=0.5,
+        annotation_text=f"FC={fc_threshold}"
+    )
+    fig.add_vline(
+        x=-fc_threshold,
+        line_dash="dash",
+        line_color=theme["text_secondary"],
+        opacity=0.5,
+        annotation_text=f"FC={-fc_threshold}"
+    )
+    fig.add_hline(
+        y=-np.log10(pval_threshold),
+        line_dash="dash",
+        line_color=theme["text_secondary"],
+        opacity=0.5,
+        annotation_text=f"p={pval_threshold}"
+    )
+    
+    fig.update_layout(
+        title="Volcano Plot",
+        xaxis_title="log2 Fold Change",
+        yaxis_title="-log10(p-value)",
+        height=600,
+        plot_bgcolor=theme["bg_secondary"],
+        paper_bgcolor=theme["paper_bg"],
+        font=dict(family=FONT_FAMILY, color=theme["text_primary"]),
+        hovermode="closest",
+    )
+    
+    return fig
+
+# ============================================================================
+# PCA PLOT
+# Principal component analysis for sample clustering
+# ============================================================================
+
+@st.cache_data(ttl=1800)
+def create_pca_plot(
+    df: pd.DataFrame,
+    numeric_cols: list,
+    group_mapping: dict = None,
+    theme_name: str = "light",
+    dim: int = 2,
+) -> go.Figure:
+    """
+    Create PCA plot with optional group coloring.
+    
+    Args:
+        df: Data matrix (proteins × samples)
+        numeric_cols: Columns to include in PCA
+        group_mapping: Optional dict mapping column → group name
+        theme_name: Theme for colors
+        dim: Dimensionality (2 or 3)
+    
+    Returns:
+        Plotly 2D or 3D scatter plot
+    """
+    theme = get_theme(theme_name)
+    
+    # Prepare data (samples as rows)
+    data = df[numeric_cols].fillna(df[numeric_cols].mean())
+    
+    # Run PCA
+    pca = PCA(n_components=min(3, len(numeric_cols)))
+    transformed = pca.fit_transform(data.T)
+    
+    # Color mapping
+    colors = []
+    if group_mapping:
+        species_colors = {
+            "HUMAN": theme["color_human"],
+            "YEAST": theme["color_yeast"],
+            "ECOLI": theme["color_ecoli"],
+        }
+        colors = [
+            species_colors.get(group_mapping.get(col, "UNKNOWN"), theme["accent"])
+            for col in numeric_cols
+        ]
+    else:
+        colors = [theme["accent"]] * len(numeric_cols)
+    
+    # Create plot
+    if dim == 3 and transformed.shape[1] >= 3:
+        fig = go.Figure(data=[go.Scatter3d(
+            x=transformed[:, 0],
+            y=transformed[:, 1],
+            z=transformed[:, 2],
+            mode="markers+text",
+            marker=dict(size=8, color=colors, opacity=0.8),
+            text=numeric_cols,
+            textposition="top center",
+            hoverinfo="text",
+        )])
+        title = f"PCA 3D (PC1={pca.explained_variance_ratio_[0]:.1%}, PC2={pca.explained_variance_ratio_[1]:.1%}, PC3={pca.explained_variance_ratio_[2]:.1%})"
+    else:
+        fig = go.Figure(data=[go.Scatter(
+            x=transformed[:, 0],
+            y=transformed[:, 1],
+            mode="markers+text",
+            marker=dict(size=10, color=colors, opacity=0.8),
+            text=numeric_cols,
+            textposition="top center",
+            hoverinfo="text",
+        )])
+        title = f"PCA (PC1={pca.explained_variance_ratio_[0]:.1%}, PC2={pca.explained_variance_ratio_[1]:.1%})"
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title=f"PC1 ({pca.explained_variance_ratio_[0]:.1%})",
+        yaxis_title=f"PC2 ({pca.explained_variance_ratio_[1]:.1%})",
+        height=600,
+        plot_bgcolor=theme["bg_secondary"],
+        font=dict(family=FONT_FAMILY),
+    )
+    
+    return fig
+
+# ============================================================================
+# HEATMAP
+# Hierarchical clustered heatmap
+# ============================================================================
+
+@st.cache_data(ttl=1800)
+def create_heatmap_clustered(
+    df: pd.DataFrame,
+    numeric_cols: list,
+    theme_name: str = "light",
+) -> go.Figure:
+    """
+    Create hierarchical clustered heatmap.
+    Rows = proteins, Columns = samples, colored by intensity.
+    
+    Args:
+        df: Data matrix (proteins × samples)
+        numeric_cols: Column names to include
+        theme_name: Theme for styling
+    
+    Returns:
+        Plotly figure with heatmap + row dendrogram
+    """
+    theme = get_theme(theme_name)
+    
+    # Extract data
+    data = df[numeric_cols].fillna(0).astype(float)
+    
+    # Row clustering
+    row_linkage = linkage(data, method="ward")
+    row_dendro = dendrogram(row_linkage, no_plot=True)
+    row_order = row_dendro["leaves"]
+    
+    # Column clustering
+    col_linkage = linkage(data.T, method="ward")
+    col_dendro = dendrogram(col_linkage, no_plot=True)
+    col_order = col_dendro["leaves"]
+    
+    # Reorder data
+    clustered_data = data.iloc[row_order, col_order]
+    
+    # Create heatmap
+    fig = go.Figure(data=go.Heatmap(
+        z=clustered_data.values,
+        x=clustered_data.columns,
+        y=clustered_data.index,
+        colorscale="Viridis",
+        colorbar=dict(title="Intensity"),
+    ))
+    
+    fig.update_layout(
+        title="Clustered Heatmap",
+        height=800,
+        xaxis_title="Samples",
+        yaxis_title="Proteins",
+        plot_bgcolor=theme["bg_secondary"],
+    )
+    
+    return fig
+
+# ============================================================================
+# QC DASHBOARD
+# Multi-panel quality control overview
+# ============================================================================
+
+@st.cache_data(ttl=1800)
+def create_qc_dashboard(
+    df: pd.DataFrame,
+    numeric_cols: list,
+    results_df: pd.DataFrame = None,
+    theme_name: str = "light",
+) -> go.Figure:
+    """
+    Multi-panel QC dashboard showing:
+    - Missing rate per sample
+    - Intensity distribution (box plots)
+    - CV distribution
+    - Significance breakdown (if results provided)
+    
+    Args:
+        df: Raw data matrix
+        numeric_cols: Columns to analyze
+        results_df: Optional analysis results with 'regulation' column
+        theme_name: Theme
+    
+    Returns:
+        Plotly figure with 2×2 subplots
+    """
+    theme = get_theme(theme_name)
+    
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=("Missing Rate", "Intensity Distribution", "CV Distribution", "Significance"),
+        specs=[[{"type": "bar"}, {"type": "box"}],
+               [{"type": "histogram"}, {"type": "pie"}]],
+    )
+    
+    # Panel 1: Missing rate per sample
+    missing_rates = df[numeric_cols].isna().mean() * 100
+    fig.add_trace(
+        go.Bar(
+            x=numeric_cols,
+            y=missing_rates,
+            marker_color=theme["accent"],
+            showlegend=False
+        ),
+        row=1, col=1
+    )
+    
+    # Panel 2: Intensity distribution (first 5 samples)
+    for col in numeric_cols[:min(5, len(numeric_cols))]:
+        fig.add_trace(
+            go.Box(y=df[col].dropna(), name=col, showlegend=False),
+            row=1, col=2
+        )
+    
+    # Panel 3: CV distribution
+    cv_vals = []
+    for _, row in df.iterrows():
+        vals = row[numeric_cols].dropna()
+        if len(vals) > 1:
+            cv = vals.std() / vals.mean() * 100 if vals.mean() > 0 else np.nan
+            if np.isfinite(cv):
+                cv_vals.append(cv)
+    
+    if cv_vals:
+        fig.add_trace(
+            go.Histogram(x=cv_vals, nbinsx=30, marker_color=theme["accent"], showlegend=False),
+            row=2, col=1
+        )
+    
+    # Panel 4: Significance pie chart
+    if results_df is not None and "regulation" in results_df.columns:
+        sig_counts = results_df["regulation"].value_counts()
+        fig.add_trace(
+            go.Pie(
+                labels=sig_counts.index,
+                values=sig_counts.values,
+                marker=dict(colors=[
+                    theme["color_up"],
+                    theme["color_down"],
+                    theme["color_ns"],
+                    theme["color_nt"]
+                ][:len(sig_counts)]),
+                showlegend=True
+            ),
+            row=2, col=2
+        )
+    
+    fig.update_yaxes(title_text="Missing %", row=1, col=1)
+    fig.update_yaxes(title_text="Intensity", row=1, col=2)
+    fig.update_xaxes(title_text="CV %", row=2, col=1)
+    
+    fig.update_layout(
+        title="Quality Control Dashboard",
+        height=800,
+        showlegend=True,
+        plot_bgcolor=theme["bg_secondary"],
+        font=dict(family=FONT_FAMILY),
+    )
+    
+    return fig
