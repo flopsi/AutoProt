@@ -1,33 +1,25 @@
 """
 pages/2_Visual_EDA.py
-Exploratory data analysis - SIMPLIFIED
+Exploratory data analysis for protein and/or peptide data - YOUR ORIGINAL PLOTS
 """
 
 import streamlit as st
 import polars as pl
-import polars.selectors as cs
-import numpy as np
-import pandas as pd
 from plotnine import *
+import numpy as np
 import matplotlib.pyplot as plt
 import gc
 
 st.set_page_config(page_title="Visual EDA", page_icon="📊", layout="wide")
 
 # ============================================================================
-# HELPER FUNCTIONS
+# HELPER FUNCTIONS (MEMORY OPTIMIZATION ONLY)
 # ============================================================================
 
 def clear_plot_memory():
     """Close all matplotlib figures and collect garbage."""
     plt.close('all')
     gc.collect()
-
-def sample_data_for_plot(df: pl.DataFrame, max_rows: int = 5000) -> pl.DataFrame:
-    """Sample dataframe if it's too large for plotting."""
-    if df.shape[0] > max_rows:
-        return df.sample(n=max_rows, seed=42)
-    return df
 
 # ============================================================================
 # CHECK DATA AVAILABILITY
@@ -58,122 +50,477 @@ else:
     tab_peptide = st.container()
 
 # ============================================================================
-# PROTEIN EDA
+# SHARED PLOTTING FUNCTION
+# ============================================================================
+
+def render_eda(df, numeric_cols, species_col, id_col, replicates, data_type):
+    """Render EDA plots for protein or peptide data."""
+    
+    # ========================================================================
+    # CACHE TRANSFORMS
+    # ========================================================================
+    
+    @st.cache_data
+    def compute_log2(df_dict: dict, cols: list) -> dict:
+        """Cache log2 transformation."""
+        df_temp = pl.from_dict(df_dict)
+        df_log2 = df_temp.with_columns([
+            pl.col(c).clip(lower_bound=1.0).log(2).alias(c) for c in cols
+        ])
+        return df_log2.to_dict(as_series=False)
+    
+    # Get log2 data
+    df_log2 = pl.from_dict(compute_log2(df.to_dict(as_series=False), numeric_cols))
+    
+    # ========================================================================
+    # 1. OVERVIEW
+    # ========================================================================
+    
+    st.subheader("1️⃣ Dataset Overview")
+    
+    n_species = df[species_col].n_unique()
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric(f"Total {data_type.title()}s", f"{df.shape[0]:,}")
+    c2.metric("Total Samples", len(numeric_cols))
+    c3.metric("Species", n_species)
+    c4.metric("Avg/Species", int(df.shape[0] / n_species))
+    
+    st.markdown("---")
+    
+    # ========================================================================
+    # 2. STACKED BAR - PROTEINS PER SPECIES PER SAMPLE
+    # ========================================================================
+    
+    st.subheader(f"2️⃣ Valid {data_type.title()}s per Species per Sample")
+    st.info("**Valid = intensity > 1.0** (excludes missing/NaN/zero)")
+    
+    # Count valid proteins (>1.0) per species per sample
+    df_counts = df.select([id_col, species_col] + numeric_cols).melt(
+        id_vars=[id_col, species_col],
+        value_vars=numeric_cols,
+        variable_name='sample'
+    ).filter(
+        (pl.col('value') > 1.0) & (pl.col('value').is_finite())
+    ).group_by(['sample', species_col]).agg(
+        pl.len().alias('count')
+    ).sort(['sample', species_col]).with_columns([
+        (pl.col('count').cum_sum().over('sample') - pl.col('count') / 2).alias('label_pos')
+    ])
+    
+    # Plot
+    plot = (ggplot(df_counts.to_pandas(), aes(x='sample', y='count', fill=species_col)) +
+     geom_bar(stat='identity') +
+     geom_text(aes(y='label_pos', label='count'), 
+               size=8, color='white', fontweight='bold') +
+     labs(title=f'Valid {data_type.title()} Count by Species per Sample',
+          x='Sample', y=f'{data_type.title()} Count', fill='Species') +
+     theme_minimal() +
+     theme(axis_text_x=element_text(rotation=45, hjust=1),
+           figure_size=(10, 5)))
+    
+    fig = ggplot.draw(plot)
+    st.pyplot(fig)
+    plt.close(fig)
+    del fig, plot
+    
+    # Table
+    df_table = df_counts.pivot(
+        index=species_col,
+        columns='sample',
+        values='count'
+    ).fill_null(0)
+    
+    # Add total column
+    species_totals = df.select([id_col, species_col] + numeric_cols).melt(
+        id_vars=[id_col, species_col],
+        value_vars=numeric_cols
+    ).filter(
+        (pl.col('value') > 1.0) & (pl.col('value').is_finite())
+    ).group_by([id_col, species_col]).agg(
+        pl.len()
+    ).group_by(species_col).agg(
+        pl.len().alias('Total')
+    )
+    
+    df_table = df_table.join(species_totals, on=species_col).sort('Total', descending=True)
+    
+    st.markdown(f"**Valid {data_type.title()}s per Species per Sample:**")
+    st.dataframe(df_table.to_pandas(), width='stretch')
+    
+    st.download_button(
+        "📥 Download Table (CSV)",
+        df_table.write_csv(),
+        f"valid_{data_type}s_per_species.csv",
+        "text/csv"
+    )
+    
+    del df_counts, df_table, species_totals
+    gc.collect()
+    
+    st.markdown("---")
+    
+    # ========================================================================
+    # 3. VIOLIN/BOX PLOT
+    # ========================================================================
+    
+    st.subheader("3️⃣ Log2 Intensity Distribution by Sample")
+    
+    df_long = df_log2.select([id_col] + numeric_cols).melt(
+        id_vars=[id_col],
+        value_vars=numeric_cols,
+        variable_name='sample',
+        value_name='log2_intensity'
+    ).filter(
+        pl.col('log2_intensity').is_finite()
+    )
+    
+    # Add condition grouping
+    df_long = df_long.with_columns(
+        pl.when(pl.col('sample').str.starts_with('A'))
+        .then(pl.lit('A'))
+        .otherwise(pl.lit('B'))
+        .alias('condition')
+    )
+    
+    # Violin plot
+    plot = (ggplot(df_long.to_pandas(), aes(x='sample', y='log2_intensity', fill='condition')) +
+     geom_violin(alpha=0.7) +
+     geom_boxplot(width=0.1, fill='white', outlier_alpha=0.3) +
+     scale_fill_manual(values=['#66c2a5', '#fc8d62']) +
+     labs(title='Log2 Intensity Distribution',
+          x='Sample', y='Log2 Intensity', fill='Condition') +
+     theme_minimal() +
+     theme(axis_text_x=element_text(rotation=45, hjust=1),
+           figure_size=(12, 6)))
+    
+    fig = ggplot.draw(plot)
+    st.pyplot(fig)
+    plt.close(fig)
+    del fig, plot
+    
+    # Summary statistics
+    df_stats = df_long.group_by('sample').agg([
+        pl.col('log2_intensity').len().alias('n'),
+        pl.col('log2_intensity').mean().alias('mean'),
+        pl.col('log2_intensity').median().alias('median'),
+        pl.col('log2_intensity').std().alias('std'),
+        pl.col('log2_intensity').quantile(0.25).alias('q25'),
+        pl.col('log2_intensity').quantile(0.75).alias('q75')
+    ]).sort('sample')
+    
+    st.markdown("**Summary Statistics:**")
+    st.dataframe(df_stats.to_pandas(), width='stretch')
+    
+    st.download_button(
+        "📥 Download Statistics (CSV)",
+        df_stats.write_csv(),
+        "log2_intensity_statistics.csv",
+        "text/csv"
+    )
+    
+    del df_long, df_stats
+    gc.collect()
+    
+    st.markdown("---")
+    
+    # ========================================================================
+    # 4. CV DISTRIBUTION
+    # ========================================================================
+    
+    st.subheader("4️⃣ Coefficient of Variation (CV) by Condition")
+    st.info("**CV = (std / mean) × 100** for each protein across replicates. Lower CV = better reproducibility.")
+    
+    # Group samples by condition
+    conditions = {}
+    for i, col in enumerate(numeric_cols):
+        condition = col[0]
+        if condition not in conditions:
+            conditions[condition] = []
+        conditions[condition].append(col)
+    
+    # Calculate CV
+    cv_data = []
+    for condition, cols in conditions.items():
+        df_cv = df.select([id_col] + cols).with_columns([
+            pl.concat_list(cols).list.mean().alias('mean'),
+            pl.concat_list(cols).list.std().alias('std')
+        ]).with_columns(
+            (pl.col('std') / pl.col('mean') * 100).alias('cv')
+        ).filter(
+            pl.col('cv').is_finite() & (pl.col('cv') > 0)
+        )
+        
+        for row in df_cv.select([id_col, 'cv']).iter_rows(named=True):
+            cv_data.append({
+                'protein_id': row[id_col],
+                'condition': condition,
+                'cv': row['cv']
+            })
+    
+    df_cv_long = pl.DataFrame(cv_data)
+    
+    # High CV warning
+    high_cv_counts = df_cv_long.filter(pl.col('cv') > 100).group_by('condition').agg(
+        pl.len().alias('n_high_cv')
+    ).sort('condition')
+    
+    if high_cv_counts.shape[0] > 0:
+        warning_text = "⚠️ **High CV (>100%) detected:**  "
+        warning_parts = []
+        for row in high_cv_counts.iter_rows(named=True):
+            warning_parts.append(f"**{row['condition']}**: {row['n_high_cv']} proteins")
+        st.warning(warning_text + " | ".join(warning_parts))
+    
+    # Plot (capped at 100%)
+    df_cv_plot = df_cv_long.with_columns(
+        pl.col('cv').clip(upper_bound=100).alias('cv_capped')
+    )
+    
+    plot = (ggplot(df_cv_plot.to_pandas(), aes(x='condition', y='cv_capped', fill='condition')) +
+     geom_violin(alpha=0.7) +
+     geom_boxplot(width=0.1, fill='white', outlier_alpha=0) +
+     scale_fill_brewer(type='qual', palette='Set2') +
+     scale_y_continuous(limits=[0, 100]) +
+     labs(title='Coefficient of Variation Distribution by Condition (capped at 100%)',
+          x='Condition', y='CV (%)') +
+     theme_minimal() +
+     theme(axis_text_x=element_text(size=12),
+           figure_size=(10, 6),
+           legend_position='none'))
+    
+    fig = ggplot.draw(plot)
+    st.pyplot(fig)
+    plt.close(fig)
+    del fig, plot
+    
+    # CV statistics
+    df_cv_stats = df_cv_long.group_by('condition').agg([
+        pl.col('cv').len().alias('n_proteins'),
+        pl.col('cv').mean().alias('mean_cv'),
+        pl.col('cv').median().alias('median_cv'),
+        pl.col('cv').std().alias('std_cv'),
+        pl.col('cv').quantile(0.25).alias('q25'),
+        pl.col('cv').quantile(0.75).alias('q75'),
+        (pl.col('cv') > 100).sum().alias('n_cv_over_100')
+    ]).sort('condition')
+    
+    st.markdown("**CV Summary Statistics:**")
+    st.dataframe(df_cv_stats.to_pandas(), width='stretch')
+    
+    st.download_button(
+        "📥 Download CV Statistics (CSV)",
+        df_cv_stats.write_csv(),
+        "cv_statistics.csv",
+        "text/csv"
+    )
+    
+    del df_cv_long, df_cv_plot, df_cv_stats, high_cv_counts, cv_data
+    gc.collect()
+    
+    st.markdown("---")
+    
+    # ========================================================================
+    # 5. PROTEIN COUNT BY CV THRESHOLD
+    # ========================================================================
+    
+    st.subheader("5️⃣ Protein Count by CV Threshold")
+    st.info("**Quality tiers:** Total (all valid), CV < 20% (good+excellent), CV < 10% (excellent)")
+    
+    cv_plot_data = []
+    
+    for condition, cols in conditions.items():
+        df_cv_cond = df.select([id_col] + cols).with_columns([
+            pl.concat_list(cols).list.mean().alias('mean'),
+            pl.concat_list(cols).list.std().alias('std')
+        ]).with_columns(
+            (pl.col('std') / pl.col('mean') * 100).alias('cv')
+        ).filter(
+            pl.col('cv').is_finite() & (pl.col('cv') > 0)
+        )
+        
+        total = df_cv_cond.shape[0]
+        cv_under_20 = df_cv_cond.filter(pl.col('cv') < 20).shape[0]
+        cv_under_10 = df_cv_cond.filter(pl.col('cv') < 10).shape[0]
+        
+        cv_plot_data.append({'condition': condition, 'threshold': 'Total', 'count': total})
+        cv_plot_data.append({'condition': condition, 'threshold': 'CV < 20%', 'count': cv_under_20})
+        cv_plot_data.append({'condition': condition, 'threshold': 'CV < 10%', 'count': cv_under_10})
+    
+    df_cv_plot = pl.DataFrame(cv_plot_data)
+    
+    df_cv_plot = df_cv_plot.with_columns(
+        pl.col('threshold').cast(pl.Categorical(ordering='physical'))
+    )
+    
+    df_cv_plot_ordered = df_cv_plot.sort(['condition', 'threshold'], 
+                                         descending=[True, True])
+    
+    plot = (ggplot(df_cv_plot_ordered.to_pandas(), aes(x='condition', y='count', fill='threshold')) +
+     geom_bar(stat='identity', position='dodge') +
+     geom_text(aes(label='count'), position=position_dodge(width=0.9),
+               va='bottom', size=9, fontweight='bold') +
+     scale_fill_manual(
+         values={
+             'Total': '#95a5a6',
+             'CV < 20%': '#f39c12',
+             'CV < 10%': '#2ecc71'
+         },
+         breaks=['Total', 'CV < 20%', 'CV < 10%']
+     ) +
+     labs(title='Protein Count by CV Quality Threshold',
+          x='Condition', y='Protein Count', fill='Threshold') +
+     theme_minimal() +
+     theme(axis_text_x=element_text(size=12),
+           figure_size=(10, 6)))
+    
+    fig = ggplot.draw(plot)
+    st.pyplot(fig)
+    plt.close(fig)
+    del fig, plot
+    
+    # Summary table
+    st.markdown("**Protein Counts by CV Threshold:**")
+    
+    summary_data = []
+    for cond in sorted(conditions.keys()):
+        cond_data = df_cv_plot.filter(pl.col('condition') == cond)
+        total = cond_data.filter(pl.col('threshold') == 'Total')['count'][0]
+        cv_lt_20 = cond_data.filter(pl.col('threshold') == 'CV < 20%')['count'][0]
+        cv_lt_10 = cond_data.filter(pl.col('threshold') == 'CV < 10%')['count'][0]
+        
+        summary_data.append({
+            'Condition': cond,
+            'Total': total,
+            'CV < 20%': cv_lt_20,
+            'CV < 10%': cv_lt_10,
+            '% < 20%': round(cv_lt_20 / total * 100, 1) if total > 0 else 0,
+            '% < 10%': round(cv_lt_10 / total * 100, 1) if total > 0 else 0
+        })
+    
+    df_summary = pl.DataFrame(summary_data)
+    
+    st.dataframe(df_summary.to_pandas(), width='stretch')
+    
+    st.download_button(
+        "📥 Download CV Threshold Summary (CSV)",
+        df_summary.write_csv(),
+        "cv_threshold_summary.csv",
+        "text/csv"
+    )
+    
+    del df_cv_plot, df_cv_plot_ordered, df_summary, cv_plot_data, summary_data
+    gc.collect()
+    
+    st.markdown("---")
+    
+    # ========================================================================
+    # 6. MISSING VALUES
+    # ========================================================================
+    
+    st.subheader("6️⃣ Missing Values per Protein by Condition")
+    st.info("**Missing = intensity ≤ 1.0** (includes NaN, zero, and 1.0). Shows how many replicates are missing per protein.")
+    
+    missing_plot_data = []
+    
+    for condition, cols in conditions.items():
+        df_missing = df.select([id_col] + cols).with_columns([
+            pl.sum_horizontal([
+                (pl.col(c) <= 1.0) | (pl.col(c).is_null()) for c in cols
+            ]).alias('n_missing')
+        ])
+        
+        for n_miss in range(len(cols) + 1):
+            count = df_missing.filter(pl.col('n_missing') == n_miss).shape[0]
+            missing_plot_data.append({
+                'condition': condition,
+                'n_missing': f'{n_miss} missing',
+                'count': count
+            })
+    
+    df_missing_plot = pl.DataFrame(missing_plot_data)
+    
+    plot = (ggplot(df_missing_plot.to_pandas(), aes(x='condition', y='count', fill='n_missing')) +
+     geom_bar(stat='identity', position='dodge') +
+     geom_text(aes(label='count'), position=position_dodge(width=0.9),
+               va='bottom', size=8, fontweight='bold') +
+     scale_fill_brewer(type='seq', palette='YlOrRd') +
+     labs(title='Protein Count by Number of Missing Values per Condition',
+          x='Condition', y='Protein Count', fill='Missing Values') +
+     theme_minimal() +
+     theme(axis_text_x=element_text(size=12),
+           figure_size=(12, 6)))
+    
+    fig = ggplot.draw(plot)
+    st.pyplot(fig)
+    plt.close(fig)
+    del fig, plot
+    
+    # Summary table
+    st.markdown("**Missing Values Summary:**")
+    
+    df_missing_summary = df_missing_plot.pivot(
+        index='condition',
+        columns='n_missing',
+        values='count'
+    ).fill_null(0)
+    
+    col_order = [f'{i} missing' for i in range(replicates + 1)]
+    df_missing_summary = df_missing_summary.select(
+        ['condition'] + [c for c in col_order if c in df_missing_summary.columns]
+    ).with_columns([
+        pl.sum_horizontal([c for c in col_order if c in df_missing_summary.columns]).alias('Total'),
+        (pl.col('0 missing') / pl.sum_horizontal([c for c in col_order if c in df_missing_summary.columns]) * 100).alias('% Complete')
+    ])
+    
+    st.dataframe(df_missing_summary.to_pandas(), width='stretch')
+    
+    st.download_button(
+        "📥 Download Missing Values Summary (CSV)",
+        df_missing_summary.write_csv(),
+        "missing_values_summary.csv",
+        "text/csv"
+    )
+    
+    del df_missing_plot, df_missing_summary, missing_plot_data
+    gc.collect()
+    
+    st.markdown("---")
+    
+    # Final cleanup
+    del df_log2
+    clear_plot_memory()
+
+# ============================================================================
+# RENDER PROTEIN TAB
 # ============================================================================
 
 if has_protein and tab_protein:
     with tab_protein:
-        
-        df = st.session_state.df_protein
-        numeric_cols = st.session_state.protein_cols
-        id_col = st.session_state.protein_id_col
-        species_col = st.session_state.protein_species_col
-        replicates = st.session_state.protein_replicates
-        
         st.header("🧬 Protein-Level Analysis")
-        
-        st.info(f"""
-        **Dataset:** {df.shape[0]:,} proteins × {len(numeric_cols)} samples
-        """)
-        
-        # Sample for plotting
-        df_plot = sample_data_for_plot(df)
-        
-        # ====================================================================
-        # BOXPLOT BY SAMPLE - LOG2 INTENSITIES
-        # ====================================================================
-        
-        st.subheader("Log2 Intensity Distribution by Sample")
-        
-        # Prepare data: melt and add condition
-        df_melted = df_plot.select([id_col] + numeric_cols).melt(
-            id_vars=[id_col],
-            value_vars=numeric_cols,
-            variable_name='sample',
-            value_name='intensity'
-        ).filter(
-            pl.col('intensity').is_finite() & (pl.col('intensity') > 0)
-        ).with_columns([
-            pl.col('intensity').log(2).alias('log2_intensity'),
-            pl.col('sample').str.slice(0, 1).alias('condition')  # Extract condition (A, B, etc.)
-        ])
-        
-        # Create boxplot
-        plot_box = (ggplot(df_melted.to_pandas(), aes(x='sample', y='log2_intensity', fill='condition')) +
-         geom_boxplot(outlier_size=1, outlier_alpha=0.3) +
-         labs(title='Log2 Intensity by Sample', x='Sample', y='Log2(Intensity)', fill='Condition') +
-         theme_minimal() +
-         theme(figure_size=(12, 8), axis_text_x=element_text(rotation=45, hjust=1)))
-        
-        fig = ggplot.draw(plot_box)
-        st.pyplot(fig)
-        plt.close(fig)
-        
-        # Cleanup
-        del fig, plot_box, df_melted, df_plot
-        clear_plot_memory()
+        render_eda(
+            st.session_state.df_protein,
+            st.session_state.protein_cols,
+            st.session_state.protein_species_col,
+            st.session_state.protein_id_col,
+            st.session_state.protein_replicates,
+            'protein'
+        )
 
 # ============================================================================
-# PEPTIDE EDA
+# RENDER PEPTIDE TAB
 # ============================================================================
 
 if has_peptide and tab_peptide:
     with tab_peptide:
-        
-        df = st.session_state.df_peptide
-        numeric_cols = st.session_state.peptide_cols
-        id_col = st.session_state.peptide_id_col
-        species_col = st.session_state.peptide_species_col
-        replicates = st.session_state.peptide_replicates
-        
         st.header("🔬 Peptide-Level Analysis")
-        
-        st.info(f"""
-        **Dataset:** {df.shape[0]:,} peptides × {len(numeric_cols)} samples
-        """)
-        
-        # Sample for plotting
-        df_plot = sample_data_for_plot(df)
-        
-        # ====================================================================
-        # BOXPLOT BY SAMPLE - LOG2 INTENSITIES
-        # ====================================================================
-        
-        st.subheader("Log2 Intensity Distribution by Sample")
-        
-        # Prepare data: melt and add condition
-        df_melted = df_plot.select([id_col] + numeric_cols).melt(
-            id_vars=[id_col],
-            value_vars=numeric_cols,
-            variable_name='sample',
-            value_name='intensity'
-        ).filter(
-            pl.col('intensity').is_finite() & (pl.col('intensity') > 0)
-        ).with_columns([
-            pl.col('intensity').log(2).alias('log2_intensity'),
-            pl.col('sample').str.slice(0, 1).alias('condition')  # Extract condition (A, B, etc.)
-        ])
-        
-        # Create boxplot
-        plot_box = (ggplot(df_melted.to_pandas(), aes(x='sample', y='log2_intensity', fill='condition')) +
-         geom_boxplot(outlier_size=1, outlier_alpha=0.3) +
-         labs(title='Log2 Intensity by Sample', x='Sample', y='Log2(Intensity)', fill='Condition') +
-         theme_minimal() +
-         theme(figure_size=(12, 8), axis_text_x=element_text(rotation=45, hjust=1)))
-        
-        fig = ggplot.draw(plot_box)
-        st.pyplot(fig)
-        plt.close(fig)
-        
-        # Cleanup
-        del fig, plot_box, df_melted, df_plot
-        clear_plot_memory()
-
-# ============================================================================
-# FINAL CLEANUP
-# ============================================================================
-
-clear_plot_memory()
+        render_eda(
+            st.session_state.df_peptide,
+            st.session_state.peptide_cols,
+            st.session_state.peptide_species_col,
+            st.session_state.peptide_id_col,
+            st.session_state.peptide_replicates,
+            'peptide'
+        )
 
 # ============================================================================
 # NAVIGATION
