@@ -5,6 +5,7 @@ Upload protein and/or peptide data with tabs
 
 import streamlit as st
 import polars as pl
+import polars.selectors as cs
 import time
 
 # ============================================================================
@@ -42,11 +43,26 @@ def generate_column_names(n: int, replicates: int = 3) -> list:
     """Generate A1, A2, A3, B1, B2, B3, ..."""
     return [f"{chr(65 + i//replicates)}{i%replicates + 1}" for i in range(n)]
 
-def infer_species(protein_id: str) -> str:
-    """Extract species from protein ID (e.g., 'P12345_HUMAN' -> 'HUMAN')."""
-    if not protein_id or '_' not in protein_id:
+def infer_species(protein_name: str) -> str:
+    """
+    Extract species from protein name.
+    Handles multiple formats:
+    - 'GENE_SPECIES' → SPECIES
+    - 'GENE_SPECIES;GENE2_SPECIES' → SPECIES (takes first)
+    - 'P12345_SPECIES' → SPECIES
+    """
+    if not protein_name or not isinstance(protein_name, str):
         return 'UNKNOWN'
-    return protein_id.split('_')[-1].upper()
+    
+    # Handle semicolon-separated entries (take first)
+    if ';' in protein_name:
+        protein_name = protein_name.split(';')[0].strip()
+    
+    # Extract species after underscore
+    if '_' in protein_name:
+        return protein_name.split('_')[-1].upper()
+    
+    return 'UNKNOWN'
 
 def process_dataset(uploaded_file, data_type: str, key_prefix: str):
     """Process uploaded dataset (protein or peptide) - returns True if successful."""
@@ -73,7 +89,7 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
     
     st.subheader("2️⃣ Select Quantitative Columns")
     
-    numeric_cols = df.select(pl.col(pl.NUMERIC_DTYPES)).columns
+    numeric_cols = df.select(cs.numeric()).columns
     
     col_data = []
     for col in df.columns:
@@ -104,7 +120,7 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
             'Sample': st.column_config.TextColumn('Sample', disabled=True)
         },
         hide_index=True,
-        use_container_width=True,
+        width='stretch',
         height=400,
         key=f"{key_prefix}_col_editor"
     )
@@ -223,13 +239,17 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
     
     # SPECIES
     with col2:
-        species_col = st.selectbox(
-            "🧬 Species (optional)", 
-            ['(None)'] + non_numeric,
+        species_options = ['(Auto-infer from ID)'] + non_numeric
+        species_choice = st.selectbox(
+            "🧬 Species Column", 
+            species_options,
             key=f"{key_prefix}_species"
         )
-        if species_col == '(None)':
-            species_col = None
+        
+        if species_choice == '(Auto-infer from ID)':
+            species_source_col = None
+        else:
+            species_source_col = species_choice
     
     # PEPTIDE SEQUENCE (only for peptide data)
     sequence_col = None
@@ -247,19 +267,28 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
     # ============================================================================
     
     keep_cols = [id_col] + selected
-    if species_col:
-        keep_cols.append(species_col)
+    if species_source_col:
+        keep_cols.append(species_source_col)
     if sequence_col:
         keep_cols.append(sequence_col)
     
     df = df.select(keep_cols)
     
-    # Infer species if not provided
-    if not species_col:
+    # Infer/extract species
+    if not species_source_col:
+        # Auto-infer from ID column
         df = df.with_columns(
             pl.col(id_col).map_elements(infer_species, return_dtype=pl.Utf8).alias('species')
         )
         species_col = 'species'
+        st.info(f"ℹ️ Auto-inferred species from **{id_col}** column")
+    else:
+        # Extract species from selected column
+        df = df.with_columns(
+            pl.col(species_source_col).map_elements(infer_species, return_dtype=pl.Utf8).alias('species')
+        )
+        species_col = 'species'
+        st.success(f"✅ Extracted species from **{species_source_col}** column")
     
     st.markdown("---")
     
@@ -268,7 +297,7 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
     # ============================================================================
     
     st.subheader("6️⃣ Preview")
-    st.dataframe(df.head(10), use_container_width=True, height=350)
+    st.dataframe(df.head(10), width='stretch', height=350)
     st.markdown("---")
     
     # ============================================================================
@@ -292,6 +321,13 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
         n_unique_peptides = df[sequence_col].n_unique()
         st.metric("Unique Sequences", f"{n_unique_peptides:,}")
     
+    # Show species breakdown
+    with st.expander("Species Breakdown"):
+        species_counts = df.group_by(species_col).agg(
+            pl.len().alias('count')
+        ).sort('count', descending=True)
+        st.dataframe(species_counts.to_pandas(), hide_index=True, width='stretch')
+    
     st.markdown("---")
     
     # ============================================================================
@@ -310,7 +346,7 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
     - Missing: {missing_pct:.1f}%
     """)
     
-    if st.button(f"✅ Cache {data_type.title()} Data", type="primary", use_container_width=True, key=f"{key_prefix}_cache"):
+    if st.button(f"✅ Cache {data_type.title()} Data", type="primary", width='stretch', key=f"{key_prefix}_cache"):
         st.session_state[f'df_{data_type}'] = df
         st.session_state[f'{data_type}_cols'] = selected
         st.session_state[f'{data_type}_id_col'] = id_col
@@ -390,7 +426,7 @@ with col2:
     else:
         st.info("ℹ️ No peptide data uploaded")
 
-if st.button("🎯 Continue to Analysis", type="primary", use_container_width=True):
+if st.button("🎯 Continue to Analysis", type="primary", width='stretch'):
     st.session_state.data_type = 'both' if (has_protein and has_peptide) else ('protein' if has_protein else 'peptide')
     time.sleep(0.5)
     st.switch_page("pages/2_Visual_EDA.py")
