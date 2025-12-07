@@ -49,7 +49,15 @@ col1, col2, col3, col4 = st.columns(4)
 n_proteins = df.shape[0]
 n_samples = len(numeric_cols)
 n_species = df[species_col].n_unique() if species_col else 1
-completeness = ((df.select(numeric_cols) > 1.0).sum().sum() / (n_proteins * n_samples) * 100)
+
+# Calculate completeness properly
+valid_count = 0
+total_count = n_proteins * n_samples
+
+for col in numeric_cols:
+    valid_count += df.filter((pl.col(col) > 1.0) & (pl.col(col).is_finite())).shape[0]
+
+completeness = (valid_count / total_count * 100) if total_count > 0 else 0
 
 col1.metric("Proteins", f"{n_proteins:,}")
 col2.metric("Samples", n_samples)
