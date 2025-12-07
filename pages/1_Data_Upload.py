@@ -2,6 +2,7 @@
 pages/1_Data_Upload.py - OPTIMIZED
 Unified data upload interface for proteins and peptides with tab-based selection
 Uses helpers for validation and data loading
+FIXED: Implements string-to-float conversion, column renaming, and final column dropping.
 """
 
 import streamlit as st
@@ -12,8 +13,10 @@ from typing import Tuple, Optional
 import gc
 
 # Import helpers
-from helpers.io import validate_dataframe, detect_numeric_columns
+from helpers.io import validate_dataframe, detect_numeric_columns, convert_string_numbers_to_float
 from helpers.core import ProteinData, PeptideData
+# FIX: Import renaming utility
+from helpers.naming import rename_columns_for_display 
 
 # ============================================================================
 # PAGE CONFIG
@@ -143,12 +146,16 @@ else:
 st.markdown("---")
 
 # ============================================================================
-# NUMERIC COLUMN DETECTION
+# NUMERIC COLUMN DETECTION & CONVERSION (FIX)
 # ============================================================================
 
 st.subheader("4️⃣ Select Numeric Columns (Abundance Data)")
 
 numeric_cols, categorical_cols = detect_numeric_columns(df_raw)
+
+# FIX: Convert string-formatted numbers to actual floats before filtering
+df_raw = convert_string_numbers_to_float(df_raw, numeric_cols)
+# END FIX
 
 # Filter out ID and species columns from numeric candidates
 exclude_cols = {id_col, species_col, sequence_col}
@@ -286,10 +293,59 @@ else:
 st.markdown("---")
 
 # ============================================================================
+# COLUMN RENAMING & FINAL DROPPING (FIX)
+# ============================================================================
+
+st.subheader("7️⃣ Renaming & Final Column Selection")
+
+st.info("The app automatically shortens long sample column names for better visualization and drops unused columns.")
+
+# Rename numeric columns for display and get mapping
+df_filtered, name_mapping = rename_columns_for_display(
+    df=df_filtered,
+    columns=selected_numeric,
+    style='short' # Use 'short' style for abbreviated names
+)
+
+# Update selected numeric columns list with the new, shorter names
+selected_numeric_renamed = list(name_mapping.values())
+
+# Update ID/Species/Sequence columns with their renamed counterparts (if applicable)
+id_col_renamed = name_mapping.get(id_col, id_col)
+species_col_renamed = name_mapping.get(species_col, species_col) if species_col else None
+sequence_col_renamed = name_mapping.get(sequence_col, sequence_col) if sequence_col else None
+
+st.caption(f"**Renamed Columns:** {len(name_mapping)} numeric columns were checked. The first column name is now **'{selected_numeric_renamed[0]}'**.")
+
+# Determine final columns to keep
+final_cols = [id_col_renamed] + selected_numeric_renamed
+if species_col_renamed:
+    final_cols.append(species_col_renamed)
+if st.session_state.data_type == 'peptide' and sequence_col_renamed:
+    final_cols.append(sequence_col_renamed)
+
+# Drop columns not in the final list
+dropped_cols = [col for col in df_filtered.columns if col not in final_cols]
+
+if dropped_cols:
+    df_filtered = df_filtered[final_cols]
+    st.success(f"✅ Dropped {len(dropped_cols)} unused columns.")
+else:
+    st.info("No extra columns to drop.")
+
+# Update the variables used in the final step with the renamed versions
+selected_numeric = selected_numeric_renamed
+id_col = id_col_renamed
+species_col = species_col_renamed
+sequence_col = sequence_col_renamed
+
+st.markdown("---")
+
+# ============================================================================
 # VALIDATION & CONFIRMATION
 # ============================================================================
 
-st.subheader("7️⃣ Validate & Upload")
+st.subheader("8️⃣ Validate & Upload")
 
 col1, col2 = st.columns(2)
 
