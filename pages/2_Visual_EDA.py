@@ -953,7 +953,7 @@ if has_peptide and tab_peptide:
                 df_stats = pl.from_dict(intensity_data['stats'])
                 
                 st.markdown("**Summary Statistics:**")
-                st.dataframe(df_stats.to_pandas(), width="strecht")
+                st.dataframe(df_stats.to_pandas(), width="stretch")
                 
                 st.download_button(
                     "📥 Download Statistics (CSV)",
@@ -1045,7 +1045,7 @@ with col2:
     elif has_peptide:
         can_continue = 'peptide_filters_applied' in st.session_state
     
-    if st.button("Continue to Normalization →", type="primary", width="strecht", disabled=not can_continue):
+    if st.button("Continue to Normalization →", type="primary", width="stretch", disabled=not can_continue):
         st.switch_page("pages/3_Normalization.py")
     
     if not can_continue:
