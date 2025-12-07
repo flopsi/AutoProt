@@ -27,20 +27,159 @@ def load_excel(file_path: str, sheet_name: int = 0, **kwargs) -> pd.DataFrame:
 # COLUMN DETECTION
 # ============================================================================
 
+"""
+FIXED: helpers/io.py - detect_numeric_columns() with string conversion
+
+The issue: Your CSV has numeric data stored as strings (object dtype)
+like "682.63" instead of 682.63 (float).
+
+The fix: Try to convert columns to numeric, then detect which ones succeeded.
+"""
+
+import pandas as pd
+import numpy as np
+from typing import Tuple, List
+
+# ============================================================================
+# NUMERIC COLUMN DETECTION - FIXED
+# ============================================================================
+
 def detect_numeric_columns(df: pd.DataFrame) -> Tuple[List[str], List[str]]:
     """
-    Separate numeric and categorical columns.
+    Detect which columns contain numeric intensity data.
+    
+    ENHANCED: Also detects columns with string-formatted numbers (e.g., "682.63")
+    and auto-converts them to float.
     
     Args:
         df: Input DataFrame
         
     Returns:
-        Tuple of (numeric_columns, categorical_columns)
+        Tuple of (numeric_cols, categorical_cols)
+        - numeric_cols: Columns that are numeric OR can be converted to numeric
+        - categorical_cols: Columns that are truly non-numeric
+        
+    Example:
+        >>> df = pd.DataFrame({
+        ...     'Protein': ['P1', 'P2'],
+        ...     'A1': ['682.63', '244.60'],      # String numbers
+        ...     'A2': [652.70, 248.68],          # Already float
+        ...     'Name': ['GAL3B', 'RBM47']       # Text
+        ... })
+        >>> numeric, categorical = detect_numeric_columns(df)
+        >>> numeric
+        ['A1', 'A2']
+        >>> categorical
+        ['Protein', 'Name']
     """
-    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    categorical_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
+    
+    numeric_cols = []
+    categorical_cols = []
+    
+    for col in df.columns:
+        # Check 1: Already numeric (int, float, etc.)
+        if pd.api.types.is_numeric_dtype(df[col]):
+            numeric_cols.append(col)
+            continue
+        
+        # Check 2: Try to convert string to numeric
+        if df[col].dtype == 'object' or df[col].dtype == 'string':
+            try:
+                # Attempt conversion to numeric
+                # errors='coerce' converts non-numeric to NaN
+                converted = pd.to_numeric(df[col], errors='coerce')
+                
+                # Check if MOST values converted successfully
+                # (allow up to 5% NaN from conversion)
+                non_null_original = df[col].notna().sum()
+                non_null_converted = converted.notna().sum()
+                
+                if non_null_converted > 0 and (non_null_converted / non_null_original >= 0.95):
+                    # Successfully converted! Add to numeric list
+                    numeric_cols.append(col)
+                    continue
+            
+            except Exception:
+                pass  # Not convertible, treat as categorical
+        
+        # If we get here, it's categorical
+        categorical_cols.append(col)
     
     return numeric_cols, categorical_cols
+
+
+def convert_string_numbers_to_float(df: pd.DataFrame, numeric_cols: List[str]) -> pd.DataFrame:
+    """
+    Convert string-formatted numbers to actual floats.
+    
+    This should be called AFTER detect_numeric_columns() identifies the columns.
+    Modifies the DataFrame in-place to convert columns.
+    
+    Args:
+        df: Input DataFrame
+        numeric_cols: List of column names identified as numeric
+        
+    Returns:
+        DataFrame with numeric columns converted to float
+        
+    Example:
+        >>> df = pd.DataFrame({
+        ...     'A1': ['682.63', '244.60'],
+        ...     'Name': ['GAL3B', 'RBM47']
+        ... })
+        >>> df = convert_string_numbers_to_float(df, ['A1'])
+        >>> df['A1'].dtype
+        dtype('float64')
+    """
+    
+    df = df.copy()
+    
+    for col in numeric_cols:
+        if df[col].dtype not in ['float64', 'float32', 'int64', 'int32']:
+            try:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            except Exception as e:
+                print(f"Warning: Could not convert {col} to numeric: {str(e)}")
+    
+    return df
+
+
+# ============================================================================
+# USAGE IN DATA UPLOAD
+# ============================================================================
+
+"""
+HOW TO USE IN pages/1_Data_Upload.py:
+
+Replace this:
+    numeric_cols, categorical_cols = detect_numeric_columns(df_raw)
+
+With this:
+    numeric_cols, categorical_cols = detect_numeric_columns(df_raw)
+    
+    # Convert string numbers to float
+    df_raw = convert_string_numbers_to_float(df_raw, numeric_cols)
+
+Then use numeric_cols as before.
+
+COMPLETE FIX:
+
+# In section "NUMERIC COLUMN DETECTION"
+numeric_cols, categorical_cols = detect_numeric_columns(df_raw)
+
+# IMPORTANT: Convert string numbers to floats
+df_raw = convert_string_numbers_to_float(df_raw, numeric_cols)
+
+# Filter out ID and species columns from numeric candidates
+exclude_cols = {id_col, species_col, sequence_col}
+numeric_cols = [c for c in numeric_cols if c not in exclude_cols and c is not None]
+
+if numeric_cols:
+    st.success(f"✅ Detected {len(numeric_cols)} numeric columns")
+else:
+    st.error("❌ No numeric columns detected after filtering.")
+    st.stop()
+"""
 
 
 def detect_sample_columns(columns: List[str]) -> List[str]:
