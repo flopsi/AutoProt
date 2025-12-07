@@ -201,7 +201,31 @@ if st.button("🎯 Apply Transformation & Continue", type="primary", use_contain
             df_trans = df.with_columns([
                 pl.col(c).arcsinh().alias(c) for c in numeric_cols
             ])
-        # Add boxcox/yeo-johnson if needed
+        elif transform_choice == 'boxcox':
+            # Box-Cox transformation
+            from scipy.stats import boxcox
+            df_pandas = df.to_pandas()
+            for col in numeric_cols:
+                data = df_pandas[col].values
+                data_positive = data[data > 0]
+                if len(data_positive) > 1:
+                    transformed, _ = boxcox(data_positive)
+                    df_pandas.loc[data > 0, col] = transformed
+            df_trans = pl.from_pandas(df_pandas)
+        elif transform_choice == 'yeo-johnson':
+            # Yeo-Johnson transformation
+            from scipy.stats import yeojohnson
+            df_pandas = df.to_pandas()
+            for col in numeric_cols:
+                data = df_pandas[col].values
+                data_finite = data[np.isfinite(data)]
+                if len(data_finite) > 1:
+                    transformed, _ = yeojohnson(data_finite)
+                    df_pandas.loc[np.isfinite(data), col] = transformed
+            df_trans = pl.from_pandas(df_pandas)
+        else:
+            # Fallback - should never happen
+            df_trans = df
         
         # Store transformed data
         st.session_state.df_transformed = df_trans
@@ -211,6 +235,7 @@ if st.button("🎯 Apply Transformation & Continue", type="primary", use_contain
     st.info("**Next step:** Proceed to Differential Expression Analysis")
 
 st.markdown("---")
+
 # ============================================================================
 # DOWNLOAD TRANSFORMED DATA
 # ============================================================================
