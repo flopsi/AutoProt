@@ -2,12 +2,6 @@
 pages/3_Statistical_EDA.py
 Statistical EDA with filtered data from Visual EDA page - CORRECTED & OPTIMIZED
 
-Key Features:
-- Works with filtered protein/peptide data from Visual EDA
-- Log2 intensity distributions with KDE
-- Normality metrics for both raw and log2 transformed data
-- Separate tabs for protein and peptide analysis
-- Transformation comparison and recommendations
 """
 
 import streamlit as st
@@ -310,7 +304,7 @@ def plot_intensity_distributions(df, numeric_cols, data_type, transform_type="lo
     st.markdown(f"**Distribution Statistics ({transform_type.upper()})**")
     if stats_data:
         df_stats = pl.DataFrame(stats_data)
-        st.dataframe(df_stats.to_pandas(), use_container_width=True)
+        st.dataframe(df_stats.to_pandas(), width="stretch")
     
     del plots, stats_data
     clear_plot_memory()
@@ -510,7 +504,7 @@ def process_statistical_eda(df, numeric_cols, id_col, data_type, key_prefix):
                 'Shapiro_p': '{:.4e}',
                 'Shapiro_W': '{:.4f}'
             }),
-            use_container_width=True
+            width="stretch"
         )
     
     with col2:
@@ -524,7 +518,7 @@ def process_statistical_eda(df, numeric_cols, id_col, data_type, key_prefix):
                 'Shapiro_p': '{:.4e}',
                 'Shapiro_W': '{:.4f}'
             }),
-            use_container_width=True
+            width="stretch"
         )
     
     st.caption("**Normality criteria:** Shapiro p > 0.05, |Kurtosis| < 2, |Skewness| < 1")
@@ -561,7 +555,7 @@ def process_statistical_eda(df, numeric_cols, id_col, data_type, key_prefix):
             'Mean_Var_Corr': '{:.3f}',
             'Normality_Score': '{:.3f}'
         }),
-        use_container_width=True
+        width="stretch"
     )
     
     st.caption("**Normality Score:** Lower is better. Composite metric based on Shapiro p-value, kurtosis, skewness, and mean-variance correlation.")
@@ -622,7 +616,7 @@ def process_statistical_eda(df, numeric_cols, id_col, data_type, key_prefix):
             df_norm_raw.write_csv(),
             f"{data_type}_normality_raw.csv",
             "text/csv",
-            use_container_width=True,
+            width="stretch",
             key=f"{key_prefix}_download_raw"
         )
     
@@ -632,7 +626,7 @@ def process_statistical_eda(df, numeric_cols, id_col, data_type, key_prefix):
             df_norm_log2.write_csv(),
             f"{data_type}_normality_log2.csv",
             "text/csv",
-            use_container_width=True,
+            width="stretch",
             key=f"{key_prefix}_download_log2"
         )
     
@@ -641,7 +635,7 @@ def process_statistical_eda(df, numeric_cols, id_col, data_type, key_prefix):
         transform_scores.drop('_key').write_csv(),
         f"{data_type}_transformation_comparison.csv",
         "text/csv",
-        use_container_width=True,
+        width="stretch",
         key=f"{key_prefix}_download_transforms"
     )
 
@@ -741,11 +735,11 @@ st.markdown("---")
 col1, col2 = st.columns(2)
 
 with col1:
-    if st.button("← Back to Visual EDA", use_container_width=True):
+    if st.button("← Back to Visual EDA", width="stretch"):
         st.switch_page("pages/2_Visual_EDA.py")
 
 with col2:
-    if st.button("Continue to Normalization →", type="primary", use_container_width=True):
+    if st.button("Continue to Normalization →", type="primary", width="stretch"):
         # Check if we have data to continue
         if has_protein or has_peptide:
             st.switch_page("pages/4_Normalization.py")
