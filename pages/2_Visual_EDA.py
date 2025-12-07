@@ -650,99 +650,313 @@ if has_peptide and tab_peptide:
         numeric_cols = st.session_state.peptide_cols
         id_col = st.session_state.peptide_id_col
         species_col = st.session_state.peptide_species_col
+        sequence_col = st.session_state.get('peptide_sequence_col')
         replicates = st.session_state.peptide_replicates
         
         st.header("🔬 Peptide-Level Analysis")
         
         # ====================================================================
-        # RUN ANALYSIS ON ORIGINAL DATA
+        # OVERVIEW
         # ====================================================================
+        
+        st.subheader("1️⃣ Dataset Overview")
+        st.info(f"📁 {df.shape[0]:,} peptides × {len(numeric_cols)} samples")
+        
+        n_species = df[species_col].n_unique()
+        n_proteins = df[id_col].n_unique()
+        
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total Peptides", f"{df.shape[0]:,}")
+        c2.metric("Unique Proteins", f"{n_proteins:,}")
+        c3.metric("Peptides/Protein", f"{df.shape[0] / n_proteins:.1f}")
+        c4.metric("Species", n_species)
+        
+        st.markdown("---")
+        
+        # ====================================================================
+        # INTENSITY DISTRIBUTION (VIOLIN ONLY)
+        # ====================================================================
+        
+        st.subheader("2️⃣ Log2 Intensity Distribution by Sample")
         
         df_log2 = pl.from_dict(compute_log2(df.to_dict(as_series=False), numeric_cols, 'peptide'))
         
-        plot_section_1_overview(df, numeric_cols, species_col, 'peptide')
+        intensity_data = compute_intensity_stats(df_log2.to_dict(as_series=False), id_col, numeric_cols)
+        df_long = pl.from_dict(intensity_data['long_data'])
+        
+        plot = (ggplot(df_long.to_pandas(), aes(x='sample', y='log2_intensity', fill='condition')) +
+         geom_violin(alpha=0.7) +
+         geom_boxplot(width=0.1, fill='white', outlier_alpha=0.3) +
+         scale_fill_manual(values=['#66c2a5', '#fc8d62']) +
+         labs(title='Log2 Intensity Distribution',
+              x='Sample', y='Log2 Intensity', fill='Condition') +
+         theme_minimal() +
+         theme(axis_text_x=element_text(rotation=45, hjust=1),
+               figure_size=(12, 6)))
+        
+        fig = ggplot.draw(plot)
+        st.pyplot(fig)
+        plt.close(fig)
+        del fig, plot
+        
+        # Summary statistics table
+        df_stats = pl.from_dict(intensity_data['stats'])
+        
+        with st.expander("📊 Summary Statistics"):
+            st.dataframe(df_stats.to_pandas(), width='stretch')
+            
+            st.download_button(
+                "📥 Download Statistics (CSV)",
+                df_stats.write_csv(),
+                "log2_intensity_statistics_peptide.csv",
+                "text/csv",
+                key="peptide_download_intensity_stats"
+            )
+        
+        del df_long, df_stats, intensity_data, df_log2
+        gc.collect()
+        
         st.markdown("---")
-        
-        
-        plot_section_3_intensity_dist(df_log2, id_col, numeric_cols, 'peptide')
-        st.markdown("---")
-        
-        cv_result = plot_section_4_cv_distribution(df, id_col, numeric_cols, 'peptide', 'peptide')
-        st.markdown("---")
-        
-        plot_section_5_cv_thresholds(cv_result, 'peptide', 'peptide')
-        st.markdown("---")
-        
-        plot_section_6_missing_values(df, id_col, numeric_cols, replicates, 'peptide', 'peptide')
-        st.markdown("---")
-        
-        del df_log2, cv_result
-        clear_plot_memory()
         
         # ====================================================================
-        # FILTER CONTROLS (BOTTOM)
+        # HIERARCHICAL FILTERS
         # ====================================================================
         
-        st.markdown("---")
-        st.subheader("🔍 Apply Filters for Next Steps")
-        st.info("Filter the dataset before proceeding to normalization. Filters will be applied to downstream analysis.")
+        st.subheader("🔍 Hierarchical Filters for Peptide → Protein Aggregation")
+        st.info("Filters are applied in order: Data Completeness → CV → Min Peptides per Protein")
         
-        col_f1, col_f2 = st.columns(2)
+        # Calculate completeness and CV for each peptide
+        df_with_metrics = df.clone()
         
-        with col_f1:
-            max_cv = st.slider(
-                "Max CV (%)",
+        # 1. Calculate completeness (% of non-missing values)
+        completeness = []
+        for row_idx in range(df.shape[0]):
+            row = df.row(row_idx, named=True)
+            n_valid = sum(1 for col in numeric_cols if row[col] > 1.0 and row[col] is not None and np.isfinite(row[col]))
+            completeness.append(n_valid / len(numeric_cols) * 100)
+        
+        df_with_metrics = df_with_metrics.with_columns([
+            pl.Series('completeness', completeness)
+        ])
+        
+        # 2. Calculate CV per condition
+        conditions = {}
+        for col in numeric_cols:
+            condition = col[0]
+            if condition not in conditions:
+                conditions[condition] = []
+            conditions[condition].append(col)
+        
+        # Calculate max CV across all conditions
+        max_cv_values = []
+        for row_idx in range(df.shape[0]):
+            row_cvs = []
+            for condition, cols in conditions.items():
+                vals = [df[col][row_idx] for col in cols if df[col][row_idx] > 1.0 and np.isfinite(df[col][row_idx])]
+                if len(vals) >= 2:
+                    mean_val = np.mean(vals)
+                    std_val = np.std(vals, ddof=1)
+                    if mean_val > 0:
+                        row_cvs.append(std_val / mean_val * 100)
+            max_cv_values.append(max(row_cvs) if row_cvs else 999)
+        
+        df_with_metrics = df_with_metrics.with_columns([
+            pl.Series('max_cv', max_cv_values)
+        ])
+        
+        # ====================================================================
+        # FILTER 1: DATA COMPLETENESS
+        # ====================================================================
+        
+        st.markdown("### Filter 1: Data Completeness")
+        
+        col_f1a, col_f1b = st.columns([3, 1])
+        
+        with col_f1a:
+            min_completeness = st.slider(
+                "Minimum data completeness (%)",
                 min_value=0,
                 max_value=100,
-                value=100,
+                value=50,
                 step=5,
-                help="Remove peptides with CV > threshold in ANY condition",
+                help="Keep peptides with at least this % of valid values across all samples",
+                key="peptide_min_completeness"
+            )
+        
+        with col_f1b:
+            st.metric("Original", f"{df.shape[0]:,}")
+        
+        df_filtered_1 = df_with_metrics.filter(pl.col('completeness') >= min_completeness)
+        n_removed_1 = df_with_metrics.shape[0] - df_filtered_1.shape[0]
+        
+        st.success(f"✅ After Filter 1: **{df_filtered_1.shape[0]:,} peptides** (removed {n_removed_1:,})")
+        
+        # ====================================================================
+        # FILTER 2: CV THRESHOLD
+        # ====================================================================
+        
+        st.markdown("### Filter 2: Coefficient of Variation")
+        
+        col_f2a, col_f2b = st.columns([3, 1])
+        
+        with col_f2a:
+            max_cv = st.slider(
+                "Maximum CV (%)",
+                min_value=0,
+                max_value=100,
+                value=30,
+                step=5,
+                help="Keep peptides with CV ≤ threshold in ALL conditions",
                 key="peptide_max_cv"
             )
         
-        with col_f2:
-            drop_missing = st.checkbox(
-                "Drop rows with ANY missing values",
-                value=False,
-                help="Remove peptides that have missing values (≤1.0) in ANY sample",
-                key="peptide_drop_missing"
+        with col_f2b:
+            st.metric("After Filter 1", f"{df_filtered_1.shape[0]:,}")
+        
+        df_filtered_2 = df_filtered_1.filter(pl.col('max_cv') <= max_cv)
+        n_removed_2 = df_filtered_1.shape[0] - df_filtered_2.shape[0]
+        
+        st.success(f"✅ After Filter 2: **{df_filtered_2.shape[0]:,} peptides** (removed {n_removed_2:,})")
+        
+        # ====================================================================
+        # FILTER 3: MIN PEPTIDES PER PROTEIN
+        # ====================================================================
+        
+        st.markdown("### Filter 3: Minimum Peptides per Protein")
+        
+        col_f3a, col_f3b = st.columns([3, 1])
+        
+        with col_f3a:
+            min_peptides = st.slider(
+                "Minimum peptides per protein",
+                min_value=1,
+                max_value=10,
+                value=2,
+                step=1,
+                help="Keep only proteins with at least this many peptides passing previous filters",
+                key="peptide_min_peptides"
             )
         
-        # Apply filters
-        df_filtered = apply_filters(df, numeric_cols, id_col, max_cv, drop_missing)
+        with col_f3b:
+            st.metric("After Filter 2", f"{df_filtered_2.shape[0]:,}")
         
-        n_removed = df.shape[0] - df_filtered.shape[0]
-        pct_removed = n_removed / df.shape[0] * 100 if df.shape[0] > 0 else 0
+        # Count peptides per protein
+        peptides_per_protein = df_filtered_2.group_by(id_col).agg(
+            pl.len().alias('n_peptides')
+        )
         
-        col_m1, col_m2, col_m3 = st.columns(3)
-        with col_m1:
-            st.metric("Original", f"{df.shape[0]:,}")
-        with col_m2:
-            st.metric("Removed", f"{n_removed:,} ({pct_removed:.1f}%)")
-        with col_m3:
-            st.metric("Remaining", f"{df_filtered.shape[0]:,}")
+        # Keep proteins with enough peptides
+        proteins_to_keep = peptides_per_protein.filter(
+            pl.col('n_peptides') >= min_peptides
+        )[id_col].to_list()
         
-        # Save filtered data to session state
-        if st.button("✅ Apply Filters & Continue", type="primary", use_container_width=True, key="peptide_apply_filters"):
-            st.session_state.df_peptide_filtered = df_filtered
-            st.session_state.peptide_filters_applied = {
-                'max_cv': max_cv,
-                'drop_missing': drop_missing,
-                'n_removed': n_removed
+        df_filtered_3 = df_filtered_2.filter(pl.col(id_col).is_in(proteins_to_keep))
+        n_removed_3 = df_filtered_2.shape[0] - df_filtered_3.shape[0]
+        n_proteins_final = len(proteins_to_keep)
+        
+        st.success(f"✅ After Filter 3: **{df_filtered_3.shape[0]:,} peptides** from **{n_proteins_final:,} proteins** (removed {n_removed_3:,} peptides)")
+        
+        # ====================================================================
+        # FINAL SUMMARY
+        # ====================================================================
+        
+        st.markdown("---")
+        st.subheader("📊 Filter Summary")
+        
+        col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+        
+        with col_s1:
+            st.metric("Original Peptides", f"{df.shape[0]:,}")
+            st.metric("Original Proteins", f"{n_proteins:,}")
+        
+        with col_s2:
+            st.metric("Final Peptides", f"{df_filtered_3.shape[0]:,}")
+            st.metric("Final Proteins", f"{n_proteins_final:,}")
+        
+        with col_s3:
+            pct_peptides = (1 - df_filtered_3.shape[0] / df.shape[0]) * 100
+            pct_proteins = (1 - n_proteins_final / n_proteins) * 100
+            st.metric("Peptides Removed", f"{pct_peptides:.1f}%")
+            st.metric("Proteins Removed", f"{pct_proteins:.1f}%")
+        
+        with col_s4:
+            avg_peptides_final = df_filtered_3.shape[0] / n_proteins_final if n_proteins_final > 0 else 0
+            st.metric("Avg Peptides/Protein", f"{avg_peptides_final:.1f}")
+        
+        # Detailed breakdown table
+        with st.expander("📋 Detailed Filter Breakdown"):
+            breakdown_data = {
+                'Filter Stage': [
+                    'Original',
+                    f'1. Completeness ≥ {min_completeness}%',
+                    f'2. CV ≤ {max_cv}%',
+                    f'3. Min {min_peptides} peptides/protein',
+                ],
+                'Peptides': [
+                    df.shape[0],
+                    df_filtered_1.shape[0],
+                    df_filtered_2.shape[0],
+                    df_filtered_3.shape[0]
+                ],
+                'Removed': [
+                    0,
+                    n_removed_1,
+                    n_removed_2,
+                    n_removed_3
+                ],
+                'Proteins': [
+                    n_proteins,
+                    df_filtered_1[id_col].n_unique(),
+                    df_filtered_2[id_col].n_unique(),
+                    n_proteins_final
+                ]
             }
-            st.success(f"✅ Filters applied! {df_filtered.shape[0]:,} peptides ready for normalization.")
+            df_breakdown = pl.DataFrame(breakdown_data)
+            st.dataframe(df_breakdown.to_pandas(), width='stretch', hide_index=True)
+            
+            st.download_button(
+                "📥 Download Filter Breakdown (CSV)",
+                df_breakdown.write_csv(),
+                "peptide_filter_breakdown.csv",
+                "text/csv",
+                key="peptide_download_breakdown"
+            )
+        
+        # ====================================================================
+        # SAVE FILTERED DATA
+        # ====================================================================
+        
+        st.markdown("---")
+        
+        if st.button("✅ Apply Filters & Continue", type="primary", use_container_width=True, key="peptide_apply_filters"):
+            # Save filtered peptide data
+            st.session_state.df_peptide_filtered = df_filtered_3.drop(['completeness', 'max_cv'])
+            st.session_state.peptide_filters_applied = {
+                'min_completeness': min_completeness,
+                'max_cv': max_cv,
+                'min_peptides': min_peptides,
+                'n_peptides_original': df.shape[0],
+                'n_peptides_final': df_filtered_3.shape[0],
+                'n_proteins_original': n_proteins,
+                'n_proteins_final': n_proteins_final
+            }
+            st.success(f"✅ Filters applied! {df_filtered_3.shape[0]:,} peptides from {n_proteins_final:,} proteins ready for aggregation.")
             st.rerun()
         
         # Show current filter status
         if 'peptide_filters_applied' in st.session_state:
+            filt = st.session_state.peptide_filters_applied
             st.info(f"""
             **Current filters:**
-            - Max CV: {st.session_state.peptide_filters_applied['max_cv']}%
-            - Drop missing: {st.session_state.peptide_filters_applied['drop_missing']}
-            - Removed: {st.session_state.peptide_filters_applied['n_removed']:,} peptides
+            - Min completeness: {filt['min_completeness']}%
+            - Max CV: {filt['max_cv']}%
+            - Min peptides/protein: {filt['min_peptides']}
+            - Result: {filt['n_peptides_final']:,} peptides → {filt['n_proteins_final']:,} proteins
             """)
         
-        del df_filtered
+        del df_with_metrics, df_filtered_1, df_filtered_2, df_filtered_3
+        clear_plot_memory()
+
 
 # ============================================================================
 # NAVIGATION (OUTSIDE TABS)
