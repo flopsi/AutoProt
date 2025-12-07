@@ -700,8 +700,6 @@ if has_peptide and tab_peptide:
         plot_section_1_overview(df, numeric_cols, species_col, 'peptide')
         st.markdown("---")
         
-        plot_section_2_stacked_bar(df, id_col, species_col, numeric_cols, 'peptide', 'peptide')
-        st.markdown("---")
         
         plot_section_3_intensity_dist(df_log2, id_col, numeric_cols, 'peptide')
         st.markdown("---")
