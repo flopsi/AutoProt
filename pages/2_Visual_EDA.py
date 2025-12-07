@@ -320,7 +320,7 @@ df_cv_plot = df_cv_plot.with_columns(
 
 # Reorder to: Total, CV < 20%, CV < 10%
 df_cv_plot_ordered = df_cv_plot.sort(['condition', 'threshold'], 
-                                     descending=[False, False])
+                                     descending=[True, True])
 
 plot = (ggplot(df_cv_plot_ordered.to_pandas(), aes(x='condition', y='count', fill='threshold')) +
  geom_bar(stat='identity', position='dodge') +
