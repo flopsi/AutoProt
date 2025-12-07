@@ -246,14 +246,22 @@ if has_protein and tab_protein:
         st.subheader("2️⃣ Valid Proteins per Species per Sample")
         st.info("**Valid = intensity > 1.0** (excludes missing/NaN/zero)")
         
+        # In both protein and peptide sections, after getting counts_data:
+        
         counts_data = compute_valid_counts(df.to_dict(as_series=False), id_col, species_col, numeric_cols)
         df_counts = pl.from_dict(counts_data['counts'])
+        species_order = counts_data['species_order']
         
-        plot = (ggplot(df_counts.to_pandas(), aes(x='sample', y='count', fill=species_col)) +
+        # Apply categorical ordering for plotting
+        df_counts_plot = df_counts.with_columns([
+            pl.col(species_col).cast(pl.Categorical(categories=species_order, ordering='physical'))
+        ])
+        
+        plot = (ggplot(df_counts_plot.to_pandas(), aes(x='sample', y='count', fill=species_col)) +
          geom_bar(stat='identity') +
          geom_text(aes(y='label_pos', label='count'), 
                    size=8, color='white', fontweight='bold') +
-         labs(title='Valid Protein Count by Species per Sample',
+         labs(title='Valid Protein Count by Species per Sample',  # or Peptide
               x='Sample', y='Protein Count', fill='Species') +
          theme_minimal() +
          theme(axis_text_x=element_text(rotation=45, hjust=1),
@@ -262,7 +270,8 @@ if has_protein and tab_protein:
         fig = ggplot.draw(plot)
         st.pyplot(fig)
         plt.close(fig)
-        del fig, plot
+        del fig, plot, df_counts_plot  # Add df_counts_plot to cleanup
+
         
         # Table
         df_table = pl.from_dict(compute_valid_table(df.to_dict(as_series=False), id_col, species_col, numeric_cols))
