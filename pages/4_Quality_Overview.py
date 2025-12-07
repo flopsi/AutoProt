@@ -374,14 +374,93 @@ if species_col:
 var_exp = pca.explained_variance_ratio_ * 100
 
 # ============================================================================
+# 5. PCA ANALYSIS
+# ============================================================================
+
+st.header("5️⃣ PCA Analysis - Sample Clustering")
+st.info("**Principal Component Analysis** - Assess batch effects and biological separation")
+
+from sklearn.decomposition import PCA
+from scipy.spatial.distance import pdist, squareform
+from scipy.stats import mannwhitneyu
+
+def calculate_permanova(pca_scores, group_labels):
+    """Calculate PERMANOVA pseudo-F and R²."""
+    unique_groups = sorted(set(group_labels))
+    
+    # Between-group variance
+    group_means = {}
+    for group in unique_groups:
+        indices = [i for i, g in enumerate(group_labels) if g == group]
+        group_means[group] = np.mean(pca_scores[indices], axis=0)
+    
+    ss_between = sum(
+        len([g for g in group_labels if g == group]) * 
+        np.sum((group_means[group] - np.mean(pca_scores, axis=0))**2)
+        for group in unique_groups
+    )
+    
+    ss_total = np.sum((pca_scores - np.mean(pca_scores, axis=0))**2)
+    ss_within = ss_total - ss_between
+    
+    df_between = len(unique_groups) - 1
+    df_within = len(group_labels) - len(unique_groups)
+    
+    pseudo_f = (ss_between / df_between) / (ss_within / df_within) if df_within > 0 else 0
+    r_squared = ss_between / ss_total if ss_total > 0 else 0
+    
+    # Significance interpretation (pseudo-F > 4 generally significant)
+    significant = pseudo_f > 4
+    
+    return pseudo_f, r_squared, significant
+
+def calculate_cohens_d(group1_scores, group2_scores):
+    """Calculate Cohen's d effect size."""
+    mean1, mean2 = np.mean(group1_scores), np.mean(group2_scores)
+    var1, var2 = np.var(group1_scores, ddof=1), np.var(group2_scores, ddof=1)
+    pooled_std = np.sqrt((var1 + var2) / 2)
+    
+    cohens_d = (mean1 - mean2) / pooled_std if pooled_std > 0 else 0
+    
+    # Magnitude interpretation
+    magnitude = 'Large' if abs(cohens_d) > 0.8 else 'Medium' if abs(cohens_d) > 0.5 else 'Small'
+    
+    return cohens_d, magnitude
+
+# Prepare data for PCA
+df_pca_input = df.select(numeric_cols).transpose()
+df_pca_clean = df_pca_input.fill_null(0).fill_nan(0)
+pca_data = df_pca_clean.to_numpy()
+
+# Run PCA
+pca = PCA(n_components=min(3, len(numeric_cols)))
+pca_transformed = pca.fit_transform(pca_data)
+
+# Conditions
+conditions = [col[0] for col in numeric_cols]
+unique_conds = sorted(set(conditions))
+
+# Variance explained
+var_exp = pca.explained_variance_ratio_ * 100
+
+# ============================================================================
 # PCA PLOTS (3 PANELS)
 # ============================================================================
 
 col1, col2, col3 = st.columns(3)
 
+# ============================================================================
 # Panel 1: All samples
+# ============================================================================
 with col1:
-    st.markdown("**All Samples**")
+    st.markdown("### All Samples")
+    
+    pca_df = pl.DataFrame({
+        'Sample': numeric_cols,
+        'PC1': pca_transformed[:, 0],
+        'PC2': pca_transformed[:, 1],
+        'Condition': conditions
+    })
     
     plot_pca_all = (ggplot(pca_df.to_pandas(), aes(x='PC1', y='PC2', color='Condition')) +
      geom_point(size=4, alpha=0.8) +
@@ -393,47 +472,52 @@ with col1:
     
     st.pyplot(ggplot.draw(plot_pca_all))
     
-    # PERMANOVA test for condition separation
-    st.markdown("**PERMANOVA Test**")
+    # PERMANOVA
+    pseudo_f, r2, sig = calculate_permanova(pca_transformed[:, :2], conditions)
     
-    # Calculate distance matrix
-    dist_matrix = squareform(pdist(pca_transformed[:, :2], metric='euclidean'))
-    
-    # Simple PERMANOVA (pseudo F-statistic)
-    conditions = [col[0] for col in numeric_cols]
-    unique_conds = sorted(set(conditions))
-    
-    # Between-group variance
-    group_means = {}
-    for cond in unique_conds:
-        indices = [i for i, c in enumerate(conditions) if c == cond]
-        group_means[cond] = np.mean(pca_transformed[indices, :2], axis=0)
-    
-    ss_between = sum(
-        len([c for c in conditions if c == cond]) * 
-        np.sum((group_means[cond] - np.mean(pca_transformed[:, :2], axis=0))**2)
-        for cond in unique_conds
-    )
-    
-    ss_total = np.sum((pca_transformed[:, :2] - np.mean(pca_transformed[:, :2], axis=0))**2)
-    ss_within = ss_total - ss_between
-    
-    df_between = len(unique_conds) - 1
-    df_within = len(conditions) - len(unique_conds)
-    
-    pseudo_f = (ss_between / df_between) / (ss_within / df_within)
-    
+    st.markdown("**Statistics**")
     st.dataframe(pl.DataFrame({
-        'Metric': ['Pseudo-F', 'R²'],
-        'Value': [f"{pseudo_f:.3f}", f"{ss_between/ss_total:.3f}"]
-    }).to_pandas(), hide_index=True)
+        'Test': ['PERMANOVA', 'R²'],
+        'Value': [f"F={pseudo_f:.3f}", f"{r2:.3f}"]
+    }).to_pandas(), hide_index=True, use_container_width=True)
+    
+    # Cohen's d (if 2 groups)
+    if len(unique_conds) == 2:
+        cond1, cond2 = unique_conds
+        indices1 = [i for i, c in enumerate(conditions) if c == cond1]
+        indices2 = [i for i, c in enumerate(conditions) if c == cond2]
+        
+        pc1_cond1 = pca_transformed[indices1, 0]
+        pc1_cond2 = pca_transformed[indices2, 0]
+        
+        cohens_d, magnitude = calculate_cohens_d(pc1_cond1, pc1_cond2)
+        
+        st.dataframe(pl.DataFrame({
+            'Comparison': [f'{cond1} vs {cond2}'],
+            'Cohen\'s d': [f"{cohens_d:.3f}"],
+            'Effect': [magnitude]
+        }).to_pandas(), hide_index=True, use_container_width=True)
+        
+        # Interpretation
+        if sig and magnitude in ['Medium', 'Large']:
+            st.success(f"✅ **Significant separation** detected (F={pseudo_f:.2f}, d={cohens_d:.2f})")
+        elif sig:
+            st.info(f"ℹ️ **Statistically significant** but small effect size")
+        else:
+            st.warning(f"⚠️ **No significant separation** between conditions")
+    else:
+        if sig:
+            st.success(f"✅ **Significant differences** detected (F={pseudo_f:.2f})")
+        else:
+            st.warning(f"⚠️ **No significant separation** between conditions")
 
+# ============================================================================
 # Panel 2: Human only
+# ============================================================================
 if species_col:
     with col2:
-        st.markdown("**Human Proteins Only**")
+        st.markdown("### Human Proteins")
         
-        # Filter for human proteins
         df_human = df.filter(pl.col(species_col).str.to_uppercase() == 'HUMAN')
         
         if df_human.shape[0] >= 3:
@@ -445,7 +529,7 @@ if species_col:
                 'Sample': numeric_cols,
                 'PC1': pca_human_transformed[:, 0],
                 'PC2': pca_human_transformed[:, 1],
-                'Condition': [col[0] for col in numeric_cols]
+                'Condition': conditions
             })
             
             var_exp_human = pca_human.explained_variance_ratio_ * 100
@@ -460,36 +544,52 @@ if species_col:
             
             st.pyplot(ggplot.draw(plot_pca_human))
             
-            # Cohen's d for two-group comparison
-            st.markdown("**Effect Size (Cohen's d)**")
+            # PERMANOVA
+            pseudo_f_h, r2_h, sig_h = calculate_permanova(pca_human_transformed, conditions)
             
+            st.markdown("**Statistics**")
+            st.dataframe(pl.DataFrame({
+                'Test': ['PERMANOVA', 'R²'],
+                'Value': [f"F={pseudo_f_h:.3f}", f"{r2_h:.3f}"]
+            }).to_pandas(), hide_index=True, use_container_width=True)
+            
+            # Cohen's d
             if len(unique_conds) == 2:
-                cond1, cond2 = unique_conds
                 indices1 = [i for i, c in enumerate(conditions) if c == cond1]
                 indices2 = [i for i, c in enumerate(conditions) if c == cond2]
                 
-                pc1_cond1 = pca_human_transformed[indices1, 0]
-                pc1_cond2 = pca_human_transformed[indices2, 0]
+                pc1_h1 = pca_human_transformed[indices1, 0]
+                pc1_h2 = pca_human_transformed[indices2, 0]
                 
-                pooled_std = np.sqrt((np.var(pc1_cond1) + np.var(pc1_cond2)) / 2)
-                cohens_d = (np.mean(pc1_cond1) - np.mean(pc1_cond2)) / pooled_std
+                cohens_d_h, magnitude_h = calculate_cohens_d(pc1_h1, pc1_h2)
                 
                 st.dataframe(pl.DataFrame({
                     'Comparison': [f'{cond1} vs {cond2}'],
-                    'Cohen\'s d': [f"{cohens_d:.3f}"],
-                    'Magnitude': ['Large' if abs(cohens_d) > 0.8 else 'Medium' if abs(cohens_d) > 0.5 else 'Small']
-                }).to_pandas(), hide_index=True)
+                    'Cohen\'s d': [f"{cohens_d_h:.3f}"],
+                    'Effect': [magnitude_h]
+                }).to_pandas(), hide_index=True, use_container_width=True)
+                
+                if sig_h and magnitude_h in ['Medium', 'Large']:
+                    st.success(f"✅ **Significant separation** (F={pseudo_f_h:.2f}, d={cohens_d_h:.2f})")
+                elif sig_h:
+                    st.info(f"ℹ️ **Significant** but small effect")
+                else:
+                    st.warning(f"⚠️ **No significant separation**")
             else:
-                st.info("Cohen's d requires exactly 2 conditions")
+                if sig_h:
+                    st.success(f"✅ **Significant differences** (F={pseudo_f_h:.2f})")
+                else:
+                    st.warning(f"⚠️ **No significant separation**")
         else:
-            st.warning("Not enough Human proteins for PCA")
+            st.warning("Insufficient Human proteins")
 
+# ============================================================================
 # Panel 3: E.coli + Yeast
+# ============================================================================
 if species_col:
     with col3:
-        st.markdown("**E.coli + Yeast**")
+        st.markdown("### E.coli + Yeast")
         
-        # Filter for E.coli and Yeast
         df_contam = df.filter(
             (pl.col(species_col).str.to_uppercase() == 'ECOLI') |
             (pl.col(species_col).str.to_uppercase() == 'YEAST')
@@ -504,7 +604,7 @@ if species_col:
                 'Sample': numeric_cols,
                 'PC1': pca_contam_transformed[:, 0],
                 'PC2': pca_contam_transformed[:, 1],
-                'Condition': [col[0] for col in numeric_cols]
+                'Condition': conditions
             })
             
             var_exp_contam = pca_contam.explained_variance_ratio_ * 100
@@ -519,28 +619,43 @@ if species_col:
             
             st.pyplot(ggplot.draw(plot_pca_contam))
             
-            # Cohen's d
-            st.markdown("**Effect Size (Cohen's d)**")
+            # PERMANOVA
+            pseudo_f_c, r2_c, sig_c = calculate_permanova(pca_contam_transformed, conditions)
             
+            st.markdown("**Statistics**")
+            st.dataframe(pl.DataFrame({
+                'Test': ['PERMANOVA', 'R²'],
+                'Value': [f"F={pseudo_f_c:.3f}", f"{r2_c:.3f}"]
+            }).to_pandas(), hide_index=True, use_container_width=True)
+            
+            # Cohen's d
             if len(unique_conds) == 2:
-                cond1, cond2 = unique_conds
                 indices1 = [i for i, c in enumerate(conditions) if c == cond1]
                 indices2 = [i for i, c in enumerate(conditions) if c == cond2]
                 
-                pc1_cond1 = pca_contam_transformed[indices1, 0]
-                pc1_cond2 = pca_contam_transformed[indices2, 0]
+                pc1_c1 = pca_contam_transformed[indices1, 0]
+                pc1_c2 = pca_contam_transformed[indices2, 0]
                 
-                pooled_std = np.sqrt((np.var(pc1_cond1) + np.var(pc1_cond2)) / 2)
-                cohens_d = (np.mean(pc1_cond1) - np.mean(pc1_cond2)) / pooled_std
+                cohens_d_c, magnitude_c = calculate_cohens_d(pc1_c1, pc1_c2)
                 
                 st.dataframe(pl.DataFrame({
                     'Comparison': [f'{cond1} vs {cond2}'],
-                    'Cohen\'s d': [f"{cohens_d:.3f}"],
-                    'Magnitude': ['Large' if abs(cohens_d) > 0.8 else 'Medium' if abs(cohens_d) > 0.5 else 'Small']
-                }).to_pandas(), hide_index=True)
+                    'Cohen\'s d': [f"{cohens_d_c:.3f}"],
+                    'Effect': [magnitude_c]
+                }).to_pandas(), hide_index=True, use_container_width=True)
+                
+                if sig_c and magnitude_c in ['Medium', 'Large']:
+                    st.success(f"✅ **Significant separation** (F={pseudo_f_c:.2f}, d={cohens_d_c:.2f})")
+                elif sig_c:
+                    st.info(f"ℹ️ **Significant** but small effect")
+                else:
+                    st.warning(f"⚠️ **No significant separation**")
             else:
-                st.info("Cohen's d requires exactly 2 conditions")
+                if sig_c:
+                    st.success(f"✅ **Significant differences** (F={pseudo_f_c:.2f})")
+                else:
+                    st.warning(f"⚠️ **No significant separation**")
         else:
-            st.warning("Not enough contaminant proteins for PCA")
+            st.warning("Insufficient contaminant proteins")
 
 st.markdown("---")
