@@ -499,6 +499,49 @@ def plot_section_6_missing_values(df, id_col, numeric_cols, replicates, data_typ
     gc.collect()
 
 # ============================================================================
+# FILTER HELPERS
+# ============================================================================
+
+def apply_filters(df, numeric_cols, id_col, max_cv, drop_missing):
+    """Apply CV and missing value filters to dataframe."""
+    df_filtered = df.clone()
+    
+    # Group by condition for CV calculation
+    conditions = {}
+    for col in numeric_cols:
+        condition = col[0]
+        if condition not in conditions:
+            conditions[condition] = []
+        conditions[condition].append(col)
+    
+    # Calculate CV for each row and condition
+    if max_cv < 100:
+        keep_rows = pl.Series([True] * df_filtered.shape[0])
+        
+        for condition, cols in conditions.items():
+            df_cv = df_filtered.select([id_col] + cols).with_columns([
+                pl.concat_list(cols).list.mean().alias('mean'),
+                pl.concat_list(cols).list.std().alias('std')
+            ]).with_columns(
+                (pl.col('std') / pl.col('mean') * 100).alias('cv')
+            )
+            
+            # Mark rows with CV > threshold in ANY condition
+            keep_rows = keep_rows & (df_cv['cv'] <= max_cv) | (~df_cv['cv'].is_finite())
+        
+        df_filtered = df_filtered.filter(keep_rows)
+    
+    # Drop rows with ANY missing values
+    if drop_missing:
+        has_valid = pl.lit(True)
+        for col in numeric_cols:
+            has_valid = has_valid & (pl.col(col) > 1.0) & (pl.col(col).is_finite())
+        
+        df_filtered = df_filtered.filter(has_valid)
+    
+    return df_filtered
+
+# ============================================================================
 # CHECK DATA AVAILABILITY
 # ============================================================================
 
