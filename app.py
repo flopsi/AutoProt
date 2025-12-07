@@ -32,7 +32,6 @@ st.set_page_config(
 # ============================================================================
 
 # Initialize audit session (tracks user actions)
-init_audit_session()
 
 # Initialize session state variables with defaults
 init_session_state("theme", "light")
