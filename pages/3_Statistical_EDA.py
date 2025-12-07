@@ -1,6 +1,13 @@
 """
 pages/3_Statistical_EDA.py
-Simplified Polars version - density distributions and differential expression
+Statistical EDA with filtered data from Visual EDA page - CORRECTED & OPTIMIZED
+
+Key Features:
+- Works with filtered protein/peptide data from Visual EDA
+- Log2 intensity distributions with KDE
+- Normality metrics for both raw and log2 transformed data
+- Separate tabs for protein and peptide analysis
+- Transformation comparison and recommendations
 """
 
 import streamlit as st
@@ -8,877 +15,739 @@ import polars as pl
 import numpy as np
 from plotnine import *
 from scipy import stats
+from scipy.stats import probplot, yeojohnson, boxcox
+import matplotlib.pyplot as plt
+import gc
+
+st.set_page_config(page_title="Statistical EDA", page_icon="📊", layout="wide")
 
 # ============================================================================
-# LOAD DATA
+# HELPER FUNCTIONS
 # ============================================================================
 
-st.title("🧪 Statistical EDA & Differential Expression")
+def clear_plot_memory():
+    """Close all matplotlib figures and collect garbage."""
+    plt.close('all')
+    gc.collect()
 
-if 'df' not in st.session_state:
-    st.warning("⚠️ Please upload data first")
-    st.stop()
-
-df = st.session_state.df
-numeric_cols = st.session_state.numeric_cols
-id_col = st.session_state.id_col
-replicates = st.session_state.replicates
-
-# Compute log2 if not cached
 @st.cache_data
-def compute_log2_safe(df_dict: dict, cols: list) -> dict:
-    """Cache log2 transformation with missing value handling."""
-    df = pl.from_dict(df_dict)
-    
-    df_log2 = df.with_columns([
-        pl.when(pl.col(c).cast(pl.Utf8).str.to_uppercase() == "NAN")
-        .then(1.0)
-        .when(pl.col(c).is_null())
-        .then(1.0)
-        .when(pl.col(c) == 0.0)
-        .then(1.0)
-        .otherwise(pl.col(c))
-        .clip(lower_bound=1.0)
-        .log(2)
-        .alias(c)
-        for c in cols
+def compute_log2(df_dict: dict, cols: list) -> dict:
+    """Cache log2 transformation."""
+    df_temp = pl.from_dict(df_dict)
+    df_log2 = df_temp.with_columns([
+        pl.col(c).clip(lower_bound=1.0).log(2).alias(c) for c in cols
     ])
-    
     return df_log2.to_dict(as_series=False)
 
-df_log2 = pl.from_dict(compute_log2_safe(df.to_dict(as_series=False), numeric_cols))
-
-# ============================================================================
-# 1. RAW INTENSITY DISTRIBUTIONS WITH KDE (3x2 GRID)
-# ============================================================================
-
-st.header("1️⃣ Raw Intensity Distributions")
-st.info("**Density histograms with KDE overlay** - Raw values with mean line and ±2σ shaded region")
-
-# Prepare raw data
-df_raw = df.with_columns([
-    pl.when(pl.col(c).cast(pl.Utf8).str.to_uppercase() == "NAN")
-    .then(1.0)
-    .when(pl.col(c).is_null())
-    .then(1.0)
-    .when(pl.col(c) == 0.0)
-    .then(1.0)
-    .otherwise(pl.col(c))
-    .alias(c)
-    for c in numeric_cols
-])
-
-# Color mapping
-colors = {'A': '#66c2a5', 'B': '#fc8d62'}
-
-# Create 3x2 grid
-plots_raw = []
-stats_raw = []
-
-for i, col in enumerate(numeric_cols[:6]):
-    # Get clean data
-    data = df_raw[col].to_numpy()
-    data_clean = data[(data > 1.0) & np.isfinite(data)]
+@st.cache_data
+def compute_normality_tests(df_dict: dict, cols: list) -> dict:
+    """Compute normality tests for all samples."""
+    df_temp = pl.from_dict(df_dict)
     
-    if len(data_clean) < 10:
-        continue
-    
-    # Calculate statistics
-    mean_val = np.mean(data_clean)
-    std_val = np.std(data_clean)
-    
-    # Determine condition and color
-    cond = 'A' if col.startswith('A') else 'B'
-    color = colors[cond]
-    
-    # Create dataframe for plotting
-    df_plot = pl.DataFrame({'intensity': data_clean})
-    
-    # Build plot
-    plot = (ggplot(df_plot.to_pandas(), aes(x='intensity')) +
-     # Histogram
-     geom_histogram(aes(y='..density..'), bins=40, fill=color, alpha=0.4, color='black', size=0.3) +
-     # KDE overlay
-     geom_density(color=color, size=1.5) +
-     # Mean line
-     geom_vline(xintercept=mean_val, linetype='dashed', color='darkred', size=1) +
-     # ±2σ shaded region
-     annotate('rect', xmin=mean_val-2*std_val, xmax=mean_val+2*std_val,
-              ymin=-np.inf, ymax=np.inf, alpha=0.1, fill='gray') +
-     # Labels
-     labs(title=f'{col} (Cond {cond})', 
-          x='Raw Intensity', 
-          y='Density',
-          subtitle=f'μ={mean_val:.1f}, σ={std_val:.1f}') +
-     theme_minimal() +
-     theme(
-         figure_size=(4, 3.5),
-         plot_title=element_text(size=11, weight='bold'),
-         plot_subtitle=element_text(size=9, color='gray'),
-         axis_text=element_text(size=8)
-     ))
-    
-    plots_raw.append(plot)
-    
-    # Collect stats
-    stats_raw.append({
-        'Sample': col,
-        'Mean': round(mean_val, 2),
-        'SD': round(std_val, 2),
-        'Min': round(np.min(data_clean), 2),
-        'Max': round(np.max(data_clean), 2),
-        'N': len(data_clean)
-    })
-
-# Display in 3x2 grid
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    if len(plots_raw) > 0:
-        st.pyplot(ggplot.draw(plots_raw[0]))
-    if len(plots_raw) > 3:
-        st.pyplot(ggplot.draw(plots_raw[3]))
-
-with col2:
-    if len(plots_raw) > 1:
-        st.pyplot(ggplot.draw(plots_raw[1]))
-    if len(plots_raw) > 4:
-        st.pyplot(ggplot.draw(plots_raw[4]))
-
-with col3:
-    if len(plots_raw) > 2:
-        st.pyplot(ggplot.draw(plots_raw[2]))
-    if len(plots_raw) > 5:
-        st.pyplot(ggplot.draw(plots_raw[5]))
-
-# Basic statistics table
-st.subheader("Distribution Statistics (Raw)")
-df_stats_raw = pl.DataFrame(stats_raw)
-st.dataframe(df_stats_raw.to_pandas(), use_container_width=True)
-
-# Normality tests
-st.subheader("Normality Tests (Raw Values)")
-
-normality_raw = []
-for col in numeric_cols:
-    data = df_raw[col].to_numpy()
-    data_clean = data[(data > 1.0) & np.isfinite(data)]
-    
-    if len(data_clean) > 3:
-        stat_sw, pval_sw = stats.shapiro(data_clean[:5000])
-        kurt = stats.kurtosis(data_clean)
-        skew = stats.skew(data_clean)
+    results = []
+    for col in cols:
+        data = df_temp[col].to_numpy()
+        data_clean = data[np.isfinite(data)]
         
-        normality_raw.append({
-            'Sample': col,
-            'Shapiro W': round(stat_sw, 4),
-            'Shapiro p': f"{pval_sw:.4e}",
-            'Kurtosis': round(kurt, 3),
-            'Skewness': round(skew, 3),
-            'Normal?': '✓' if pval_sw > 0.05 and abs(kurt) < 2 and abs(skew) < 1 else '✗'
-        })
-
-df_normality_raw = pl.DataFrame(normality_raw)
-st.dataframe(df_normality_raw.to_pandas(), use_container_width=True)
-
-st.caption("**Shaded region:** ±2σ from mean | **Red line:** Mean | **Normal if:** p>0.05, |Kurt|<2, |Skew|<1")
-
-st.markdown("---")
-
-# ============================================================================
-# 2. LOG2 TRANSFORMED DISTRIBUTIONS (3x2 GRID)
-# ============================================================================
-
-st.header("2️⃣ Log2 Transformed Intensity Distributions")
-st.info("**After log2 transformation** - Should be more normal for parametric tests")
-
-# Compute log2
-df_log2 = pl.from_dict(compute_log2_safe(df.to_dict(as_series=False), numeric_cols))
-
-# Create plots
-plots_log2 = []
-stats_log2 = []
-
-for i, col in enumerate(numeric_cols[:6]):
-    data = df_log2[col].to_numpy()
-    data_clean = data[np.isfinite(data)]
+        if len(data_clean) > 3:
+            # Shapiro-Wilk test (use first 5000 points for speed)
+            stat_sw, pval_sw = stats.shapiro(data_clean[:5000])
+            
+            # Kurtosis and Skewness
+            kurt = stats.kurtosis(data_clean)
+            skew = stats.skew(data_clean)
+            
+            # Normality assessment
+            is_normal = pval_sw > 0.05 and abs(kurt) < 2 and abs(skew) < 1
+            
+            results.append({
+                'Sample': col,
+                'Shapiro_W': round(stat_sw, 4),
+                'Shapiro_p': pval_sw,
+                'Kurtosis': round(kurt, 3),
+                'Skewness': round(skew, 3),
+                'Normal': '✓' if is_normal else '✗',
+                'N': len(data_clean)
+            })
     
-    if len(data_clean) < 10:
-        continue
-    
-    mean_val = np.mean(data_clean)
-    std_val = np.std(data_clean)
-    cond = 'A' if col.startswith('A') else 'B'
-    color = colors[cond]
-    
-    df_plot = pl.DataFrame({'log2_intensity': data_clean})
-    
-    plot = (ggplot(df_plot.to_pandas(), aes(x='log2_intensity')) +
-     geom_histogram(aes(y='..density..'), bins=40, fill=color, alpha=0.4, color='black', size=0.3) +
-     geom_density(color=color, size=1.5) +
-     geom_vline(xintercept=mean_val, linetype='dashed', color='darkred', size=1) +
-     annotate('rect', xmin=mean_val-2*std_val, xmax=mean_val+2*std_val,
-              ymin=-np.inf, ymax=np.inf, alpha=0.1, fill='gray') +
-     labs(title=f'{col} (Cond {cond})', 
-          x='Log2 Intensity', 
-          y='Density',
-          subtitle=f'μ={mean_val:.2f}, σ={std_val:.2f}') +
-     theme_minimal() +
-     theme(
-         figure_size=(4, 3.5),
-         plot_title=element_text(size=11, weight='bold'),
-         plot_subtitle=element_text(size=9, color='gray'),
-         axis_text=element_text(size=8)
-     ))
-    
-    plots_log2.append(plot)
-    
-    stats_log2.append({
-        'Sample': col,
-        'Mean': round(mean_val, 2),
-        'SD': round(std_val, 2),
-        'Min': round(np.min(data_clean), 2),
-        'Max': round(np.max(data_clean), 2),
-        'N': len(data_clean)
-    })
+    return {'results': results}
 
-# Display grid
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    if len(plots_log2) > 0:
-        st.pyplot(ggplot.draw(plots_log2[0]))
-    if len(plots_log2) > 3:
-        st.pyplot(ggplot.draw(plots_log2[3]))
-
-with col2:
-    if len(plots_log2) > 1:
-        st.pyplot(ggplot.draw(plots_log2[1]))
-    if len(plots_log2) > 4:
-        st.pyplot(ggplot.draw(plots_log2[4]))
-
-with col3:
-    if len(plots_log2) > 2:
-        st.pyplot(ggplot.draw(plots_log2[2]))
-    if len(plots_log2) > 5:
-        st.pyplot(ggplot.draw(plots_log2[5]))
-
-# Statistics
-st.subheader("Distribution Statistics (Log2)")
-df_stats_log2 = pl.DataFrame(stats_log2)
-st.dataframe(df_stats_log2.to_pandas(), use_container_width=True)
-
-# Normality tests
-st.subheader("Normality Tests (Log2 Transformed)")
-
-normality_log2 = []
-for col in numeric_cols:
-    data = df_log2[col].to_numpy()
-    data_clean = data[np.isfinite(data)]
-    
-    if len(data_clean) > 3:
-        stat_sw, pval_sw = stats.shapiro(data_clean[:5000])
-        kurt = stats.kurtosis(data_clean)
-        skew = stats.skew(data_clean)
-        
-        normality_log2.append({
-            'Sample': col,
-            'Shapiro W': round(stat_sw, 4),
-            'Shapiro p': f"{pval_sw:.4e}",
-            'Kurtosis': round(kurt, 3),
-            'Skewness': round(skew, 3),
-            'Normal?': '✓' if pval_sw > 0.05 and abs(kurt) < 2 and abs(skew) < 1 else '✗'
-        })
-
-df_normality_log2 = pl.DataFrame(normality_log2)
-st.dataframe(df_normality_log2.to_pandas(), use_container_width=True)
-
-st.markdown("---")
-# ============================================================================
-# 3. TRANSFORMATION COMPARISON
-# ============================================================================
-
-st.header("3️⃣ Transformation Comparison")
-st.info("**Compare different transformations** - Select best for normality and variance stabilization")
-
-from scipy.stats import yeojohnson, boxcox
-
-# Define transformations (complete list)
-TRANSFORM_NAMES = {
-    "raw": "Raw (No Transform)",
-    "log2": "Log2",
-    "log10": "Log10",
-    "ln": "Natural Log (ln)",
-    "sqrt": "Square Root",
-    "arcsinh": "Arcsinh",
-    "boxcox": "Box-Cox",
-    "yeo-johnson": "Yeo-Johnson",
-}
-
-# Apply all transformations and collect stats
 @st.cache_data
 def compute_all_transforms(df_dict: dict, cols: list) -> dict:
-    """Compute all transformations and their normality metrics."""
+    """Compute multiple transformations and their normality metrics."""
     df = pl.from_dict(df_dict)
-    
-    # Clean data first
-    df_clean = df.with_columns([
-        pl.when(pl.col(c).cast(pl.Utf8).str.to_uppercase() == "NAN")
-        .then(1.0)
-        .when(pl.col(c).is_null())
-        .then(1.0)
-        .when(pl.col(c) == 0.0)
-        .then(1.0)
-        .otherwise(pl.col(c))
-        .alias(c)
-        for c in cols
-    ])
     
     transforms = {}
     
-    # Raw
-    transforms['raw'] = df_clean.to_dict(as_series=False)
+    # Raw (already processed, just clip to positive)
+    transforms['raw'] = df.with_columns([
+        pl.col(c).clip(lower_bound=1.0).alias(c) for c in cols
+    ]).to_dict(as_series=False)
     
     # Log2
-    transforms['log2'] = df_clean.with_columns([
+    transforms['log2'] = df.with_columns([
         pl.col(c).clip(lower_bound=1.0).log(2).alias(c) for c in cols
     ]).to_dict(as_series=False)
     
     # Log10
-    transforms['log10'] = df_clean.with_columns([
+    transforms['log10'] = df.with_columns([
         pl.col(c).clip(lower_bound=1.0).log10().alias(c) for c in cols
     ]).to_dict(as_series=False)
     
     # Natural log
-    transforms['ln'] = df_clean.with_columns([
+    transforms['ln'] = df.with_columns([
         pl.col(c).clip(lower_bound=1.0).log().alias(c) for c in cols
     ]).to_dict(as_series=False)
     
     # Square root
-    transforms['sqrt'] = df_clean.with_columns([
+    transforms['sqrt'] = df.with_columns([
         pl.col(c).sqrt().alias(c) for c in cols
     ]).to_dict(as_series=False)
     
     # Arcsinh
-    transforms['arcsinh'] = df_clean.with_columns([
+    transforms['arcsinh'] = df.with_columns([
         pl.col(c).arcsinh().alias(c) for c in cols
     ]).to_dict(as_series=False)
+    
+    # Box-Cox and Yeo-Johnson (need numpy conversion)
+    df_pandas = df.select(cols).to_pandas()
     
     # Box-Cox (requires positive values)
-    df_boxcox = df_clean.to_pandas()[cols]
-    df_boxcox_transformed = df_boxcox.copy()
+    df_boxcox = df_pandas.copy()
     for col in cols:
-        data = df_boxcox[col].values
+        data = df_pandas[col].values
         data_positive = data[data > 0]
         if len(data_positive) > 1:
-            transformed, _ = boxcox(data_positive)
-            # Map back to original indices
-            df_boxcox_transformed.loc[data > 0, col] = transformed
-    transforms['boxcox'] = pl.from_pandas(df_boxcox_transformed).to_dict(as_series=False)
+            try:
+                transformed, _ = boxcox(data_positive)
+                df_boxcox.loc[data > 0, col] = transformed
+            except:
+                pass
+    transforms['boxcox'] = pl.from_pandas(df_boxcox).to_dict(as_series=False)
     
     # Yeo-Johnson (works with any values)
-    df_yj = df_clean.to_pandas()[cols]
-    df_yj_transformed = df_yj.copy()
+    df_yj = df_pandas.copy()
     for col in cols:
-        data = df_yj[col].values
+        data = df_pandas[col].values
         data_finite = data[np.isfinite(data)]
         if len(data_finite) > 1:
-            transformed, _ = yeojohnson(data_finite)
-            df_yj_transformed.loc[np.isfinite(data), col] = transformed
-    transforms['yeo-johnson'] = pl.from_pandas(df_yj_transformed).to_dict(as_series=False)
-    
-    return transforms
-    
-    # Raw
-    transforms['raw'] = df_clean.to_dict(as_series=False)
-    
-    # Log2
-    transforms['log2'] = df_clean.with_columns([
-        pl.col(c).clip(lower_bound=1.0).log(2).alias(c) for c in cols
-    ]).to_dict(as_series=False)
-    
-    # Log10
-    transforms['log10'] = df_clean.with_columns([
-        pl.col(c).clip(lower_bound=1.0).log10().alias(c) for c in cols
-    ]).to_dict(as_series=False)
-    
-    # Natural log
-    transforms['ln'] = df_clean.with_columns([
-        pl.col(c).clip(lower_bound=1.0).log().alias(c) for c in cols
-    ]).to_dict(as_series=False)
-    
-    # Square root
-    transforms['sqrt'] = df_clean.with_columns([
-        pl.col(c).sqrt().alias(c) for c in cols
-    ]).to_dict(as_series=False)
-    
-    # Arcsinh
-    transforms['arcsinh'] = df_clean.with_columns([
-        pl.col(c).arcsinh().alias(c) for c in cols
-    ]).to_dict(as_series=False)
+            try:
+                transformed, _ = yeojohnson(data_finite)
+                df_yj.loc[np.isfinite(data), col] = transformed
+            except:
+                pass
+    transforms['yeo-johnson'] = pl.from_pandas(df_yj).to_dict(as_series=False)
     
     return transforms
 
-# Compute transforms
-all_transforms = compute_all_transforms(df.to_dict(as_series=False), numeric_cols)
+def calculate_transform_scores(all_transforms: dict, numeric_cols: list) -> pl.DataFrame:
+    """Calculate normality scores for each transformation."""
+    
+    TRANSFORM_NAMES = {
+        "raw": "Raw (No Transform)",
+        "log2": "Log2",
+        "log10": "Log10",
+        "ln": "Natural Log (ln)",
+        "sqrt": "Square Root",
+        "arcsinh": "Arcsinh",
+        "boxcox": "Box-Cox",
+        "yeo-johnson": "Yeo-Johnson",
+    }
+    
+    transform_stats = []
+    
+    for trans_name in all_transforms.keys():
+        df_trans = pl.from_dict(all_transforms[trans_name])
+        
+        # Aggregate all samples
+        all_values = []
+        for col in numeric_cols:
+            data = df_trans[col].to_numpy()
+            data_clean = data[np.isfinite(data)]
+            all_values.extend(data_clean)
+        
+        all_values = np.array(all_values)
+        
+        if len(all_values) > 3:
+            # Shapiro test
+            stat_sw, pval_sw = stats.shapiro(all_values[:5000])
+            
+            # Kurtosis & Skewness
+            kurt = stats.kurtosis(all_values)
+            skew = stats.skew(all_values)
+            
+            # Mean-variance correlation
+            means = []
+            variances = []
+            for i in range(len(df_trans)):
+                row_data = [df_trans[col][i] for col in numeric_cols]
+                row_data = [x for x in row_data if np.isfinite(x)]
+                if len(row_data) >= 2:
+                    means.append(np.mean(row_data))
+                    variances.append(np.var(row_data))
+            
+            if len(means) > 2:
+                mean_var_corr = np.corrcoef(means, variances)[0, 1]
+            else:
+                mean_var_corr = np.nan
+            
+            # Normality score (lower is better)
+            norm_score = (1 - pval_sw) + abs(kurt)/10 + abs(skew)/5 + abs(mean_var_corr)
+            
+            transform_stats.append({
+                'Transform': TRANSFORM_NAMES[trans_name],
+                'Shapiro_W': round(stat_sw, 4),
+                'Shapiro_p': round(pval_sw, 4),
+                'Kurtosis': round(kurt, 3),
+                'Skewness': round(skew, 3),
+                'Mean_Var_Corr': round(mean_var_corr, 3),
+                'Normality_Score': round(norm_score, 3),
+                '_key': trans_name
+            })
+    
+    return pl.DataFrame(transform_stats).sort('Normality_Score')
 
-# Calculate normality metrics for each transform
-transform_stats = []
+# ============================================================================
+# PLOTTING FUNCTIONS
+# ============================================================================
 
-for trans_name, trans_key in TRANSFORM_NAMES.items():
-    df_trans = pl.from_dict(all_transforms[trans_name])
+def plot_intensity_distributions(df, numeric_cols, data_type, transform_type="log2"):
+    """Plot intensity distributions in 3x2 grid."""
     
-    # Aggregate all samples
-    all_values = []
-    for col in numeric_cols:
-        data = df_trans[col].to_numpy()
-        data_clean = data[np.isfinite(data) & (data > 0 if trans_name == 'raw' else True)]
-        all_values.extend(data_clean)
+    colors = {'A': '#66c2a5', 'B': '#fc8d62', 'C': '#8da0cb', 'D': '#e78ac3'}
     
-    all_values = np.array(all_values)
+    st.subheader(f"{transform_type.upper()} Intensity Distributions")
+    st.info(f"**Density histograms with KDE overlay** - {data_type.title()} data with mean line and ±2σ shaded region")
     
-    if len(all_values) > 3:
-        # Shapiro test
-        stat_sw, pval_sw = stats.shapiro(all_values[:5000])
+    plots = []
+    stats_data = []
+    
+    # Generate up to 6 plots
+    for i, col in enumerate(numeric_cols[:6]):
+        data = df[col].to_numpy()
+        data_clean = data[np.isfinite(data)]
         
-        # Kurtosis & Skewness
-        kurt = stats.kurtosis(all_values)
-        skew = stats.skew(all_values)
+        if len(data_clean) < 10:
+            continue
         
-        # Mean-variance correlation (across proteins)
-        means = df_trans.select(numeric_cols).mean_horizontal().to_numpy()
-        vars = df_trans.select(numeric_cols).select([
-            pl.var(c) for c in numeric_cols
-        ]).row(0)
+        # Calculate statistics
+        mean_val = np.mean(data_clean)
+        std_val = np.std(data_clean)
         
-        # Calculate Pearson correlation between mean and variance
-        mean_vals = []
-        var_vals = []
+        # Determine condition and color
+        cond = col[0]
+        color = colors.get(cond, '#999999')
+        
+        # Create dataframe for plotting
+        df_plot = pl.DataFrame({'intensity': data_clean})
+        
+        # Build plot
+        plot = (ggplot(df_plot.to_pandas(), aes(x='intensity')) +
+         geom_histogram(aes(y='..density..'), bins=40, fill=color, alpha=0.4, color='black', size=0.3) +
+         geom_density(color=color, size=1.5) +
+         geom_vline(xintercept=mean_val, linetype='dashed', color='darkred', size=1) +
+         annotate('rect', xmin=mean_val-2*std_val, xmax=mean_val+2*std_val,
+                  ymin=-np.inf, ymax=np.inf, alpha=0.1, fill='gray') +
+         labs(title=f'{col} (Cond {cond})', 
+              x=f'{transform_type.upper()} Intensity', 
+              y='Density',
+              subtitle=f'μ={mean_val:.2f}, σ={std_val:.2f}') +
+         theme_minimal() +
+         theme(
+             figure_size=(4, 3.5),
+             plot_title=element_text(size=11, weight='bold'),
+             plot_subtitle=element_text(size=9, color='gray'),
+             axis_text=element_text(size=8)
+         ))
+        
+        plots.append(plot)
+        
+        # Collect stats
+        stats_data.append({
+            'Sample': col,
+            'Mean': round(mean_val, 2),
+            'SD': round(std_val, 2),
+            'Min': round(np.min(data_clean), 2),
+            'Max': round(np.max(data_clean), 2),
+            'N': len(data_clean)
+        })
+    
+    # Display in 3x2 grid
+    if len(plots) > 0:
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if len(plots) > 0:
+                fig = ggplot.draw(plots[0])
+                st.pyplot(fig)
+                plt.close(fig)
+            if len(plots) > 3:
+                fig = ggplot.draw(plots[3])
+                st.pyplot(fig)
+                plt.close(fig)
+        
+        with col2:
+            if len(plots) > 1:
+                fig = ggplot.draw(plots[1])
+                st.pyplot(fig)
+                plt.close(fig)
+            if len(plots) > 4:
+                fig = ggplot.draw(plots[4])
+                st.pyplot(fig)
+                plt.close(fig)
+        
+        with col3:
+            if len(plots) > 2:
+                fig = ggplot.draw(plots[2])
+                st.pyplot(fig)
+                plt.close(fig)
+            if len(plots) > 5:
+                fig = ggplot.draw(plots[5])
+                st.pyplot(fig)
+                plt.close(fig)
+    
+    # Statistics table
+    st.markdown(f"**Distribution Statistics ({transform_type.upper()})**")
+    if stats_data:
+        df_stats = pl.DataFrame(stats_data)
+        st.dataframe(df_stats.to_pandas(), use_container_width=True)
+    
+    del plots, stats_data
+    clear_plot_memory()
+
+def plot_diagnostic_comparison(df_raw, df_trans, numeric_cols, transform_name):
+    """Plot diagnostic plots comparing raw vs transformed data."""
+    
+    st.subheader("Raw Data Diagnostics")
+    col1, col2, col3 = st.columns(3)
+    
+    # Concatenate all raw values
+    raw_vals = np.concatenate([df_raw[c].to_numpy() for c in numeric_cols])
+    raw_vals = raw_vals[np.isfinite(raw_vals)]
+    
+    # Distribution
+    with col1:
+        st.markdown("**Distribution**")
+        mu_raw = np.mean(raw_vals)
+        sigma_raw = np.std(raw_vals)
+        
+        df_plot = pl.DataFrame({'value': raw_vals})
+        
+        plot = (ggplot(df_plot.to_pandas(), aes(x='value')) +
+         geom_histogram(aes(y='..density..'), bins=50, fill='#1f77b4', alpha=0.6) +
+         geom_density(color='#1f77b4', size=1.5) +
+         geom_vline(xintercept=mu_raw, linetype='dashed', color='red', size=1) +
+         annotate('rect', xmin=mu_raw-2*sigma_raw, xmax=mu_raw+2*sigma_raw,
+                  ymin=-np.inf, ymax=np.inf, alpha=0.1, fill='gray') +
+         labs(title='Raw Intensities', x='Intensity', y='Density',
+              subtitle=f'μ={mu_raw:.1f}, σ={sigma_raw:.1f}') +
+         theme_minimal() +
+         theme(figure_size=(4, 3.5), plot_subtitle=element_text(size=8)))
+        
+        fig = ggplot.draw(plot)
+        st.pyplot(fig)
+        plt.close(fig)
+    
+    # Q-Q plot
+    with col2:
+        st.markdown("**Q-Q Plot**")
+        qq_raw = probplot(raw_vals[:5000], dist="norm")
+        df_qq = pl.DataFrame({'theoretical': qq_raw[0][0], 'sample': qq_raw[0][1]})
+        
+        plot = (ggplot(df_qq.to_pandas(), aes(x='theoretical', y='sample')) +
+         geom_point(color='#1f77b4', alpha=0.5, size=1) +
+         geom_abline(intercept=0, slope=1, color='red', linetype='dashed') +
+         labs(title='Q-Q Plot (Raw)', x='Theoretical Quantiles', y='Sample Quantiles') +
+         theme_minimal() +
+         theme(figure_size=(4, 3.5)))
+        
+        fig = ggplot.draw(plot)
+        st.pyplot(fig)
+        plt.close(fig)
+    
+    # Mean-Variance
+    with col3:
+        st.markdown("**Mean-Variance Relationship**")
+        means, variances = [], []
+        for i in range(len(df_raw)):
+            row_data = [df_raw[col][i] for col in numeric_cols]
+            row_data = [x for x in row_data if np.isfinite(x)]
+            if len(row_data) >= 2:
+                means.append(np.mean(row_data))
+                variances.append(np.var(row_data))
+        
+        df_mv = pl.DataFrame({'mean': means, 'variance': variances})
+        
+        plot = (ggplot(df_mv.to_pandas(), aes(x='mean', y='variance')) +
+         geom_point(color='#1f77b4', alpha=0.3, size=1) +
+         labs(title='Mean-Variance (Raw)', x='Mean', y='Variance') +
+         theme_minimal() +
+         theme(figure_size=(4, 3.5)))
+        
+        fig = ggplot.draw(plot)
+        st.pyplot(fig)
+        plt.close(fig)
+    
+    # Transformed data
+    st.subheader(f"{transform_name} Diagnostics")
+    col1, col2, col3 = st.columns(3)
+    
+    trans_vals = np.concatenate([df_trans[c].to_numpy() for c in numeric_cols])
+    trans_vals = trans_vals[np.isfinite(trans_vals)]
+    
+    # Distribution
+    with col1:
+        st.markdown("**Distribution**")
+        mu_trans = np.mean(trans_vals)
+        sigma_trans = np.std(trans_vals)
+        
+        df_plot = pl.DataFrame({'value': trans_vals})
+        
+        plot = (ggplot(df_plot.to_pandas(), aes(x='value')) +
+         geom_histogram(aes(y='..density..'), bins=50, fill='#ff7f0e', alpha=0.6) +
+         geom_density(color='#ff7f0e', size=1.5) +
+         geom_vline(xintercept=mu_trans, linetype='dashed', color='darkred', size=1) +
+         annotate('rect', xmin=mu_trans-2*sigma_trans, xmax=mu_trans+2*sigma_trans,
+                  ymin=-np.inf, ymax=np.inf, alpha=0.1, fill='gray') +
+         labs(title=f'{transform_name} Intensities', x='Transformed Intensity', y='Density',
+              subtitle=f'μ={mu_trans:.2f}, σ={sigma_trans:.2f}') +
+         theme_minimal() +
+         theme(figure_size=(4, 3.5), plot_subtitle=element_text(size=8)))
+        
+        fig = ggplot.draw(plot)
+        st.pyplot(fig)
+        plt.close(fig)
+    
+    # Q-Q plot
+    with col2:
+        st.markdown("**Q-Q Plot**")
+        qq_trans = probplot(trans_vals[:5000], dist="norm")
+        df_qq = pl.DataFrame({'theoretical': qq_trans[0][0], 'sample': qq_trans[0][1]})
+        
+        plot = (ggplot(df_qq.to_pandas(), aes(x='theoretical', y='sample')) +
+         geom_point(color='#ff7f0e', alpha=0.5, size=1) +
+         geom_abline(intercept=0, slope=1, color='red', linetype='dashed') +
+         labs(title='Q-Q Plot (Transformed)', x='Theoretical Quantiles', y='Sample Quantiles') +
+         theme_minimal() +
+         theme(figure_size=(4, 3.5)))
+        
+        fig = ggplot.draw(plot)
+        st.pyplot(fig)
+        plt.close(fig)
+    
+    # Mean-Variance
+    with col3:
+        st.markdown("**Mean-Variance Relationship**")
+        means, variances = [], []
         for i in range(len(df_trans)):
             row_data = [df_trans[col][i] for col in numeric_cols]
             row_data = [x for x in row_data if np.isfinite(x)]
             if len(row_data) >= 2:
-                mean_vals.append(np.mean(row_data))
-                var_vals.append(np.var(row_data))
+                means.append(np.mean(row_data))
+                variances.append(np.var(row_data))
         
-        if len(mean_vals) > 2:
-            mean_var_corr = np.corrcoef(mean_vals, var_vals)[0, 1]
-        else:
-            mean_var_corr = np.nan
+        df_mv = pl.DataFrame({'mean': means, 'variance': variances})
         
-        # Normality score (lower is better)
-        norm_score = (1 - pval_sw) + abs(kurt)/10 + abs(skew)/5 + abs(mean_var_corr)
+        plot = (ggplot(df_mv.to_pandas(), aes(x='mean', y='variance')) +
+         geom_point(color='#ff7f0e', alpha=0.3, size=1) +
+         labs(title='Mean-Variance (Transformed)', x='Mean', y='Variance') +
+         theme_minimal() +
+         theme(figure_size=(4, 3.5)))
         
-        transform_stats.append({
-            'Transform': trans_key,
-            'Shapiro W': round(stat_sw, 4),
-            'Shapiro p': round(pval_sw, 4),
-            'Kurtosis': round(kurt, 3),
-            'Skewness': round(skew, 3),
-            'Mean-Var Corr': round(mean_var_corr, 3),
-            'Normality Score': round(norm_score, 3),
-            '_key': trans_name
-        })
-
-df_transform_stats = pl.DataFrame(transform_stats).sort('Normality Score')
-
-st.subheader("Transformation Statistics (Lower Score = Better Normality)")
-st.dataframe(df_transform_stats.to_pandas().drop('_key', axis=1), use_container_width=True)
-
-st.caption("**Normality Score:** Composite metric (lower = better). Based on Shapiro p-value, kurtosis, skewness, and mean-variance correlation.")
-
-# Select transform to compare
-selected_transform = st.selectbox(
-    "Select transformation to compare with raw:",
-    options=list(TRANSFORM_NAMES.keys())[1:],  # Exclude raw
-    format_func=lambda x: TRANSFORM_NAMES[x],
-    index=0  # Default to log2
-)
-
-st.markdown("---")
+        fig = ggplot.draw(plot)
+        st.pyplot(fig)
+        plt.close(fig)
+    
+    clear_plot_memory()
 
 # ============================================================================
-# 4. DIAGNOSTIC PLOTS: RAW VS TRANSFORMED
+# PROCESS DATASET FUNCTION
 # ============================================================================
 
-st.header("4️⃣ Diagnostic Plots: Raw vs Transformed")
-
-# Get raw and transformed data
-df_raw_np = pl.from_dict(all_transforms['raw'])
-df_trans_np = pl.from_dict(all_transforms[selected_transform])
-
-# Create 2 rows of 3 plots each (raw on top, transformed on bottom)
-st.subheader(f"Raw Data Diagnostics")
-
-# Row 1: Raw data
-col1, col2, col3 = st.columns(3)
-
-# Raw: Distribution
-with col1:
-    st.markdown("**Distribution**")
-    raw_vals = np.concatenate([df_raw_np[c].to_numpy() for c in numeric_cols])
-    raw_vals = raw_vals[(raw_vals > 1.0) & np.isfinite(raw_vals)]
+def process_statistical_eda(df, numeric_cols, id_col, data_type, key_prefix):
+    """Process statistical EDA for a dataset."""
     
-    mu_raw = np.mean(raw_vals)
-    sigma_raw = np.std(raw_vals)
+    st.header(f"{data_type.title()}-Level Statistical Analysis")
     
-    df_plot_raw = pl.DataFrame({'value': raw_vals})
+    # Dataset info
+    st.info(f"📊 Analyzing **{df.shape[0]:,} {data_type}s** across **{len(numeric_cols)} samples**")
     
-    plot_raw_dist = (ggplot(df_plot_raw.to_pandas(), aes(x='value')) +
-     geom_histogram(aes(y='..density..'), bins=50, fill='#1f77b4', alpha=0.6) +
-     geom_density(color='#1f77b4', size=1.5) +
-     geom_vline(xintercept=mu_raw, linetype='dashed', color='red', size=1) +
-     annotate('rect', xmin=mu_raw-2*sigma_raw, xmax=mu_raw+2*sigma_raw,
-              ymin=-np.inf, ymax=np.inf, alpha=0.1, fill='gray') +
-     labs(title='Raw Intensities', x='Intensity', y='Density',
-          subtitle=f'μ={mu_raw:.1f}, σ={sigma_raw:.1f}') +
-     theme_minimal() +
-     theme(figure_size=(4, 3.5), plot_subtitle=element_text(size=8)))
+    # ========================================================================
+    # 1. LOG2 INTENSITY DISTRIBUTIONS
+    # ========================================================================
     
-    st.pyplot(ggplot.draw(plot_raw_dist))
-
-# Raw: Q-Q plot
-with col2:
-    st.markdown("**Q-Q Plot**")
-    from scipy.stats import probplot
-    
-    qq_raw = probplot(raw_vals[:5000], dist="norm")
-    df_qq_raw = pl.DataFrame({'theoretical': qq_raw[0][0], 'sample': qq_raw[0][1]})
-    
-    plot_qq_raw = (ggplot(df_qq_raw.to_pandas(), aes(x='theoretical', y='sample')) +
-     geom_point(color='#1f77b4', alpha=0.5, size=1) +
-     geom_abline(intercept=0, slope=1, color='red', linetype='dashed') +
-     labs(title='Q-Q Plot (Raw)', x='Theoretical Quantiles', y='Sample Quantiles') +
-     theme_minimal() +
-     theme(figure_size=(4, 3.5)))
-    
-    st.pyplot(ggplot.draw(plot_qq_raw))
-
-# Raw: Mean-Variance
-with col3:
-    st.markdown("**Mean-Variance Relationship**")
-    
-    means_raw = []
-    vars_raw = []
-    for i in range(len(df_raw_np)):
-        row_data = [df_raw_np[col][i] for col in numeric_cols]
-        row_data = [x for x in row_data if x > 1.0 and np.isfinite(x)]
-        if len(row_data) >= 2:
-            means_raw.append(np.mean(row_data))
-            vars_raw.append(np.var(row_data))
-    
-    df_mv_raw = pl.DataFrame({'mean': means_raw, 'variance': vars_raw})
-    
-    plot_mv_raw = (ggplot(df_mv_raw.to_pandas(), aes(x='mean', y='variance')) +
-     geom_point(color='#1f77b4', alpha=0.3, size=1) +
-     labs(title='Mean-Variance (Raw)', x='Mean', y='Variance') +
-     theme_minimal() +
-     theme(figure_size=(4, 3.5)))
-    
-    st.pyplot(ggplot.draw(plot_mv_raw))
-
-# Row 2: Transformed data
-st.subheader(f"{TRANSFORM_NAMES[selected_transform]} Diagnostics")
-
-col1, col2, col3 = st.columns(3)
-
-# Transformed: Distribution
-with col1:
-    st.markdown("**Distribution**")
-    trans_vals = np.concatenate([df_trans_np[c].to_numpy() for c in numeric_cols])
-    trans_vals = trans_vals[np.isfinite(trans_vals)]
-    
-    mu_trans = np.mean(trans_vals)
-    sigma_trans = np.std(trans_vals)
-    
-    df_plot_trans = pl.DataFrame({'value': trans_vals})
-    
-    plot_trans_dist = (ggplot(df_plot_trans.to_pandas(), aes(x='value')) +
-     geom_histogram(aes(y='..density..'), bins=50, fill='#ff7f0e', alpha=0.6) +
-     geom_density(color='#ff7f0e', size=1.5) +
-     geom_vline(xintercept=mu_trans, linetype='dashed', color='darkred', size=1) +
-     annotate('rect', xmin=mu_trans-2*sigma_trans, xmax=mu_trans+2*sigma_trans,
-              ymin=-np.inf, ymax=np.inf, alpha=0.1, fill='gray') +
-     labs(title=f'{TRANSFORM_NAMES[selected_transform]} Intensities', 
-          x='Transformed Intensity', y='Density',
-          subtitle=f'μ={mu_trans:.2f}, σ={sigma_trans:.2f}') +
-     theme_minimal() +
-     theme(figure_size=(4, 3.5), plot_subtitle=element_text(size=8)))
-    
-    st.pyplot(ggplot.draw(plot_trans_dist))
-
-# Transformed: Q-Q plot
-with col2:
-    st.markdown("**Q-Q Plot**")
-    
-    qq_trans = probplot(trans_vals[:5000], dist="norm")
-    df_qq_trans = pl.DataFrame({'theoretical': qq_trans[0][0], 'sample': qq_trans[0][1]})
-    
-    plot_qq_trans = (ggplot(df_qq_trans.to_pandas(), aes(x='theoretical', y='sample')) +
-     geom_point(color='#ff7f0e', alpha=0.5, size=1) +
-     geom_abline(intercept=0, slope=1, color='red', linetype='dashed') +
-     labs(title='Q-Q Plot (Transformed)', x='Theoretical Quantiles', y='Sample Quantiles') +
-     theme_minimal() +
-     theme(figure_size=(4, 3.5)))
-    
-    st.pyplot(ggplot.draw(plot_qq_trans))
-
-# Transformed: Mean-Variance
-with col3:
-    st.markdown("**Mean-Variance Relationship**")
-    
-    means_trans = []
-    vars_trans = []
-    for i in range(len(df_trans_np)):
-        row_data = [df_trans_np[col][i] for col in numeric_cols]
-        row_data = [x for x in row_data if np.isfinite(x)]
-        if len(row_data) >= 2:
-            means_trans.append(np.mean(row_data))
-            vars_trans.append(np.var(row_data))
-    
-    df_mv_trans = pl.DataFrame({'mean': means_trans, 'variance': vars_trans})
-    
-    plot_mv_trans = (ggplot(df_mv_trans.to_pandas(), aes(x='mean', y='variance')) +
-     geom_point(color='#ffb74d', alpha=0.3, size=1) +
-     labs(title='Mean-Variance (Transformed)', x='Mean', y='Variance') +
-     theme_minimal() +
-     theme(figure_size=(4, 3.5)))
-    
-    st.pyplot(ggplot.draw(plot_mv_trans))
-
-st.markdown("---")
-
-# ============================================================================
-# 5. DATA FILTERING RECOMMENDATIONS
-# ============================================================================
-
-st.header("5️⃣ Data Filtering & Quality Control")
-st.info("**Smart filtering based on your data** - Remove low-quality measurements and apply optimal transformation")
-
-# Group samples by condition
-conditions = {}
-for col in numeric_cols:
-    condition = col[0]  # First letter (A, B, C...)
-    if condition not in conditions:
-        conditions[condition] = []
-    conditions[condition].append(col)
-
-# ============================================================================
-# FILTER CONFIGURATION
-# ============================================================================
-
-st.subheader("Filter Configuration")
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    remove_missing = st.checkbox(
-        "Remove rows with any missing values",
-        value=True,
-        help="Drop proteins with at least 1 missing value (≤1.0) across all samples"
-    )
-
-with col2:
-    cv_filter = st.checkbox(
-        "Filter by CV threshold",
-        value=True,
-        help="Remove proteins with high variability in any condition"
-    )
-    
-    cv_threshold = st.slider(
-        "Max CV % per condition:",
-        min_value=10,
-        max_value=100,
-        value=30,
-        step=5,
-        disabled=not cv_filter,
-        help="Drop protein if CV exceeds this in ANY condition"
-    )
-
-with col3:
-    auto_transform = st.checkbox(
-        "Apply best transformation",
-        value=True,
-        help="Automatically apply transformation with best normality score"
-    )
-    
-    if not auto_transform:
-        manual_transform = st.selectbox(
-            "Manual selection:",
-            options=list(TRANSFORM_NAMES.keys()),
-            format_func=lambda x: TRANSFORM_NAMES[x],
-            index=1  # Default to log2
-        )
-
-# ============================================================================
-# PREVIEW FILTERING IMPACT
-# ============================================================================
-
-st.subheader("Filtering Impact Preview")
-
-# Start with all proteins
-df_filtered = df.clone()
-n_original = df_filtered.shape[0]
-filter_log = []
-
-# Filter 1: Remove missing values
-if remove_missing:
-    # Count rows with any missing (≤1.0)
-    has_missing = df_filtered.select([
-        pl.any_horizontal([
-            (pl.col(c) <= 1.0) | (pl.col(c).is_null()) | 
-            (pl.col(c).cast(pl.Utf8).str.to_uppercase() == "NAN")
-            for c in numeric_cols
-        ]).alias('has_missing')
-    ])
-    
-    n_before = df_filtered.shape[0]
-    df_filtered = df_filtered.filter(~has_missing['has_missing'])
-    n_removed = n_before - df_filtered.shape[0]
-    
-    filter_log.append(f"**Missing values:** Removed {n_removed} proteins ({n_removed/n_original*100:.1f}%)")
-
-# Filter 2: CV threshold
-if cv_filter:
-    # Calculate CV for each condition
-    cv_filters = []
-    
-    for condition, cols in conditions.items():
-        # Calculate CV
-        df_cv = df_filtered.select([id_col] + cols).with_columns([
-            pl.concat_list(cols).list.mean().alias('mean'),
-            pl.concat_list(cols).list.std().alias('std')
-        ]).with_columns(
-            (pl.col('std') / pl.col('mean') * 100).alias(f'cv_{condition}')
-        )
-        
-        cv_filters.append(pl.col(f'cv_{condition}') <= cv_threshold)
-        df_filtered = df_filtered.with_columns(df_cv[f'cv_{condition}'])
-    
-    # Keep only proteins where ALL conditions meet CV threshold
-    n_before = df_filtered.shape[0]
-    df_filtered = df_filtered.filter(pl.all_horizontal(cv_filters))
-    n_removed = n_before - df_filtered.shape[0]
-    
-    filter_log.append(f"**CV threshold (≤{cv_threshold}%):** Removed {n_removed} proteins ({n_removed/n_original*100:.1f}%)")
-
-n_final = df_filtered.shape[0]
-retention_rate = n_final / n_original * 100
-
-# Display summary
-st.markdown("### Filtering Summary")
-
-for log_entry in filter_log:
-    st.markdown(log_entry)
-
-st.markdown(f"**Final dataset:** {n_final:,} proteins retained ({retention_rate:.1f}% of original)")
-
-# Visual summary
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.metric("Original", f"{n_original:,}", delta=None)
-
-with col2:
-    st.metric("Removed", f"{n_original - n_final:,}", delta=f"-{(n_original-n_final)/n_original*100:.1f}%")
-
-with col3:
-    st.metric("Retained", f"{n_final:,}", delta=f"{retention_rate:.1f}%", delta_color="normal")
-
-# ============================================================================
-# TRANSFORMATION SELECTION
-# ============================================================================
-
-st.subheader("Transformation Selection")
-
-if auto_transform:
-    # Get best from stats table
-    best_transform_row = df_transform_stats.sort('Normality Score').row(0, named=True)
-    best_transform = best_transform_row['_key']
-    best_transform_name = best_transform_row['Transform']
-    best_score = best_transform_row['Normality Score']
-    
-    st.success(f"✅ **Recommended:** {best_transform_name} (Normality Score: {best_score:.3f})")
-    
-    selected_final_transform = best_transform
-else:
-    selected_final_transform = manual_transform
-    st.info(f"📌 **Manual selection:** {TRANSFORM_NAMES[manual_transform]}")
-
-# ============================================================================
-# APPLY FILTERS & TRANSFORMATION
-# ============================================================================
-
-# ============================================================================
-# APPLY FILTERS (NO TRANSFORMATION YET)
-# ============================================================================
-
-if st.button("🚀 Apply Filters", type="primary", use_container_width=True):
-    
-    with st.spinner("Applying filters..."):
-        
-        # Get species column from session state
-        species_col = st.session_state.species_col
-        
-        # Get clean numeric columns only (drop CV columns if added)
-        final_numeric_cols = [c for c in numeric_cols if c in df_filtered.columns]
-        
-        # Build selection list
-        select_cols = [id_col]
-        if species_col and species_col in df_filtered.columns:
-            select_cols.append(species_col)
-        select_cols.extend(final_numeric_cols)
-        
-        df_filtered_clean = df_filtered.select(select_cols)
-        
-        # Store in session state (NO TRANSFORMATION)
-        st.session_state.df_filtered = df_filtered_clean
-        st.session_state.numeric_cols_filtered = final_numeric_cols
-        st.session_state.filtering_summary = {
-            'original': n_original,
-            'final': n_final,
-            'retention': retention_rate,
-            'cv_threshold': cv_threshold if cv_filter else None,
-            'remove_missing': remove_missing
-        }
-        
-        # Store recommended transformation
-        if auto_transform:
-            best_transform_row = df_transform_stats.sort('Normality Score').row(0, named=True)
-            st.session_state.recommended_transform = best_transform_row['_key']
-            st.session_state.recommended_transform_name = best_transform_row['Transform']
-        else:
-            st.session_state.recommended_transform = manual_transform
-            st.session_state.recommended_transform_name = TRANSFORM_NAMES[manual_transform]
-    
-    st.success("✅ Filters applied!")
-    st.balloons()
-    
-    # Show what's next
-    st.info("**Next step:** Go to **Quality Overview** page to review filtered data and apply transformation")
-
-# ============================================================================
-# DOWNLOAD FILTERED DATA
-# ============================================================================
-if 'df_filtered' in st.session_state:
     st.markdown("---")
-    st.subheader("📥 Download Filtered Data")
+    st.header("1️⃣ Log2 Intensity Distributions")
     
-    st.download_button(
-        "Download Filtered Data (CSV)",
-        st.session_state.df_filtered.write_csv(),
-        "filtered_data.csv",
-        "text/csv",
+    # Compute log2
+    df_log2 = pl.from_dict(compute_log2(df.to_dict(as_series=False), numeric_cols))
+    
+    # Plot distributions
+    plot_intensity_distributions(df_log2, numeric_cols, data_type, "log2")
+    
+    # ========================================================================
+    # 2. NORMALITY TESTS
+    # ========================================================================
+    
+    st.markdown("---")
+    st.header("2️⃣ Normality Assessment")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("Raw Values")
+        
+        # Prepare raw data (clip to positive)
+        df_raw = df.with_columns([
+            pl.col(c).clip(lower_bound=1.0).alias(c) for c in numeric_cols
+        ])
+        
+        norm_raw = compute_normality_tests(df_raw.to_dict(as_series=False), numeric_cols)
+        df_norm_raw = pl.DataFrame(norm_raw['results'])
+        
+        st.dataframe(
+            df_norm_raw.to_pandas().style.format({
+                'Shapiro_p': '{:.4e}',
+                'Shapiro_W': '{:.4f}'
+            }),
+            use_container_width=True
+        )
+    
+    with col2:
+        st.subheader("Log2 Transformed")
+        
+        norm_log2 = compute_normality_tests(df_log2.to_dict(as_series=False), numeric_cols)
+        df_norm_log2 = pl.DataFrame(norm_log2['results'])
+        
+        st.dataframe(
+            df_norm_log2.to_pandas().style.format({
+                'Shapiro_p': '{:.4e}',
+                'Shapiro_W': '{:.4f}'
+            }),
+            use_container_width=True
+        )
+    
+    st.caption("**Normality criteria:** Shapiro p > 0.05, |Kurtosis| < 2, |Skewness| < 1")
+    
+    # Summary
+    n_normal_raw = df_norm_raw.filter(pl.col('Normal') == '✓').shape[0]
+    n_normal_log2 = df_norm_log2.filter(pl.col('Normal') == '✓').shape[0]
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Normal Samples (Raw)", f"{n_normal_raw}/{len(numeric_cols)}")
+    with col2:
+        st.metric("Normal Samples (Log2)", f"{n_normal_log2}/{len(numeric_cols)}")
+    
+    # ========================================================================
+    # 3. TRANSFORMATION COMPARISON
+    # ========================================================================
+    
+    st.markdown("---")
+    st.header("3️⃣ Transformation Comparison")
+    st.info("Compare multiple transformations to find the best for normality and variance stabilization")
+    
+    with st.spinner("Computing transformations..."):
+        all_transforms = compute_all_transforms(df.to_dict(as_series=False), numeric_cols)
+        transform_scores = calculate_transform_scores(all_transforms, numeric_cols)
+    
+    st.subheader("Transformation Rankings")
+    st.dataframe(
+        transform_scores.drop('_key').to_pandas().style.format({
+            'Shapiro_W': '{:.4f}',
+            'Shapiro_p': '{:.4f}',
+            'Kurtosis': '{:.3f}',
+            'Skewness': '{:.3f}',
+            'Mean_Var_Corr': '{:.3f}',
+            'Normality_Score': '{:.3f}'
+        }),
         use_container_width=True
     )
+    
+    st.caption("**Normality Score:** Lower is better. Composite metric based on Shapiro p-value, kurtosis, skewness, and mean-variance correlation.")
+    
+    # Recommended transformation
+    best_transform_row = transform_scores.row(0, named=True)
+    best_transform = best_transform_row['Transform']
+    best_score = best_transform_row['Normality_Score']
+    
+    st.success(f"✅ **Recommended transformation:** {best_transform} (Score: {best_score:.3f})")
+    
+    # ========================================================================
+    # 4. DIAGNOSTIC PLOTS
+    # ========================================================================
+    
+    st.markdown("---")
+    st.header("4️⃣ Diagnostic Plots: Raw vs Transformed")
+    
+    # Select transformation to compare
+    TRANSFORM_NAMES = {
+        "log2": "Log2",
+        "log10": "Log10",
+        "ln": "Natural Log (ln)",
+        "sqrt": "Square Root",
+        "arcsinh": "Arcsinh",
+        "boxcox": "Box-Cox",
+        "yeo-johnson": "Yeo-Johnson"
+    }
+    
+    selected_transform = st.selectbox(
+        "Select transformation to compare with raw:",
+        options=list(TRANSFORM_NAMES.keys()),
+        format_func=lambda x: TRANSFORM_NAMES[x],
+        index=0,  # Default to log2
+        key=f"{key_prefix}_transform_select"
+    )
+    
+    st.markdown("---")
+    
+    # Plot diagnostics
+    df_raw_diag = pl.from_dict(all_transforms['raw'])
+    df_trans_diag = pl.from_dict(all_transforms[selected_transform])
+    
+    plot_diagnostic_comparison(df_raw_diag, df_trans_diag, numeric_cols, TRANSFORM_NAMES[selected_transform])
+    
+    # ========================================================================
+    # 5. DOWNLOAD OPTIONS
+    # ========================================================================
+    
+    st.markdown("---")
+    st.header("5️⃣ Download Results")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.download_button(
+            "📥 Download Raw Normality Tests (CSV)",
+            df_norm_raw.write_csv(),
+            f"{data_type}_normality_raw.csv",
+            "text/csv",
+            use_container_width=True,
+            key=f"{key_prefix}_download_raw"
+        )
+    
+    with col2:
+        st.download_button(
+            "📥 Download Log2 Normality Tests (CSV)",
+            df_norm_log2.write_csv(),
+            f"{data_type}_normality_log2.csv",
+            "text/csv",
+            use_container_width=True,
+            key=f"{key_prefix}_download_log2"
+        )
+    
+    st.download_button(
+        "📥 Download Transformation Comparison (CSV)",
+        transform_scores.drop('_key').write_csv(),
+        f"{data_type}_transformation_comparison.csv",
+        "text/csv",
+        use_container_width=True,
+        key=f"{key_prefix}_download_transforms"
+    )
+
+# ============================================================================
+# MAIN APP
+# ============================================================================
+
+st.title("📊 Statistical EDA & Distribution Analysis")
+
+# Check data availability
+has_protein = 'df_protein_filtered' in st.session_state
+has_peptide = 'df_peptide_filtered' in st.session_state
+
+if not has_protein and not has_peptide:
+    st.warning("⚠️ No filtered data available. Please complete Visual EDA first.")
+    if st.button("← Go to Visual EDA"):
+        st.switch_page("pages/2_Visual_EDA.py")
+    st.stop()
+
+# Show what's available
+st.info("**Analyzing filtered data from Visual EDA**")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    if has_protein:
+        st.success(f"✅ **Protein data:** {st.session_state.df_protein_filtered.shape[0]:,} proteins")
+        if 'protein_filters_applied' in st.session_state:
+            filters = st.session_state.protein_filters_applied
+            st.caption(f"Filters: CV≤{filters['max_cv']}%, Drop missing: {filters['drop_missing']}")
+    else:
+        st.info("ℹ️ No protein data")
+
+with col2:
+    if has_peptide:
+        st.success(f"✅ **Peptide data:** {st.session_state.df_peptide_filtered.shape[0]:,} peptides")
+        if 'peptide_filters_applied' in st.session_state:
+            filters = st.session_state.peptide_filters_applied
+            enabled = []
+            if filters['enable_completeness']:
+                enabled.append(f"Completeness≥{filters['min_completeness']}%")
+            if filters['enable_cv_filter']:
+                enabled.append(f"CV≤{filters['max_cv']}%")
+            if filters['enable_min_peptides']:
+                enabled.append(f"Min {filters['min_peptides']} peptides")
+            st.caption(f"Filters: {', '.join(enabled) if enabled else 'None'}")
+    else:
+        st.info("ℹ️ No peptide data")
 
 st.markdown("---")
 
-
-
 # ============================================================================
-# PLACEHOLDER FOR NEXT SECTIONS
+# CREATE TABS
 # ============================================================================
 
-st.header("3️⃣ Group Definition")
-st.info("🚧 Coming next: Group selection and differential expression analysis")
+if has_protein and has_peptide:
+    tab_protein, tab_peptide = st.tabs(["🧬 Protein Analysis", "🔬 Peptide Analysis"])
+elif has_protein:
+    tab_protein = st.container()
+    tab_peptide = None
+else:
+    tab_protein = None
+    tab_peptide = st.container()
+
+# ============================================================================
+# PROTEIN ANALYSIS
+# ============================================================================
+
+if has_protein and tab_protein:
+    with tab_protein:
+        df = st.session_state.df_protein_filtered
+        numeric_cols = st.session_state.protein_cols
+        id_col = st.session_state.protein_id_col
+        
+        process_statistical_eda(df, numeric_cols, id_col, 'protein', 'prot')
+
+# ============================================================================
+# PEPTIDE ANALYSIS
+# ============================================================================
+
+if has_peptide and tab_peptide:
+    with tab_peptide:
+        df = st.session_state.df_peptide_filtered
+        numeric_cols = st.session_state.peptide_cols
+        id_col = st.session_state.peptide_id_col
+        
+        process_statistical_eda(df, numeric_cols, id_col, 'peptide', 'pep')
+
+# ============================================================================
+# NAVIGATION
+# ============================================================================
+
+clear_plot_memory()
+
+st.markdown("---")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    if st.button("← Back to Visual EDA", use_container_width=True):
+        st.switch_page("pages/2_Visual_EDA.py")
+
+with col2:
+    if st.button("Continue to Normalization →", type="primary", use_container_width=True):
+        # Check if we have data to continue
+        if has_protein or has_peptide:
+            st.switch_page("pages/4_Normalization.py")
+        else:
+            st.warning("No data available to continue")
