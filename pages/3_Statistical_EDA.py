@@ -649,6 +649,230 @@ with col3:
 st.markdown("---")
 
 # ============================================================================
+# 5. DATA FILTERING RECOMMENDATIONS
+# ============================================================================
+
+st.header("5️⃣ Data Filtering & Quality Control")
+st.info("**Smart filtering based on your data** - Remove low-quality measurements and apply optimal transformation")
+
+# Group samples by condition
+conditions = {}
+for col in numeric_cols:
+    condition = col[0]  # First letter (A, B, C...)
+    if condition not in conditions:
+        conditions[condition] = []
+    conditions[condition].append(col)
+
+# ============================================================================
+# FILTER CONFIGURATION
+# ============================================================================
+
+st.subheader("Filter Configuration")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    remove_missing = st.checkbox(
+        "Remove rows with any missing values",
+        value=True,
+        help="Drop proteins with at least 1 missing value (≤1.0) across all samples"
+    )
+
+with col2:
+    cv_filter = st.checkbox(
+        "Filter by CV threshold",
+        value=True,
+        help="Remove proteins with high variability in any condition"
+    )
+    
+    cv_threshold = st.slider(
+        "Max CV % per condition:",
+        min_value=10,
+        max_value=100,
+        value=30,
+        step=5,
+        disabled=not cv_filter,
+        help="Drop protein if CV exceeds this in ANY condition"
+    )
+
+with col3:
+    auto_transform = st.checkbox(
+        "Apply best transformation",
+        value=True,
+        help="Automatically apply transformation with best normality score"
+    )
+    
+    if not auto_transform:
+        manual_transform = st.selectbox(
+            "Manual selection:",
+            options=list(TRANSFORM_NAMES.keys()),
+            format_func=lambda x: TRANSFORM_NAMES[x],
+            index=1  # Default to log2
+        )
+
+# ============================================================================
+# PREVIEW FILTERING IMPACT
+# ============================================================================
+
+st.subheader("Filtering Impact Preview")
+
+# Start with all proteins
+df_filtered = df.clone()
+n_original = df_filtered.shape[0]
+filter_log = []
+
+# Filter 1: Remove missing values
+if remove_missing:
+    # Count rows with any missing (≤1.0)
+    has_missing = df_filtered.select([
+        pl.any_horizontal([
+            (pl.col(c) <= 1.0) | (pl.col(c).is_null()) | 
+            (pl.col(c).cast(pl.Utf8).str.to_uppercase() == "NAN")
+            for c in numeric_cols
+        ]).alias('has_missing')
+    ])
+    
+    n_before = df_filtered.shape[0]
+    df_filtered = df_filtered.filter(~has_missing['has_missing'])
+    n_removed = n_before - df_filtered.shape[0]
+    
+    filter_log.append(f"**Missing values:** Removed {n_removed} proteins ({n_removed/n_original*100:.1f}%)")
+
+# Filter 2: CV threshold
+if cv_filter:
+    # Calculate CV for each condition
+    cv_filters = []
+    
+    for condition, cols in conditions.items():
+        # Calculate CV
+        df_cv = df_filtered.select([id_col] + cols).with_columns([
+            pl.concat_list(cols).list.mean().alias('mean'),
+            pl.concat_list(cols).list.std().alias('std')
+        ]).with_columns(
+            (pl.col('std') / pl.col('mean') * 100).alias(f'cv_{condition}')
+        )
+        
+        cv_filters.append(pl.col(f'cv_{condition}') <= cv_threshold)
+        df_filtered = df_filtered.with_columns(df_cv[f'cv_{condition}'])
+    
+    # Keep only proteins where ALL conditions meet CV threshold
+    n_before = df_filtered.shape[0]
+    df_filtered = df_filtered.filter(pl.all_horizontal(cv_filters))
+    n_removed = n_before - df_filtered.shape[0]
+    
+    filter_log.append(f"**CV threshold (≤{cv_threshold}%):** Removed {n_removed} proteins ({n_removed/n_original*100:.1f}%)")
+
+n_final = df_filtered.shape[0]
+retention_rate = n_final / n_original * 100
+
+# Display summary
+st.markdown("### Filtering Summary")
+
+for log_entry in filter_log:
+    st.markdown(log_entry)
+
+st.markdown(f"**Final dataset:** {n_final:,} proteins retained ({retention_rate:.1f}% of original)")
+
+# Visual summary
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.metric("Original", f"{n_original:,}", delta=None)
+
+with col2:
+    st.metric("Removed", f"{n_original - n_final:,}", delta=f"-{(n_original-n_final)/n_original*100:.1f}%")
+
+with col3:
+    st.metric("Retained", f"{n_final:,}", delta=f"{retention_rate:.1f}%", delta_color="normal")
+
+# ============================================================================
+# TRANSFORMATION SELECTION
+# ============================================================================
+
+st.subheader("Transformation Selection")
+
+if auto_transform:
+    # Get best from stats table
+    best_transform_row = df_transform_stats.sort('Normality Score').row(0, named=True)
+    best_transform = best_transform_row['_key']
+    best_transform_name = best_transform_row['Transform']
+    best_score = best_transform_row['Normality Score']
+    
+    st.success(f"✅ **Recommended:** {best_transform_name} (Normality Score: {best_score:.3f})")
+    
+    selected_final_transform = best_transform
+else:
+    selected_final_transform = manual_transform
+    st.info(f"📌 **Manual selection:** {TRANSFORM_NAMES[manual_transform]}")
+
+# ============================================================================
+# APPLY FILTERS & TRANSFORMATION
+# ============================================================================
+
+if st.button("🚀 Apply Filters & Transformation", type="primary", use_container_width=True):
+    
+    with st.spinner("Applying filters and transformation..."):
+        
+        # Get clean numeric columns only (drop CV columns if added)
+        final_numeric_cols = [c for c in numeric_cols if c in df_filtered.columns]
+        df_filtered = df_filtered.select([id_col, species_col] + final_numeric_cols)
+        
+        # Apply selected transformation
+        df_transformed_final = pl.from_dict(all_transforms[selected_final_transform])
+        
+        # Filter to same proteins
+        df_transformed_final = df_transformed_final.filter(
+            pl.col(id_col).is_in(df_filtered[id_col])
+        )
+        
+        # Store in session state
+        st.session_state.df_filtered = df_filtered
+        st.session_state.df_transformed = df_transformed_final
+        st.session_state.transform_applied = TRANSFORM_NAMES[selected_final_transform]
+        st.session_state.filtering_summary = {
+            'original': n_original,
+            'final': n_final,
+            'retention': retention_rate,
+            'transform': TRANSFORM_NAMES[selected_final_transform],
+            'cv_threshold': cv_threshold if cv_filter else None
+        }
+    
+    st.success("✅ Filters applied and data transformed!")
+    st.balloons()
+    
+    # Show what's next
+    st.info("**Next steps:** Proceed to differential expression analysis")
+
+# ============================================================================
+# DOWNLOAD FILTERED DATA
+# ============================================================================
+
+if 'df_filtered' in st.session_state:
+    st.markdown("---")
+    st.subheader("📥 Download Filtered Data")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.download_button(
+            "Download Filtered (Raw)",
+            st.session_state.df_filtered.write_csv(),
+            "filtered_raw.csv",
+            "text/csv"
+        )
+    
+    with col2:
+        st.download_button(
+            "Download Transformed",
+            st.session_state.df_transformed.write_csv(),
+            "filtered_transformed.csv",
+            "text/csv"
+        )
+
+st.markdown("---")
+
+
+# ============================================================================
 # PLACEHOLDER FOR NEXT SECTIONS
 # ============================================================================
 
