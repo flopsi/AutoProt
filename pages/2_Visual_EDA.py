@@ -928,29 +928,29 @@ if has_peptide and tab_peptide:
             st.info(f"⏭️ Filter 3 disabled - {df_filtered_3.shape[0]:,} peptides from {n_proteins_final:,} proteins")
 
         
-        # ====================================================================
-        # FINAL SUMMARY
-        # ====================================================================
-        
-        st.markdown("---")
-        st.subheader("📊 Final Summary")
-        
-        col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-        
-        with col_s1:
-            st.metric("Original Peptides", f"{df.shape[0]:,}")
-        with col_s2:
-            st.metric("Final Peptides", f"{df_filtered_3.shape[0]:,}")
-        with col_s3:
-            st.metric("Original Proteins", f"{n_proteins:,}")
-        with col_s4:
-            st.metric("Final Proteins", f"{n_proteins_final:,}")
-        
-        # Show removed counts
-        total_removed = df.shape[0] - df_filtered_3.shape[0]
-        pct_peptides_removed = total_removed / df.shape[0] * 100 if df.shape[0] > 0 else 0
-        pct_proteins_removed = (n_proteins - n_proteins_final) / n_proteins * 100 if n_proteins > 0 else 0
-        
+    # ====================================================================
+    # FINAL SUMMARY
+    # ====================================================================
+    
+    st.markdown("---")
+    st.subheader("📊 Final Summary")
+    
+    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+    
+    with col_s1:
+        st.metric("Original Peptides", f"{df.shape[0]:,}")
+    with col_s2:
+        st.metric("Final Peptides", f"{df_filtered_3.shape[0]:,}")
+    with col_s3:
+        st.metric("Original Proteins", f"{n_proteins:,}")
+    with col_s4:
+        st.metric("Final Proteins", f"{n_proteins_final:,}")
+    
+    # Show removed counts
+    total_removed = df.shape[0] - df_filtered_3.shape[0]
+    pct_peptides_removed = total_removed / df.shape[0] * 100 if df.shape[0] > 0 else 0
+    pct_proteins_removed = (n_proteins - n_proteins_final) / n_proteins * 100 if n_proteins > 0 else 0
+    
     st.info(f"""
     **Removed:**
     - Peptides: {total_removed:,} ({pct_peptides_removed:.1f}%)
