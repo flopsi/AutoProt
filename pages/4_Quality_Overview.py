@@ -202,7 +202,6 @@ if st.button("🎯 Apply Transformation & Continue", type="primary", use_contain
                 pl.col(c).arcsinh().alias(c) for c in numeric_cols
             ])
         elif transform_choice == 'boxcox':
-            # Box-Cox transformation
             from scipy.stats import boxcox
             df_pandas = df.to_pandas()
             for col in numeric_cols:
@@ -213,7 +212,6 @@ if st.button("🎯 Apply Transformation & Continue", type="primary", use_contain
                     df_pandas.loc[data > 0, col] = transformed
             df_trans = pl.from_pandas(df_pandas)
         elif transform_choice == 'yeo-johnson':
-            # Yeo-Johnson transformation
             from scipy.stats import yeojohnson
             df_pandas = df.to_pandas()
             for col in numeric_cols:
@@ -224,7 +222,6 @@ if st.button("🎯 Apply Transformation & Continue", type="primary", use_contain
                     df_pandas.loc[np.isfinite(data), col] = transformed
             df_trans = pl.from_pandas(df_pandas)
         else:
-            # Fallback - should never happen
             df_trans = df
         
         # Store transformed data
@@ -232,37 +229,103 @@ if st.button("🎯 Apply Transformation & Continue", type="primary", use_contain
         st.session_state.transform_applied = transform_choice
     
     st.success(f"✅ {transform_choice} transformation applied!")
+    
+    # ============================================================================
+    # SHOW DIAGNOSTIC PLOTS
+    # ============================================================================
+    
+    st.markdown("---")
+    st.subheader(f"📊 Transformation Diagnostics: {transform_choice.upper()}")
+    
+    # Get all transformed values
+    trans_vals = np.concatenate([df_trans[c].to_numpy() for c in numeric_cols])
+    trans_vals = trans_vals[np.isfinite(trans_vals)]
+    
+    if len(trans_vals) > 3:
+        # Calculate stats
+        mu_trans = np.mean(trans_vals)
+        sigma_trans = np.std(trans_vals)
+        
+        # Normality tests
+        stat_sw, pval_sw = stats.shapiro(trans_vals[:5000])
+        kurt = stats.kurtosis(trans_vals)
+        skew = stats.skew(trans_vals)
+        
+        # Display normality stats
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Shapiro W", f"{stat_sw:.4f}")
+        col2.metric("Shapiro p", f"{pval_sw:.4e}")
+        col3.metric("Kurtosis", f"{kurt:.3f}")
+        col4.metric("Skewness", f"{skew:.3f}")
+        
+        is_normal = pval_sw > 0.05 and abs(kurt) < 2 and abs(skew) < 1
+        if is_normal:
+            st.success("✅ Data appears normally distributed")
+        else:
+            st.warning("⚠️ Data may deviate from normality")
+        
+        # Three diagnostic plots
+        col1, col2, col3 = st.columns(3)
+        
+        # Plot 1: Distribution
+        with col1:
+            st.markdown("**Distribution**")
+            df_plot = pl.DataFrame({'value': trans_vals})
+            
+            plot_dist = (ggplot(df_plot.to_pandas(), aes(x='value')) +
+             geom_histogram(aes(y='..density..'), bins=50, fill='#ff7f0e', alpha=0.6) +
+             geom_density(color='#ff7f0e', size=1.5) +
+             geom_vline(xintercept=mu_trans, linetype='dashed', color='darkred', size=1) +
+             annotate('rect', xmin=mu_trans-2*sigma_trans, xmax=mu_trans+2*sigma_trans,
+                      ymin=-np.inf, ymax=np.inf, alpha=0.1, fill='gray') +
+             labs(title='Transformed Intensities', x='Value', y='Density',
+                  subtitle=f'μ={mu_trans:.2f}, σ={sigma_trans:.2f}') +
+             theme_minimal() +
+             theme(figure_size=(4, 3.5), plot_subtitle=element_text(size=8)))
+            
+            st.pyplot(ggplot.draw(plot_dist))
+        
+        # Plot 2: Q-Q plot
+        with col2:
+            st.markdown("**Q-Q Plot**")
+            from scipy.stats import probplot
+            
+            qq = probplot(trans_vals[:5000], dist="norm")
+            df_qq = pl.DataFrame({'theoretical': qq[0][0], 'sample': qq[0][1]})
+            
+            plot_qq = (ggplot(df_qq.to_pandas(), aes(x='theoretical', y='sample')) +
+             geom_point(color='#ff7f0e', alpha=0.5, size=1) +
+             geom_abline(intercept=0, slope=1, color='red', linetype='dashed') +
+             labs(title='Q-Q Plot', x='Theoretical Quantiles', y='Sample Quantiles') +
+             theme_minimal() +
+             theme(figure_size=(4, 3.5)))
+            
+            st.pyplot(ggplot.draw(plot_qq))
+        
+        # Plot 3: Mean-Variance
+        with col3:
+            st.markdown("**Mean-Variance**")
+            
+            means_trans = []
+            vars_trans = []
+            for i in range(len(df_trans)):
+                row_data = [df_trans[col][i] for col in numeric_cols]
+                row_data = [x for x in row_data if np.isfinite(x)]
+                if len(row_data) >= 2:
+                    means_trans.append(np.mean(row_data))
+                    vars_trans.append(np.var(row_data))
+            
+            df_mv = pl.DataFrame({'mean': means_trans, 'variance': vars_trans})
+            
+            plot_mv = (ggplot(df_mv.to_pandas(), aes(x='mean', y='variance')) +
+             geom_point(color='#ffb74d', alpha=0.3, size=1) +
+             labs(title='Mean-Variance', x='Mean', y='Variance') +
+             theme_minimal() +
+             theme(figure_size=(4, 3.5)))
+            
+            st.pyplot(ggplot.draw(plot_mv))
+    
+    st.markdown("---")
     st.info("**Next step:** Proceed to Differential Expression Analysis")
 
 st.markdown("---")
-
-# ============================================================================
-# DOWNLOAD TRANSFORMED DATA
-# ============================================================================
-
-if 'df_transformed' in st.session_state:
-    st.markdown("---")
-    st.subheader("📥 Download Transformed Data")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.download_button(
-            "Download Filtered (Raw)",
-            st.session_state.df_filtered.write_csv(),  # Use df_filtered from session state
-            "filtered_raw.csv",
-            "text/csv",
-            use_container_width=True
-        )
-    
-    with col2:
-        st.download_button(
-            "Download Transformed",
-            st.session_state.df_transformed.write_csv(),
-            "filtered_transformed.csv",
-            "text/csv",
-            use_container_width=True
-        )
-
-st.markdown("---")
-
