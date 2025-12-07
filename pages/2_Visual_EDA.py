@@ -656,7 +656,7 @@ if has_peptide and tab_peptide:
         st.header("🔬 Peptide-Level Analysis")
         
         # ====================================================================
-        # OVERVIEW
+        # OVERVIEW (LIGHTWEIGHT)
         # ====================================================================
         
         st.subheader("1️⃣ Dataset Overview")
@@ -674,49 +674,52 @@ if has_peptide and tab_peptide:
         st.markdown("---")
         
         # ====================================================================
-        # INTENSITY DISTRIBUTION (VIOLIN ONLY)
+        # PRE-CALCULATE METRICS ONCE (CACHED)
         # ====================================================================
         
-        st.subheader("2️⃣ Log2 Intensity Distribution by Sample")
-        
-        df_log2 = pl.from_dict(compute_log2(df.to_dict(as_series=False), numeric_cols, 'peptide'))
-        
-        intensity_data = compute_intensity_stats(df_log2.to_dict(as_series=False), id_col, numeric_cols)
-        df_long = pl.from_dict(intensity_data['long_data'])
-        
-        plot = (ggplot(df_long.to_pandas(), aes(x='sample', y='log2_intensity', fill='condition')) +
-         geom_violin(alpha=0.7) +
-         geom_boxplot(width=0.1, fill='white', outlier_alpha=0.3) +
-         scale_fill_manual(values=['#66c2a5', '#fc8d62']) +
-         labs(title='Log2 Intensity Distribution',
-              x='Sample', y='Log2 Intensity', fill='Condition') +
-         theme_minimal() +
-         theme(axis_text_x=element_text(rotation=45, hjust=1),
-               figure_size=(12, 6)))
-        
-        fig = ggplot.draw(plot)
-        st.pyplot(fig)
-        plt.close(fig)
-        del fig, plot
-        
-        # Summary statistics table
-        df_stats = pl.from_dict(intensity_data['stats'])
-        
-        with st.expander("📊 Summary Statistics"):
-            st.dataframe(df_stats.to_pandas(), width='stretch')
+        @st.cache_data
+        def compute_peptide_metrics(df_dict, numeric_cols, id_col):
+            """Pre-calculate completeness and CV for all peptides."""
+            df_temp = pl.from_dict(df_dict)
             
-            st.download_button(
-                "📥 Download Statistics (CSV)",
-                df_stats.write_csv(),
-                "log2_intensity_statistics_peptide.csv",
-                "text/csv",
-                key="peptide_download_intensity_stats"
-            )
+            # Calculate completeness (% of non-missing values)
+            completeness_expr = (
+                pl.sum_horizontal([
+                    (pl.col(c) > 1.0) & pl.col(c).is_finite() for c in numeric_cols
+                ]) / len(numeric_cols) * 100
+            ).alias('completeness')
+            
+            # Group by condition for CV
+            conditions = {}
+            for col in numeric_cols:
+                condition = col[0]
+                if condition not in conditions:
+                    conditions[condition] = []
+                conditions[condition].append(col)
+            
+            # Calculate CV per condition, then take max
+            cv_exprs = []
+            for condition, cols in conditions.items():
+                mean_expr = pl.concat_list(cols).list.eval(
+                    pl.element().filter((pl.element() > 1.0) & pl.element().is_finite())
+                ).list.mean()
+                std_expr = pl.concat_list(cols).list.eval(
+                    pl.element().filter((pl.element() > 1.0) & pl.element().is_finite())
+                ).list.std()
+                cv_exprs.append((std_expr / mean_expr * 100).alias(f'cv_{condition}'))
+            
+            df_metrics = df_temp.with_columns([completeness_expr] + cv_exprs)
+            
+            # Calculate max CV across conditions
+            cv_cols = [f'cv_{cond}' for cond in conditions.keys()]
+            df_metrics = df_metrics.with_columns([
+                pl.max_horizontal(cv_cols).fill_nan(999).alias('max_cv')
+            ]).drop(cv_cols)
+            
+            return df_metrics.to_dict(as_series=False)
         
-        del df_long, df_stats, intensity_data, df_log2
-        gc.collect()
-        
-        st.markdown("---")
+        with st.spinner("🔄 Computing peptide metrics..."):
+            df_with_metrics = pl.from_dict(compute_peptide_metrics(df.to_dict(as_series=False), numeric_cols, id_col))
         
         # ====================================================================
         # HIERARCHICAL FILTERS
@@ -724,45 +727,6 @@ if has_peptide and tab_peptide:
         
         st.subheader("🔍 Hierarchical Filters for Peptide → Protein Aggregation")
         st.info("Filters are applied in order: Data Completeness → CV → Min Peptides per Protein")
-        
-        # Calculate completeness and CV for each peptide
-        df_with_metrics = df.clone()
-        
-        # 1. Calculate completeness (% of non-missing values)
-        completeness = []
-        for row_idx in range(df.shape[0]):
-            row = df.row(row_idx, named=True)
-            n_valid = sum(1 for col in numeric_cols if row[col] > 1.0 and row[col] is not None and np.isfinite(row[col]))
-            completeness.append(n_valid / len(numeric_cols) * 100)
-        
-        df_with_metrics = df_with_metrics.with_columns([
-            pl.Series('completeness', completeness)
-        ])
-        
-        # 2. Calculate CV per condition
-        conditions = {}
-        for col in numeric_cols:
-            condition = col[0]
-            if condition not in conditions:
-                conditions[condition] = []
-            conditions[condition].append(col)
-        
-        # Calculate max CV across all conditions
-        max_cv_values = []
-        for row_idx in range(df.shape[0]):
-            row_cvs = []
-            for condition, cols in conditions.items():
-                vals = [df[col][row_idx] for col in cols if df[col][row_idx] > 1.0 and np.isfinite(df[col][row_idx])]
-                if len(vals) >= 2:
-                    mean_val = np.mean(vals)
-                    std_val = np.std(vals, ddof=1)
-                    if mean_val > 0:
-                        row_cvs.append(std_val / mean_val * 100)
-            max_cv_values.append(max(row_cvs) if row_cvs else 999)
-        
-        df_with_metrics = df_with_metrics.with_columns([
-            pl.Series('max_cv', max_cv_values)
-        ])
         
         # ====================================================================
         # FILTER 1: DATA COMPLETENESS
@@ -792,14 +756,22 @@ if has_peptide and tab_peptide:
         st.success(f"✅ After Filter 1: **{df_filtered_1.shape[0]:,} peptides** (removed {n_removed_1:,})")
         
         # ====================================================================
-        # FILTER 2: CV THRESHOLD
+        # FILTER 2: CV THRESHOLD (OPTIONAL)
         # ====================================================================
         
-        st.markdown("### Filter 2: Coefficient of Variation")
+        st.markdown("### Filter 2: Coefficient of Variation (Optional)")
         
-        col_f2a, col_f2b = st.columns([3, 1])
+        col_f2a, col_f2b, col_f2c = st.columns([2, 2, 1])
         
         with col_f2a:
+            enable_cv_filter = st.checkbox(
+                "Enable CV filter",
+                value=False,
+                help="Filter peptides by maximum CV across conditions",
+                key="peptide_enable_cv"
+            )
+        
+        with col_f2b:
             max_cv = st.slider(
                 "Maximum CV (%)",
                 min_value=0,
@@ -807,26 +779,39 @@ if has_peptide and tab_peptide:
                 value=30,
                 step=5,
                 help="Keep peptides with CV ≤ threshold in ALL conditions",
-                key="peptide_max_cv"
+                key="peptide_max_cv",
+                disabled=not enable_cv_filter
             )
         
-        with col_f2b:
+        with col_f2c:
             st.metric("After Filter 1", f"{df_filtered_1.shape[0]:,}")
         
-        df_filtered_2 = df_filtered_1.filter(pl.col('max_cv') <= max_cv)
-        n_removed_2 = df_filtered_1.shape[0] - df_filtered_2.shape[0]
-        
-        st.success(f"✅ After Filter 2: **{df_filtered_2.shape[0]:,} peptides** (removed {n_removed_2:,})")
+        if enable_cv_filter:
+            df_filtered_2 = df_filtered_1.filter(pl.col('max_cv') <= max_cv)
+            n_removed_2 = df_filtered_1.shape[0] - df_filtered_2.shape[0]
+            st.success(f"✅ After Filter 2: **{df_filtered_2.shape[0]:,} peptides** (removed {n_removed_2:,})")
+        else:
+            df_filtered_2 = df_filtered_1
+            n_removed_2 = 0
+            st.info("⏭️ Filter 2 disabled - no peptides removed")
         
         # ====================================================================
-        # FILTER 3: MIN PEPTIDES PER PROTEIN
+        # FILTER 3: MIN PEPTIDES PER PROTEIN (OPTIONAL)
         # ====================================================================
         
-        st.markdown("### Filter 3: Minimum Peptides per Protein")
+        st.markdown("### Filter 3: Minimum Peptides per Protein (Optional)")
         
-        col_f3a, col_f3b = st.columns([3, 1])
+        col_f3a, col_f3b, col_f3c = st.columns([2, 2, 1])
         
         with col_f3a:
+            enable_min_peptides = st.checkbox(
+                "Enable min peptides filter",
+                value=False,
+                help="Keep only proteins with minimum number of peptides",
+                key="peptide_enable_min_peptides"
+            )
+        
+        with col_f3b:
             min_peptides = st.slider(
                 "Minimum peptides per protein",
                 min_value=1,
@@ -834,27 +819,34 @@ if has_peptide and tab_peptide:
                 value=2,
                 step=1,
                 help="Keep only proteins with at least this many peptides passing previous filters",
-                key="peptide_min_peptides"
+                key="peptide_min_peptides",
+                disabled=not enable_min_peptides
             )
         
-        with col_f3b:
+        with col_f3c:
             st.metric("After Filter 2", f"{df_filtered_2.shape[0]:,}")
         
-        # Count peptides per protein
-        peptides_per_protein = df_filtered_2.group_by(id_col).agg(
-            pl.len().alias('n_peptides')
-        )
-        
-        # Keep proteins with enough peptides
-        proteins_to_keep = peptides_per_protein.filter(
-            pl.col('n_peptides') >= min_peptides
-        )[id_col].to_list()
-        
-        df_filtered_3 = df_filtered_2.filter(pl.col(id_col).is_in(proteins_to_keep))
-        n_removed_3 = df_filtered_2.shape[0] - df_filtered_3.shape[0]
-        n_proteins_final = len(proteins_to_keep)
-        
-        st.success(f"✅ After Filter 3: **{df_filtered_3.shape[0]:,} peptides** from **{n_proteins_final:,} proteins** (removed {n_removed_3:,} peptides)")
+        if enable_min_peptides:
+            # Count peptides per protein
+            peptides_per_protein = df_filtered_2.group_by(id_col).agg(
+                pl.len().alias('n_peptides')
+            )
+            
+            # Keep proteins with enough peptides
+            proteins_to_keep = peptides_per_protein.filter(
+                pl.col('n_peptides') >= min_peptides
+            )[id_col].to_list()
+            
+            df_filtered_3 = df_filtered_2.filter(pl.col(id_col).is_in(proteins_to_keep))
+            n_removed_3 = df_filtered_2.shape[0] - df_filtered_3.shape[0]
+            n_proteins_final = len(proteins_to_keep)
+            
+            st.success(f"✅ After Filter 3: **{df_filtered_3.shape[0]:,} peptides** from **{n_proteins_final:,} proteins** (removed {n_removed_3:,} peptides)")
+        else:
+            df_filtered_3 = df_filtered_2
+            n_removed_3 = 0
+            n_proteins_final = df_filtered_3[id_col].n_unique()
+            st.info(f"⏭️ Filter 3 disabled - {df_filtered_3.shape[0]:,} peptides from {n_proteins_final:,} proteins")
         
         # ====================================================================
         # FINAL SUMMARY
@@ -889,8 +881,8 @@ if has_peptide and tab_peptide:
                 'Filter Stage': [
                     'Original',
                     f'1. Completeness ≥ {min_completeness}%',
-                    f'2. CV ≤ {max_cv}%',
-                    f'3. Min {min_peptides} peptides/protein',
+                    f'2. CV ≤ {max_cv}%' + (' (disabled)' if not enable_cv_filter else ''),
+                    f'3. Min {min_peptides} peptides/protein' + (' (disabled)' if not enable_min_peptides else ''),
                 ],
                 'Peptides': [
                     df.shape[0],
@@ -922,6 +914,53 @@ if has_peptide and tab_peptide:
                 key="peptide_download_breakdown"
             )
         
+        st.markdown("---")
+        
+        # ====================================================================
+        # PLOTS (LAZY LOADED IN EXPANDER)
+        # ====================================================================
+        
+        with st.expander("📊 View Intensity Distribution Plots", expanded=False):
+            st.markdown("### Log2 Intensity Distribution by Sample")
+            
+            with st.spinner("🎨 Generating plots..."):
+                df_log2 = pl.from_dict(compute_log2(df_filtered_3.to_dict(as_series=False), numeric_cols, 'peptide'))
+                
+                intensity_data = compute_intensity_stats(df_log2.to_dict(as_series=False), id_col, numeric_cols)
+                df_long = pl.from_dict(intensity_data['long_data'])
+                
+                plot = (ggplot(df_long.to_pandas(), aes(x='sample', y='log2_intensity', fill='condition')) +
+                 geom_violin(alpha=0.7) +
+                 geom_boxplot(width=0.1, fill='white', outlier_alpha=0.3) +
+                 scale_fill_manual(values=['#66c2a5', '#fc8d62']) +
+                 labs(title='Log2 Intensity Distribution (Filtered Data)',
+                      x='Sample', y='Log2 Intensity', fill='Condition') +
+                 theme_minimal() +
+                 theme(axis_text_x=element_text(rotation=45, hjust=1),
+                       figure_size=(12, 6)))
+                
+                fig = ggplot.draw(plot)
+                st.pyplot(fig)
+                plt.close(fig)
+                del fig, plot
+                
+                # Summary statistics table
+                df_stats = pl.from_dict(intensity_data['stats'])
+                
+                st.markdown("**Summary Statistics:**")
+                st.dataframe(df_stats.to_pandas(), width='stretch')
+                
+                st.download_button(
+                    "📥 Download Statistics (CSV)",
+                    df_stats.write_csv(),
+                    "log2_intensity_statistics_peptide_filtered.csv",
+                    "text/csv",
+                    key="peptide_download_intensity_stats"
+                )
+                
+                del df_long, df_stats, intensity_data, df_log2
+                gc.collect()
+        
         # ====================================================================
         # SAVE FILTERED DATA
         # ====================================================================
@@ -933,8 +972,10 @@ if has_peptide and tab_peptide:
             st.session_state.df_peptide_filtered = df_filtered_3.drop(['completeness', 'max_cv'])
             st.session_state.peptide_filters_applied = {
                 'min_completeness': min_completeness,
-                'max_cv': max_cv,
-                'min_peptides': min_peptides,
+                'enable_cv_filter': enable_cv_filter,
+                'max_cv': max_cv if enable_cv_filter else None,
+                'enable_min_peptides': enable_min_peptides,
+                'min_peptides': min_peptides if enable_min_peptides else None,
                 'n_peptides_original': df.shape[0],
                 'n_peptides_final': df_filtered_3.shape[0],
                 'n_proteins_original': n_proteins,
@@ -946,17 +987,16 @@ if has_peptide and tab_peptide:
         # Show current filter status
         if 'peptide_filters_applied' in st.session_state:
             filt = st.session_state.peptide_filters_applied
-            st.info(f"""
-            **Current filters:**
-            - Min completeness: {filt['min_completeness']}%
-            - Max CV: {filt['max_cv']}%
-            - Min peptides/protein: {filt['min_peptides']}
-            - Result: {filt['n_peptides_final']:,} peptides → {filt['n_proteins_final']:,} proteins
-            """)
+            filter_text = f"**Current filters:**\n- Min completeness: {filt['min_completeness']}%"
+            if filt['enable_cv_filter']:
+                filter_text += f"\n- Max CV: {filt['max_cv']}%"
+            if filt['enable_min_peptides']:
+                filter_text += f"\n- Min peptides/protein: {filt['min_peptides']}"
+            filter_text += f"\n- Result: {filt['n_peptides_final']:,} peptides → {filt['n_proteins_final']:,} proteins"
+            st.info(filter_text)
         
         del df_with_metrics, df_filtered_1, df_filtered_2, df_filtered_3
         clear_plot_memory()
-
 
 # ============================================================================
 # NAVIGATION (OUTSIDE TABS)
