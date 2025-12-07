@@ -541,6 +541,10 @@ if has_protein and tab_protein:
         
         st.header("🧬 Protein-Level Analysis")
         
+        # ====================================================================
+        # RUN ANALYSIS ON ORIGINAL DATA
+        # ====================================================================
+        
         df_log2 = pl.from_dict(compute_log2(df.to_dict(as_series=False), numeric_cols, 'protein'))
         
         plot_section_1_overview(df, numeric_cols, species_col, 'protein')
@@ -563,6 +567,71 @@ if has_protein and tab_protein:
         
         del df_log2, cv_result
         clear_plot_memory()
+        
+        # ====================================================================
+        # FILTER CONTROLS (BOTTOM)
+        # ====================================================================
+        
+        st.markdown("---")
+        st.subheader("🔍 Apply Filters for Next Steps")
+        st.info("Filter the dataset before proceeding to normalization. Filters will be applied to downstream analysis.")
+        
+        col_f1, col_f2 = st.columns(2)
+        
+        with col_f1:
+            max_cv = st.slider(
+                "Max CV (%)",
+                min_value=0,
+                max_value=100,
+                value=100,
+                step=5,
+                help="Remove proteins with CV > threshold in ANY condition",
+                key="protein_max_cv"
+            )
+        
+        with col_f2:
+            drop_missing = st.checkbox(
+                "Drop rows with ANY missing values",
+                value=False,
+                help="Remove proteins that have missing values (≤1.0) in ANY sample",
+                key="protein_drop_missing"
+            )
+        
+        # Apply filters
+        df_filtered = apply_filters(df, numeric_cols, id_col, max_cv, drop_missing)
+        
+        n_removed = df.shape[0] - df_filtered.shape[0]
+        pct_removed = n_removed / df.shape[0] * 100 if df.shape[0] > 0 else 0
+        
+        col_m1, col_m2, col_m3 = st.columns(3)
+        with col_m1:
+            st.metric("Original", f"{df.shape[0]:,}")
+        with col_m2:
+            st.metric("Removed", f"{n_removed:,} ({pct_removed:.1f}%)")
+        with col_m3:
+            st.metric("Remaining", f"{df_filtered.shape[0]:,}")
+        
+        # Save filtered data to session state
+        if st.button("✅ Apply Filters & Continue", type="primary", use_container_width=True, key="protein_apply_filters"):
+            st.session_state.df_protein_filtered = df_filtered
+            st.session_state.protein_filters_applied = {
+                'max_cv': max_cv,
+                'drop_missing': drop_missing,
+                'n_removed': n_removed
+            }
+            st.success(f"✅ Filters applied! {df_filtered.shape[0]:,} proteins ready for normalization.")
+            st.rerun()
+        
+        # Show current filter status
+        if 'protein_filters_applied' in st.session_state:
+            st.info(f"""
+            **Current filters:**
+            - Max CV: {st.session_state.protein_filters_applied['max_cv']}%
+            - Drop missing: {st.session_state.protein_filters_applied['drop_missing']}
+            - Removed: {st.session_state.protein_filters_applied['n_removed']:,} proteins
+            """)
+        
+        del df_filtered
 
 # ============================================================================
 # PEPTIDE EDA
@@ -579,11 +648,17 @@ if has_peptide and tab_peptide:
         
         st.header("🔬 Peptide-Level Analysis")
         
+        # ====================================================================
+        # RUN ANALYSIS ON ORIGINAL DATA
+        # ====================================================================
+        
         df_log2 = pl.from_dict(compute_log2(df.to_dict(as_series=False), numeric_cols, 'peptide'))
         
         plot_section_1_overview(df, numeric_cols, species_col, 'peptide')
         st.markdown("---")
         
+        plot_section_2_stacked_bar(df, id_col, species_col, numeric_cols, 'peptide', 'peptide')
+        st.markdown("---")
         
         plot_section_3_intensity_dist(df_log2, id_col, numeric_cols, 'peptide')
         st.markdown("---")
@@ -599,9 +674,74 @@ if has_peptide and tab_peptide:
         
         del df_log2, cv_result
         clear_plot_memory()
+        
+        # ====================================================================
+        # FILTER CONTROLS (BOTTOM)
+        # ====================================================================
+        
+        st.markdown("---")
+        st.subheader("🔍 Apply Filters for Next Steps")
+        st.info("Filter the dataset before proceeding to normalization. Filters will be applied to downstream analysis.")
+        
+        col_f1, col_f2 = st.columns(2)
+        
+        with col_f1:
+            max_cv = st.slider(
+                "Max CV (%)",
+                min_value=0,
+                max_value=100,
+                value=100,
+                step=5,
+                help="Remove peptides with CV > threshold in ANY condition",
+                key="peptide_max_cv"
+            )
+        
+        with col_f2:
+            drop_missing = st.checkbox(
+                "Drop rows with ANY missing values",
+                value=False,
+                help="Remove peptides that have missing values (≤1.0) in ANY sample",
+                key="peptide_drop_missing"
+            )
+        
+        # Apply filters
+        df_filtered = apply_filters(df, numeric_cols, id_col, max_cv, drop_missing)
+        
+        n_removed = df.shape[0] - df_filtered.shape[0]
+        pct_removed = n_removed / df.shape[0] * 100 if df.shape[0] > 0 else 0
+        
+        col_m1, col_m2, col_m3 = st.columns(3)
+        with col_m1:
+            st.metric("Original", f"{df.shape[0]:,}")
+        with col_m2:
+            st.metric("Removed", f"{n_removed:,} ({pct_removed:.1f}%)")
+        with col_m3:
+            st.metric("Remaining", f"{df_filtered.shape[0]:,}")
+        
+        # Save filtered data to session state
+        if st.button("✅ Apply Filters & Continue", type="primary", use_container_width=True, key="peptide_apply_filters"):
+            st.session_state.df_peptide_filtered = df_filtered
+            st.session_state.peptide_filters_applied = {
+                'max_cv': max_cv,
+                'drop_missing': drop_missing,
+                'n_removed': n_removed
+            }
+            st.success(f"✅ Filters applied! {df_filtered.shape[0]:,} peptides ready for normalization.")
+            st.rerun()
+        
+        # Show current filter status
+        if 'peptide_filters_applied' in st.session_state:
+            st.info(f"""
+            **Current filters:**
+            - Max CV: {st.session_state.peptide_filters_applied['max_cv']}%
+            - Drop missing: {st.session_state.peptide_filters_applied['drop_missing']}
+            - Removed: {st.session_state.peptide_filters_applied['n_removed']:,} peptides
+            """)
+        
+        del df_filtered
 
 # ============================================================================
-# NAVIGATION
+# NAVIGATION (OUTSIDE TABS)
 # ============================================================================
 
 clear_plot_memory()
@@ -611,9 +751,21 @@ st.markdown("---")
 col1, col2 = st.columns(2)
 
 with col1:
-    if st.button("← Back to Upload", width='stretch'):
+    if st.button("← Back to Upload", use_container_width=True):
         st.switch_page("pages/1_Data_Upload.py")
 
 with col2:
-    if st.button("Continue to Normalization →", type="primary", width='stretch'):
+    # Check if filters have been applied
+    can_continue = False
+    if has_protein and has_peptide:
+        can_continue = 'protein_filters_applied' in st.session_state and 'peptide_filters_applied' in st.session_state
+    elif has_protein:
+        can_continue = 'protein_filters_applied' in st.session_state
+    elif has_peptide:
+        can_continue = 'peptide_filters_applied' in st.session_state
+    
+    if st.button("Continue to Normalization →", type="primary", use_container_width=True, disabled=not can_continue):
         st.switch_page("pages/3_Normalization.py")
+    
+    if not can_continue:
+        st.caption("⚠️ Apply filters in each tab before continuing")
