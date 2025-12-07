@@ -25,6 +25,10 @@ def clear_plot_memory():
 # SHARED CACHE FUNCTIONS
 # ============================================================================
 
+# ============================================================================
+# SHARED CACHE FUNCTIONS
+# ============================================================================
+
 @st.cache_data
 def compute_log2(df_dict: dict, cols: list, data_type: str) -> dict:
     """Cache log2 transformation."""
@@ -39,25 +43,24 @@ def compute_valid_counts(df_dict: dict, id_col: str, species_col: str, numeric_c
     """Cache valid protein/peptide counts per species per sample."""
     df_temp = pl.from_dict(df_dict)
     
-    df_counts = df_temp.select([id_col, species_col] + numeric_cols).melt(
-        id_vars=[id_col, species_col],
-        value_vars=numeric_cols,
-        variable_name='sample'
+    df_counts = df_temp.select([id_col, species_col] + numeric_cols).unpivot(
+        index=[id_col, species_col],
+        on=numeric_cols,
+        variable_name='sample',
+        value_name='value'
     ).filter(
         (pl.col('value') > 1.0) & (pl.col('value').is_finite())
     ).group_by(['sample', species_col]).agg(
         pl.len().alias('count')
     )
     
-    # Calculate species order
+    # Calculate species order (return as list, not categorical)
     species_order = df_counts.group_by(species_col).agg(
         pl.col('count').sum().alias('total')
     ).sort('total', descending=True)[species_col].to_list()
     
-    # Apply ordering
-    df_counts = df_counts.with_columns([
-        pl.col(species_col).cast(pl.Categorical(categories=species_order)).alias(species_col)
-    ]).sort(['sample', species_col]).with_columns([
+    # Sort by species order manually
+    df_counts = df_counts.sort(['sample', species_col]).with_columns([
         (pl.col('count').cum_sum().over('sample') - pl.col('count') / 2).alias('label_pos')
     ])
     
@@ -72,10 +75,11 @@ def compute_valid_table(df_dict: dict, id_col: str, species_col: str, numeric_co
     df_temp = pl.from_dict(df_dict)
     
     # Pivot table
-    df_counts = df_temp.select([id_col, species_col] + numeric_cols).melt(
-        id_vars=[id_col, species_col],
-        value_vars=numeric_cols,
-        variable_name='sample'
+    df_counts = df_temp.select([id_col, species_col] + numeric_cols).unpivot(
+        index=[id_col, species_col],
+        on=numeric_cols,
+        variable_name='sample',
+        value_name='value'
     ).filter(
         (pl.col('value') > 1.0) & (pl.col('value').is_finite())
     ).group_by(['sample', species_col]).agg(
@@ -84,14 +88,16 @@ def compute_valid_table(df_dict: dict, id_col: str, species_col: str, numeric_co
     
     df_table = df_counts.pivot(
         index=species_col,
-        columns='sample',
+        on='sample',
         values='count'
     ).fill_null(0)
     
     # Add totals
-    species_totals = df_temp.select([id_col, species_col] + numeric_cols).melt(
-        id_vars=[id_col, species_col],
-        value_vars=numeric_cols
+    species_totals = df_temp.select([id_col, species_col] + numeric_cols).unpivot(
+        index=[id_col, species_col],
+        on=numeric_cols,
+        variable_name='sample',
+        value_name='value'
     ).filter(
         (pl.col('value') > 1.0) & (pl.col('value').is_finite())
     ).group_by([id_col, species_col]).agg(
@@ -168,6 +174,7 @@ def compute_missing_data(df_dict: dict, id_col: str, numeric_cols: list, replica
             })
     
     return missing_plot_data
+
 
 # ============================================================================
 # CHECK DATA AVAILABILITY
@@ -603,15 +610,23 @@ if has_peptide and tab_peptide:
         st.subheader("2️⃣ Valid Peptides per Species per Sample")
         st.info("**Valid = intensity > 1.0** (excludes missing/NaN/zero)")
         
+        # In both protein and peptide sections, after getting counts_data:
+
         counts_data = compute_valid_counts(df.to_dict(as_series=False), id_col, species_col, numeric_cols)
         df_counts = pl.from_dict(counts_data['counts'])
+        species_order = counts_data['species_order']
         
-        plot = (ggplot(df_counts.to_pandas(), aes(x='sample', y='count', fill=species_col)) +
+        # Apply categorical ordering for plotting
+        df_counts_plot = df_counts.with_columns([
+            pl.col(species_col).cast(pl.Categorical(categories=species_order, ordering='physical'))
+        ])
+        
+        plot = (ggplot(df_counts_plot.to_pandas(), aes(x='sample', y='count', fill=species_col)) +
          geom_bar(stat='identity') +
          geom_text(aes(y='label_pos', label='count'), 
                    size=8, color='white', fontweight='bold') +
-         labs(title='Valid Peptide Count by Species per Sample',
-              x='Sample', y='Peptide Count', fill='Species') +
+         labs(title='Valid Protein Count by Species per Sample',  # or Peptide
+              x='Sample', y='Protein Count', fill='Species') +
          theme_minimal() +
          theme(axis_text_x=element_text(rotation=45, hjust=1),
                figure_size=(10, 5)))
@@ -619,7 +634,8 @@ if has_peptide and tab_peptide:
         fig = ggplot.draw(plot)
         st.pyplot(fig)
         plt.close(fig)
-        del fig, plot
+        del fig, plot, df_counts_plot  # Add df_counts_plot to cleanup
+
         
         # Table
         df_table = pl.from_dict(compute_valid_table(df.to_dict(as_series=False), id_col, species_col, numeric_cols))
