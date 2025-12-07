@@ -1,12 +1,13 @@
 """
 pages/2_Visual_EDA.py
-Exploratory data analysis for protein and/or peptide data - MEMORY OPTIMIZED
+Exploratory data analysis for protein and/or peptide data - MEMORY OPTIMIZED ONLY
 """
 
 import streamlit as st
 import polars as pl
 import polars.selectors as cs
 import numpy as np
+import pandas as pd
 from plotnine import *
 import matplotlib.pyplot as plt
 import gc
@@ -74,19 +75,18 @@ if has_protein and tab_protein:
         **Dataset:** {df.shape[0]:,} proteins × {len(numeric_cols)} samples
         """)
         
+        # Sample for plotting
+        df_plot = sample_data_for_plot(df)
+        
         # ====================================================================
         # 1. DISTRIBUTION OVERVIEW
         # ====================================================================
         
         st.subheader("1️⃣ Intensity Distributions")
         
-        # Sample data for plotting
-        df_sample = sample_data_for_plot(df)
-        
-        # Melt data for plotting
-        df_melted = df_sample.select([id_col] + numeric_cols).unpivot(
-            index=id_col,
-            on=numeric_cols,
+        df_melted = df_plot.select([id_col] + numeric_cols).melt(
+            id_vars=[id_col],
+            value_vars=numeric_cols,
             variable_name='sample',
             value_name='intensity'
         ).filter(
@@ -96,7 +96,6 @@ if has_protein and tab_protein:
         col1, col2 = st.columns(2)
         
         with col1:
-            # Histogram
             plot_hist = (ggplot(df_melted.to_pandas(), aes(x='intensity', fill='sample')) +
              geom_histogram(bins=50, alpha=0.6, position='identity') +
              labs(title='Raw Intensity Distribution', x='Intensity', y='Count') +
@@ -109,7 +108,6 @@ if has_protein and tab_protein:
             del fig, plot_hist
         
         with col2:
-            # Log2 transformed
             df_log = df_melted.with_columns(
                 pl.col('intensity').log(2).alias('log2_intensity')
             )
@@ -125,7 +123,6 @@ if has_protein and tab_protein:
             plt.close(fig)
             del fig, plot_log
         
-        # Free memory
         del df_melted
         gc.collect()
         
@@ -146,9 +143,7 @@ if has_protein and tab_protein:
         fig = ggplot.draw(plot_box)
         st.pyplot(fig)
         plt.close(fig)
-        
-        # Free memory
-        del fig, plot_box, df_log, df_sample
+        del fig, plot_box, df_log
         clear_plot_memory()
         
         st.markdown("---")
@@ -159,7 +154,6 @@ if has_protein and tab_protein:
         
         st.subheader("3️⃣ Missing Data Pattern")
         
-        # Calculate missingness (values == 1.0 are missing)
         missing_data = []
         for col in numeric_cols:
             n_missing = df.filter((pl.col(col) == 1.0) | pl.col(col).is_null()).shape[0]
@@ -195,14 +189,13 @@ if has_protein and tab_protein:
                 height=300
             )
         
-        # Free memory
         del df_missing, missing_data
         clear_plot_memory()
         
         st.markdown("---")
         
         # ====================================================================
-        # 4. SPECIES BREAKDOWN (if available)
+        # 4. SPECIES BREAKDOWN
         # ====================================================================
         
         if species_col:
@@ -235,7 +228,6 @@ if has_protein and tab_protein:
                     height=300
                 )
             
-            # Free memory
             del species_counts
             clear_plot_memory()
             
@@ -247,11 +239,9 @@ if has_protein and tab_protein:
         
         st.subheader("5️⃣ Sample Correlation")
         
-        # Compute correlation matrix
         corr_df = df.select(numeric_cols).fill_null(1.0)
         corr_matrix = np.corrcoef(corr_df.to_numpy().T)
         
-        # Create long-form data for ggplot
         corr_data = []
         for i, col1 in enumerate(numeric_cols):
             for j, col2 in enumerate(numeric_cols):
@@ -274,8 +264,7 @@ if has_protein and tab_protein:
         st.pyplot(fig)
         plt.close(fig)
         
-        # Free memory
-        del fig, plot_corr, df_corr, corr_data, corr_df, corr_matrix
+        del fig, plot_corr, df_corr, corr_data, corr_df, corr_matrix, df_plot
         clear_plot_memory()
 
 # ============================================================================
@@ -297,18 +286,17 @@ if has_peptide and tab_peptide:
         **Dataset:** {df.shape[0]:,} peptides × {len(numeric_cols)} samples
         """)
         
+        df_plot = sample_data_for_plot(df)
+        
         # ====================================================================
         # 1. DISTRIBUTION OVERVIEW
         # ====================================================================
         
         st.subheader("1️⃣ Intensity Distributions")
         
-        # Sample data for plotting
-        df_sample = sample_data_for_plot(df)
-        
-        df_melted = df_sample.select([id_col] + numeric_cols).unpivot(
-            index=id_col,
-            on=numeric_cols,
+        df_melted = df_plot.select([id_col] + numeric_cols).melt(
+            id_vars=[id_col],
+            value_vars=numeric_cols,
             variable_name='sample',
             value_name='intensity'
         ).filter(
@@ -345,7 +333,6 @@ if has_peptide and tab_peptide:
             plt.close(fig)
             del fig, plot_log
         
-        # Free memory
         del df_melted
         gc.collect()
         
@@ -366,8 +353,6 @@ if has_peptide and tab_peptide:
         fig = ggplot.draw(plot_box)
         st.pyplot(fig)
         plt.close(fig)
-        
-        # Free memory
         del fig, plot_box, df_log
         clear_plot_memory()
         
@@ -384,7 +369,6 @@ if has_peptide and tab_peptide:
                 pl.col(sequence_col).str.len_chars().alias('seq_length')
             )
             
-            # Sample for plotting
             df_seq_sample = sample_data_for_plot(df_seq)
             
             col1, col2 = st.columns(2)
@@ -402,7 +386,6 @@ if has_peptide and tab_peptide:
                 del fig, plot_length, df_seq_sample
             
             with col2:
-                # Peptides per protein
                 peptides_per_protein = df.group_by(id_col).agg(
                     pl.len().alias('n_peptides')
                 ).sort('n_peptides', descending=True)
@@ -420,15 +403,10 @@ if has_peptide and tab_peptide:
                 
                 del peptides_per_protein
             
-            # Free memory
             del df_seq
             clear_plot_memory()
             
             st.markdown("---")
-        
-        # Free sample data
-        del df_sample
-        gc.collect()
         
         # ====================================================================
         # 4. MISSING DATA
@@ -471,7 +449,6 @@ if has_peptide and tab_peptide:
                 height=300
             )
         
-        # Free memory
         del df_missing, missing_data
         clear_plot_memory()
         
@@ -511,9 +488,11 @@ if has_peptide and tab_peptide:
                     height=300
                 )
             
-            # Free memory
             del species_counts
             clear_plot_memory()
+        
+        del df_plot
+        gc.collect()
 
 # ============================================================================
 # FINAL CLEANUP
