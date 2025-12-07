@@ -36,10 +36,6 @@ like "682.63" instead of 682.63 (float).
 The fix: Try to convert columns to numeric, then detect which ones succeeded.
 """
 
-import pandas as pd
-import numpy as np
-from typing import Tuple, List
-
 # ============================================================================
 # NUMERIC COLUMN DETECTION - FIXED
 # ============================================================================
@@ -58,19 +54,6 @@ def detect_numeric_columns(df: pd.DataFrame) -> Tuple[List[str], List[str]]:
         Tuple of (numeric_cols, categorical_cols)
         - numeric_cols: Columns that are numeric OR can be converted to numeric
         - categorical_cols: Columns that are truly non-numeric
-        
-    Example:
-        >>> df = pd.DataFrame({
-        ...     'Protein': ['P1', 'P2'],
-        ...     'A1': ['682.63', '244.60'],      # String numbers
-        ...     'A2': [652.70, 248.68],          # Already float
-        ...     'Name': ['GAL3B', 'RBM47']       # Text
-        ... })
-        >>> numeric, categorical = detect_numeric_columns(df)
-        >>> numeric
-        ['A1', 'A2']
-        >>> categorical
-        ['Protein', 'Name']
     """
     
     numeric_cols = []
@@ -121,15 +104,6 @@ def convert_string_numbers_to_float(df: pd.DataFrame, numeric_cols: List[str]) -
         
     Returns:
         DataFrame with numeric columns converted to float
-        
-    Example:
-        >>> df = pd.DataFrame({
-        ...     'A1': ['682.63', '244.60'],
-        ...     'Name': ['GAL3B', 'RBM47']
-        ... })
-        >>> df = convert_string_numbers_to_float(df, ['A1'])
-        >>> df['A1'].dtype
-        dtype('float64')
     """
     
     df = df.copy()
