@@ -545,6 +545,6 @@ if species_col:
             st.warning("Not enough contaminant proteins for PCA")
 
 st.markdown("---")
-    st.info("**Next step:** Proceed to Differential Expression Analysis")
+st.info("**Next step:** Proceed to Differential Expression Analysis")
 
 st.markdown("---")
