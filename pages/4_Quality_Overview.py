@@ -203,3 +203,32 @@ if st.button("🎯 Apply Transformation & Continue", type="primary", use_contain
     st.info("**Next step:** Proceed to Differential Expression Analysis")
 
 st.markdown("---")
+# ============================================================================
+# DOWNLOAD TRANSFORMED DATA
+# ============================================================================
+
+if 'df_transformed' in st.session_state:
+    st.markdown("---")
+    st.subheader("📥 Download Transformed Data")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.download_button(
+            "Download Filtered (Raw)",
+            df.write_csv(),
+            "filtered_raw.csv",
+            "text/csv",
+            use_container_width=True
+        )
+    
+    with col2:
+        st.download_button(
+            "Download Transformed",
+            st.session_state.df_transformed.write_csv(),
+            "filtered_transformed.csv",
+            "text/csv",
+            use_container_width=True
+        )
+
+st.markdown("---")
