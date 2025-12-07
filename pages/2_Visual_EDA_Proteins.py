@@ -1,8 +1,8 @@
 """
-pages/2_Visual_EDA_Proteins.py - FIXED VERSION
+pages/2_Visual_EDA_Proteins.py - CORRECTED VERSION (DataFrame approach)
 Exploratory Data Analysis with advanced visualization and analysis functions
 Uses plotnine (ggplot2-style) and Polars for high-performance data processing
-FIX: Pandas → Polars conversion for to_dict()
+FIX: Pass Polars DataFrame directly (not dict) to cache functions
 """
 
 import streamlit as st
@@ -46,9 +46,8 @@ id_col = st.session_state.id_col
 species_col = st.session_state.species_col
 data_type = 'Protein'
 
-# FIX: Convert Pandas DataFrame to dict for Polars
-# Use pl.from_pandas() then .to_dict(as_series=False)
-df_raw_dict = pl.from_pandas(df_raw).to_dict(as_series=False)
+# CORRECTED: Convert Pandas DataFrame to Polars DataFrame (NOT dict)
+df_raw_pl = pl.from_pandas(df_raw)
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -64,20 +63,18 @@ def clear_plot_memory():
 # ============================================================================
 
 @st.cache_data
-def compute_log2(df_dict: dict, cols: list) -> dict:
+def compute_log2(df: pl.DataFrame, cols: list) -> dict:
     """Cache log2 transformation."""
-    df_temp = pl.from_dict(df_dict)
-    df_log2 = df_temp.with_columns([
+    df_log2 = df.with_columns([
         pl.col(c).clip(lower_bound=1.0).log(2).alias(c) for c in cols
     ])
     return df_log2.to_dict(as_series=False)
 
 @st.cache_data
-def compute_valid_counts(df_dict: dict, id_col: str, species_col: str, numeric_cols: list) -> dict:
+def compute_valid_counts(df: pl.DataFrame, id_col: str, species_col: str, numeric_cols: list) -> dict:
     """Cache valid protein counts per species per sample."""
-    df_temp = pl.from_dict(df_dict)
     
-    df_counts = df_temp.select([id_col, species_col] + numeric_cols).unpivot(
+    df_counts = df.select([id_col, species_col] + numeric_cols).unpivot(
         index=[id_col, species_col],
         on=numeric_cols,
         variable_name='sample',
@@ -104,11 +101,10 @@ def compute_valid_counts(df_dict: dict, id_col: str, species_col: str, numeric_c
     return df_counts.to_dict(as_series=False)
 
 @st.cache_data
-def compute_valid_table(df_dict: dict, id_col: str, species_col: str, numeric_cols: list) -> dict:
+def compute_valid_table(df: pl.DataFrame, id_col: str, species_col: str, numeric_cols: list) -> dict:
     """Cache valid protein table."""
-    df_temp = pl.from_dict(df_dict)
     
-    df_counts = df_temp.select([id_col, species_col] + numeric_cols).unpivot(
+    df_counts = df.select([id_col, species_col] + numeric_cols).unpivot(
         index=[id_col, species_col],
         on=numeric_cols,
         variable_name='sample',
@@ -125,7 +121,7 @@ def compute_valid_table(df_dict: dict, id_col: str, species_col: str, numeric_co
         values='count'
     ).fill_null(0)
     
-    species_totals = df_temp.select([id_col, species_col] + numeric_cols).unpivot(
+    species_totals = df.select([id_col, species_col] + numeric_cols).unpivot(
         index=[id_col, species_col],
         on=numeric_cols,
         variable_name='sample',
@@ -145,7 +141,7 @@ def compute_valid_table(df_dict: dict, id_col: str, species_col: str, numeric_co
 @st.cache_data
 def compute_intensity_stats(df_log2_dict: dict, id_col: str, numeric_cols: list) -> dict:
     """Cache intensity statistics."""
-    df_log2 = pl.from_dict(df_log2_dict)
+    df_log2 = pl.DataFrame(df_log2_dict)
     
     df_long = df_log2.select([id_col] + numeric_cols).unpivot(
         index=[id_col],
@@ -176,9 +172,8 @@ def compute_intensity_stats(df_log2_dict: dict, id_col: str, numeric_cols: list)
     }
 
 @st.cache_data
-def compute_cv_data(df_dict: dict, id_col: str, numeric_cols: list) -> dict:
+def compute_cv_data(df: pl.DataFrame, id_col: str, numeric_cols: list) -> dict:
     """Cache CV calculations."""
-    df_temp = pl.from_dict(df_dict)
     
     conditions = {}
     for col in numeric_cols:
@@ -191,7 +186,7 @@ def compute_cv_data(df_dict: dict, id_col: str, numeric_cols: list) -> dict:
     cv_threshold_data = []
     
     for condition, cols in conditions.items():
-        df_cv = df_temp.select([id_col] + cols).with_columns([
+        df_cv = df.select([id_col] + cols).with_columns([
             pl.concat_list(cols).list.mean().alias('mean'),
             pl.concat_list(cols).list.std().alias('std')
         ]).with_columns(
@@ -224,9 +219,8 @@ def compute_cv_data(df_dict: dict, id_col: str, numeric_cols: list) -> dict:
     }
 
 @st.cache_data
-def compute_missing_data(df_dict: dict, id_col: str, numeric_cols: list) -> dict:
+def compute_missing_data(df: pl.DataFrame, id_col: str, numeric_cols: list) -> dict:
     """Cache missing value calculations."""
-    df_temp = pl.from_dict(df_dict)
     
     conditions = {}
     for col in numeric_cols:
@@ -238,7 +232,7 @@ def compute_missing_data(df_dict: dict, id_col: str, numeric_cols: list) -> dict
     missing_plot_data = []
     
     for condition, cols in conditions.items():
-        df_missing = df_temp.select([id_col] + cols).with_columns([
+        df_missing = df.select([id_col] + cols).with_columns([
             pl.sum_horizontal([
                 (pl.col(c) <= 1.0) | (pl.col(c).is_null()) for c in cols
             ]).alias('n_missing')
@@ -291,7 +285,7 @@ st.subheader("2️⃣ Valid Proteins per Species per Sample")
 st.info("**Valid = intensity > 1.0** (excludes missing/NaN/zero)")
 
 df_counts = pl.from_dict(compute_valid_counts(
-    df_raw_dict,
+    df_raw_pl,
     id_col,
     species_col,
     numeric_cols
@@ -312,7 +306,7 @@ st.pyplot(fig)
 clear_plot_memory()
 
 df_table = pl.from_dict(compute_valid_table(
-    df_raw_dict,
+    df_raw_pl,
     id_col,
     species_col,
     numeric_cols
@@ -338,7 +332,7 @@ st.markdown("---")
 st.subheader("3️⃣ Log2 Intensity Distribution by Sample")
 
 # Compute log2 transformed data
-df_log2_dict = compute_log2(df_raw_dict, numeric_cols)
+df_log2_dict = compute_log2(df_raw_pl, numeric_cols)
 
 intensity_data = compute_intensity_stats(df_log2_dict, id_col, numeric_cols)
 df_long = pl.from_dict(intensity_data['long_data'])
@@ -379,7 +373,7 @@ st.markdown("---")
 st.subheader("4️⃣ Coefficient of Variation (CV) by Condition")
 st.info("**CV = (std / mean) × 100** for each protein across replicates. Lower CV = better reproducibility.")
 
-cv_result = compute_cv_data(df_raw_dict, id_col, numeric_cols)
+cv_result = compute_cv_data(df_raw_pl, id_col, numeric_cols)
 df_cv_long = pl.DataFrame(cv_result['cv_data'])
 
 high_cv_counts = df_cv_long.filter(pl.col('cv') > 100).group_by('condition').agg(
@@ -475,7 +469,7 @@ st.markdown("---")
 
 st.subheader("6️⃣ Missing Data Pattern")
 
-missing_data = compute_missing_data(df_raw_dict, id_col, numeric_cols)
+missing_data = compute_missing_data(df_raw_pl, id_col, numeric_cols)
 df_missing = pl.DataFrame(missing_data)
 
 plot = (ggplot(df_missing.to_pandas(), aes(x='n_missing', y='count', fill='condition')) +
