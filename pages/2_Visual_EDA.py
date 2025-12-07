@@ -60,8 +60,12 @@ st.markdown("---")
 # 2. STACKED BAR - PROTEINS PER SPECIES PER SAMPLE
 # ============================================================================
 
+# ============================================================================
+# 2. STACKED BAR - PROTEINS PER SPECIES PER SAMPLE
+# ============================================================================
+
 st.subheader("2️⃣ Valid Proteins per Species per Sample")
-st.info("**Valid = intensity > 1.0**")
+st.info("**Valid = intensity > 1.0** (excludes missing/NaN/zero)")
 
 # Count valid proteins (>1.0) per species per sample
 df_counts = df.select([id_col, species_col] + numeric_cols).melt(
@@ -69,7 +73,7 @@ df_counts = df.select([id_col, species_col] + numeric_cols).melt(
     value_vars=numeric_cols,
     variable_name='sample'
 ).filter(
-    pl.col('value') > 1.0  # Valid proteins only
+    (pl.col('value') > 1.0) & (pl.col('value').is_finite())  # Valid = not 1.0 and finite
 ).group_by(['sample', species_col]).agg(
     pl.count().alias('count')
 ).sort(['sample', species_col]).with_columns([
@@ -81,13 +85,51 @@ plot = (ggplot(df_counts.to_pandas(), aes(x='sample', y='count', fill=species_co
  geom_bar(stat='identity') +
  geom_text(aes(y='label_pos', label='count'), 
            size=8, color='white', fontweight='bold') +
- labs(title='Protein Count by Species per Sample',
+ labs(title='Valid Protein Count by Species per Sample',
       x='Sample', y='Protein Count', fill='Species') +
  theme_minimal() +
  theme(axis_text_x=element_text(rotation=45, hjust=1),
        figure_size=(10, 5)))
 
 st.pyplot(ggplot.draw(plot))
+
+# ============================================================================
+# TABLE - DETAILED COUNTS
+# ============================================================================
+
+# Pivot table: species × samples
+df_table = df_counts.pivot(
+    index=species_col,
+    columns='sample',
+    values='count'
+).fill_null(0)
+
+# Add total column (unique proteins per species across all samples with ANY valid value)
+species_totals = df.select([id_col, species_col] + numeric_cols).melt(
+    id_vars=[id_col, species_col],
+    value_vars=numeric_cols
+).filter(
+    (pl.col('value') > 1.0) & (pl.col('value').is_finite())
+).group_by([id_col, species_col]).agg(
+    pl.count()  # Any valid measurement
+).group_by(species_col).agg(
+    pl.count().alias('Total')
+)
+
+df_table = df_table.join(species_totals, on=species_col).sort('Total', descending=True)
+
+st.markdown("**Valid Proteins per Species per Sample:**")
+st.dataframe(df_table.to_pandas(), use_container_width=True)
+
+st.download_button(
+    "📥 Download Table (CSV)",
+    df_table.write_csv(),
+    "valid_proteins_per_species.csv",
+    "text/csv"
+)
+
+st.markdown("---")
+
 
 # ============================================================================
 # TABLE - DETAILED COUNTS
