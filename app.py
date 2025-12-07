@@ -6,7 +6,6 @@ Handles session initialization, navigation, and global configuration
 """
 
 import streamlit as st
-from helpers.audit import init_audit_session
 from helpers.core import get_theme_names
 from helpers.ui import init_session_state
 
