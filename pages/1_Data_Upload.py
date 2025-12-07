@@ -1,6 +1,6 @@
 """
 pages/1_Data_Upload.py
-Upload protein and/or peptide data with tabs - MEMORY OPTIMIZED
+Upload protein and/or peptide data with tabs - MEMORY OPTIMIZED WITH SHARED CONFIG
 """
 
 import streamlit as st
@@ -44,27 +44,6 @@ def generate_column_names(n: int, replicates: int = 3) -> list:
     """Generate A1, A2, A3, B1, B2, B3, ..."""
     return [f"{chr(65 + i//replicates)}{i%replicates + 1}" for i in range(n)]
 
-def infer_species(protein_name: str) -> str:
-    """
-    Extract species from protein name.
-    Handles multiple formats:
-    - 'GENE_SPECIES' → SPECIES
-    - 'GENE_SPECIES;GENE2_SPECIES' → SPECIES (takes first)
-    - 'P12345_SPECIES' → SPECIES
-    """
-    if not protein_name or not isinstance(protein_name, str):
-        return 'UNKNOWN'
-    
-    # Handle semicolon-separated entries (take first)
-    if ';' in protein_name:
-        protein_name = protein_name.split(';')[0].strip()
-    
-    # Extract species after underscore
-    if '_' in protein_name:
-        return protein_name.split('_')[-1].upper()
-    
-    return 'UNKNOWN'
-
 def clear_temp_session_data():
     """Remove temporary data from session state to free memory."""
     keys_to_remove = [k for k in st.session_state.keys() if k.startswith(('temp_', 'plot_', 'preview_'))]
@@ -72,8 +51,32 @@ def clear_temp_session_data():
         del st.session_state[key]
     gc.collect()
 
+def initialize_shared_config():
+    """Initialize shared configuration in session state."""
+    if 'shared_replicates' not in st.session_state:
+        st.session_state.shared_replicates = 3
+    if 'shared_species_tags' not in st.session_state:
+        st.session_state.shared_species_tags = "HUMAN, YEAST, ECOLI"
+    if 'shared_autorename' not in st.session_state:
+        st.session_state.shared_autorename = True
+
+def tag_species(text: str, tags: list, has_others: bool) -> str:
+    """Tag species based on keyword matching."""
+    if not text or not isinstance(text, str):
+        return 'OTHERS' if has_others else 'UNKNOWN'
+    
+    text_upper = text.upper()
+    
+    # Check each tag
+    for tag in tags:
+        if tag in text_upper:
+            return tag
+    
+    # No match found
+    return 'OTHERS' if has_others else 'UNKNOWN'
+
 def process_dataset(uploaded_file, data_type: str, key_prefix: str):
-    """Process uploaded dataset (protein or peptide) - returns True if successful."""
+    """Process uploaded dataset (protein or peptide) with shared configuration."""
     
     st.subheader(f"1️⃣ Upload {data_type.title()} File")
     
@@ -210,18 +213,38 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
     st.markdown("---")
     
     # ============================================================================
-    # RENAME COLUMNS
+    # RENAME COLUMNS - USE SHARED CONFIG
     # ============================================================================
     
     st.subheader("4️⃣ Rename Columns")
     
-    replicates = st.number_input(
-        "Replicates per condition", 
-        1, 10, 3, 
-        key=f"{key_prefix}_replicates"
-    )
+    col_a, col_b = st.columns([1, 2])
     
-    if st.checkbox("Auto-rename (A1, A2, B1...)", value=True, key=f"{key_prefix}_autorename"):
+    with col_a:
+        replicates = st.number_input(
+            "Replicates per condition", 
+            1, 10, 
+            value=st.session_state.shared_replicates,
+            key=f"{key_prefix}_replicates"
+        )
+        
+        # Update shared config
+        if replicates != st.session_state.shared_replicates:
+            st.session_state.shared_replicates = replicates
+            st.caption("✅ Saved for other tab")
+    
+    with col_b:
+        autorename = st.checkbox(
+            "Auto-rename (A1, A2, B1...)", 
+            value=st.session_state.shared_autorename, 
+            key=f"{key_prefix}_autorename"
+        )
+        
+        # Update shared config
+        if autorename != st.session_state.shared_autorename:
+            st.session_state.shared_autorename = autorename
+    
+    if autorename:
         new_names = generate_column_names(len(selected), replicates)
         rename_map = dict(zip(selected, new_names))
         df = df.rename(rename_map)
@@ -253,19 +276,14 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
             key=f"{key_prefix}_id"
         )
     
-    # SPECIES
+    # SPECIES INFO COLUMN
     with col2:
-        species_options = ['(Auto-infer from ID)'] + non_numeric
-        species_choice = st.selectbox(
-            "🧬 Species Column", 
-            species_options,
+        species_col = st.selectbox(
+            "🧬 Species Info Column", 
+            non_numeric,
+            help="Column containing species information",
             key=f"{key_prefix}_species"
         )
-        
-        if species_choice == '(Auto-infer from ID)':
-            species_source_col = None
-        else:
-            species_source_col = species_choice
     
     # PEPTIDE SEQUENCE (only for peptide data)
     sequence_col = None
@@ -274,37 +292,129 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
         sequence_col = st.selectbox(
             "🔬 Peptide Sequence",
             non_numeric,
-            help="Column containing peptide sequences (e.g., 'PEPTIDER', 'SEQUENCE')",
+            help="Column containing peptide sequences",
             key=f"{key_prefix}_sequence"
         )
     
     # ============================================================================
-    # KEEP ONLY NEEDED COLUMNS
+    # SPECIES TAGGING SYSTEM - USE SHARED CONFIG
     # ============================================================================
     
-    keep_cols = [id_col] + selected
-    if species_source_col:
-        keep_cols.append(species_source_col)
+    st.markdown("---")
+    st.markdown("**🏷️ Species Tagging**")
+    
+    st.info("""
+    Define species tags to identify in the data. Use **OTHERS** to group all remaining entries (e.g., contaminants).
+    
+    💡 **Configuration is shared between protein and peptide tabs**
+    """)
+    
+    # Show sample values
+    sample_values = df[species_col].unique().to_list()[:10]
+    with st.expander(f"📋 Sample values from '{species_col}' column"):
+        st.write(", ".join([f"`{v}`" for v in sample_values]))
+    
+    # Species tag input - USE SHARED
+    species_tags_input = st.text_input(
+        "Species tags (comma-separated):",
+        value=st.session_state.shared_species_tags,
+        help="Enter keywords to identify species. Add 'OTHERS' to group remaining entries. Shared between tabs.",
+        key=f"{key_prefix}_tags"
+    )
+    
+    # Update shared config
+    if species_tags_input != st.session_state.shared_species_tags:
+        st.session_state.shared_species_tags = species_tags_input
+        st.caption("✅ Saved for other tab")
+    
+    # Parse tags
+    species_tags = [tag.strip().upper() for tag in species_tags_input.split(',') if tag.strip()]
+    
+    if not species_tags:
+        st.warning("⚠️ Please enter at least one species tag")
+        return False
+    
+    # Check if OTHERS is included
+    has_others = 'OTHERS' in species_tags
+    
+    if has_others:
+        st.info("✅ **OTHERS** tag detected - all unmatched entries will be grouped as contaminants")
+        species_tags.remove('OTHERS')  # Remove for processing
+    
+    # ============================================================================
+    # APPLY SPECIES TAGGING
+    # ============================================================================
+    
+    # Keep only needed columns
+    keep_cols = [id_col, species_col] + selected
     if sequence_col:
         keep_cols.append(sequence_col)
     
     df = df.select(keep_cols)
     
-    # Infer/extract species
-    if not species_source_col:
-        # Auto-infer from ID column
-        df = df.with_columns(
-            pl.col(id_col).map_elements(infer_species, return_dtype=pl.Utf8).alias('species')
+    # Apply tagging
+    df = df.with_columns(
+        pl.col(species_col).map_elements(
+            lambda x: tag_species(x, species_tags, has_others), 
+            return_dtype=pl.Utf8
+        ).alias('species')
+    )
+    
+    species_col_final = 'species'
+    
+    # ============================================================================
+    # VALIDATION & PREVIEW
+    # ============================================================================
+    
+    # Count species distribution
+    species_counts = df.group_by('species').agg(
+        pl.len().alias('count')
+    ).sort('count', descending=True)
+    
+    st.success(f"✅ Tagged {df.shape[0]:,} rows into {species_counts.shape[0]} groups:")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        # Show distribution
+        species_counts_with_pct = species_counts.with_columns(
+            (pl.col('count') / df.shape[0] * 100).round(1).alias('percentage')
         )
-        species_col = 'species'
-        st.info(f"ℹ️ Auto-inferred species from **{id_col}** column")
-    else:
-        # Extract species from selected column
-        df = df.with_columns(
-            pl.col(species_source_col).map_elements(infer_species, return_dtype=pl.Utf8).alias('species')
+        
+        st.dataframe(
+            species_counts_with_pct.to_pandas().style.format({'percentage': '{:.1f}%'}),
+            hide_index=True,
+            width='stretch'
         )
-        species_col = 'species'
-        st.success(f"✅ Extracted species from **{species_source_col}** column")
+    
+    with col2:
+        # Validation metrics
+        n_unknown = df.filter(pl.col('species') == 'UNKNOWN').shape[0]
+        n_others = df.filter(pl.col('species') == 'OTHERS').shape[0]
+        
+        if n_unknown > 0:
+            st.warning(f"⚠️ {n_unknown} rows → UNKNOWN")
+            st.caption("Add more tags or use OTHERS")
+        
+        if n_others > 0:
+            st.info(f"ℹ️ {n_others} rows → OTHERS")
+            st.caption("Contaminants grouped")
+        
+        if n_unknown == 0 and (has_others or n_others == 0):
+            st.success("✅ All rows tagged")
+    
+    # Show examples for each species
+    with st.expander("🔍 Sample entries per species"):
+        for species_name in species_counts['species'].to_list():
+            sample_entries = df.filter(pl.col('species') == species_name).select([id_col, species_col]).head(3)
+            st.markdown(f"**{species_name}:**")
+            st.dataframe(sample_entries.to_pandas(), hide_index=True, width='stretch')
+    
+    # Clean up
+    del species_counts, species_counts_with_pct
+    gc.collect()
+    
+    species_col = species_col_final
     
     st.markdown("---")
     
@@ -337,14 +447,6 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
         n_unique_peptides = df[sequence_col].n_unique()
         st.metric("Unique Sequences", f"{n_unique_peptides:,}")
     
-    # Show species breakdown
-    with st.expander("Species Breakdown"):
-        species_counts = df.group_by(species_col).agg(
-            pl.len().alias('count')
-        ).sort('count', descending=True)
-        st.dataframe(species_counts.to_pandas(), hide_index=True, width='stretch')
-        del species_counts
-    
     st.markdown("---")
     
     # ============================================================================
@@ -364,12 +466,19 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
     """)
     
     if st.button(f"✅ Cache {data_type.title()} Data", type="primary", width='stretch', key=f"{key_prefix}_cache"):
-        # Store only essential data
+        # Store dataset
         st.session_state[f'df_{data_type}'] = df
         st.session_state[f'{data_type}_cols'] = selected
         st.session_state[f'{data_type}_id_col'] = id_col
         st.session_state[f'{data_type}_species_col'] = species_col
         st.session_state[f'{data_type}_replicates'] = replicates
+        
+        # Store shared config
+        st.session_state[f'{data_type}_shared_config'] = {
+            'replicates': replicates,
+            'species_tags': species_tags_input,
+            'autorename': autorename
+        }
         
         if sequence_col:
             st.session_state[f'{data_type}_sequence_col'] = sequence_col
@@ -380,6 +489,7 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
         gc.collect()
         
         st.success(f"🎉 {data_type.title()} data cached!")
+        st.info("💡 Configuration saved for other tab")
         return True
     
     return False
@@ -391,10 +501,35 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
 st.set_page_config(page_title="Data Upload", layout="wide")
 st.title("📊 Data Upload")
 
-st.info("**Upload protein-level data, peptide-level data, or both**")
+# Initialize shared configuration
+initialize_shared_config()
 
 # Clear any leftover temp data
 clear_temp_session_data()
+
+# ============================================================================
+# SHOW SHARED CONFIG STATUS
+# ============================================================================
+
+st.info("**Upload protein-level data, peptide-level data, or both**")
+
+with st.expander("⚙️ Shared Configuration", expanded=False):
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("Replicates", st.session_state.shared_replicates)
+    
+    with col2:
+        st.metric("Auto-rename", "✅ Yes" if st.session_state.shared_autorename else "❌ No")
+    
+    with col3:
+        tags_preview = st.session_state.shared_species_tags[:30] + "..." if len(st.session_state.shared_species_tags) > 30 else st.session_state.shared_species_tags
+        st.caption(f"**Species Tags:**")
+        st.caption(tags_preview)
+    
+    st.caption("*These settings are shared between protein and peptide tabs*")
+
+st.markdown("---")
 
 # ============================================================================
 # TABS
