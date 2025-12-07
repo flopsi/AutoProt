@@ -51,13 +51,13 @@ col1, col2 = st.columns(2)
 
 with col1:
     if st.button("🧬 Protein Data", use_container_width=True, 
-                 type="primary" if st.session_state.data_type == 'protein' else "secondary"):
+                 key="btn_protein" if st.session_state.data_type == 'protein' else "btn_peptide"):
         st.session_state.data_type = 'protein'
         st.rerun()
 
 with col2:
     if st.button("🔬 Peptide Data", use_container_width=True,
-                 type="primary" if st.session_state.data_type == 'peptide' else "secondary"):
+                 key= "btn_peptide" if st.session_state.data_type == 'peptide' else "btn_protein"):
         st.session_state.data_type = 'peptide'
         st.rerun()
 
@@ -135,7 +135,7 @@ if st.session_state.data_type == 'peptide':
         sequence_col = st.selectbox(
             "Sequence Column (amino acids):",
             options=df_raw.columns,
-            key="sequence_col"
+            key="peptide_sequence_col"
         )
 else:
     sequence_col = None
