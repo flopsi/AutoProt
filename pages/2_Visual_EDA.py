@@ -322,7 +322,7 @@ def plot_section_2_stacked_bar(df, id_col, species_col, numeric_cols, data_type,
     df_table = pl.from_dict(compute_valid_table(df.to_dict(as_series=False), id_col, species_col, numeric_cols))
     
     st.markdown(f"**Valid {data_type.title()}s per Species per Sample:**")
-    st.dataframe(df_table.to_pandas(), use_container_width=True)
+    st.dataframe(df_table.to_pandas(), width=True)
     
     st.download_button(
         "📥 Download Table (CSV)",
@@ -360,7 +360,7 @@ def plot_section_3_intensity_dist(df_log2, id_col, numeric_cols, download_key):
     df_stats = pl.from_dict(intensity_data['stats'])
     
     st.markdown("**Summary Statistics:**")
-    st.dataframe(df_stats.to_pandas(), use_container_width=True)
+    st.dataframe(df_stats.to_pandas(), width=True)
     
     st.download_button(
         "📥 Download Statistics (CSV)",
@@ -424,7 +424,7 @@ def plot_section_4_cv_distribution(df, id_col, numeric_cols, data_type, download
     ]).sort('condition')
     
     st.markdown("**CV Summary Statistics:**")
-    st.dataframe(df_cv_stats.to_pandas(), use_container_width=True)
+    st.dataframe(df_cv_stats.to_pandas(), width=True)
     
     st.download_button(
         "📥 Download CV Statistics (CSV)",
@@ -514,7 +514,7 @@ def plot_section_6_missing_values(df, id_col, numeric_cols, replicates, data_typ
         (pl.col('0 missing') / pl.sum_horizontal([c for c in col_order if c in df_missing_summary.columns]) * 100).alias('% Complete')
     ])
     
-    st.dataframe(df_missing_summary.to_pandas(), use_container_width=True)
+    st.dataframe(df_missing_summary.to_pandas(), width=True)
     
     st.download_button(
         "📥 Download Missing Values Summary (CSV)",
@@ -684,7 +684,7 @@ if has_protein and tab_protein:
             st.metric("Remaining", f"{df_filtered.shape[0]:,}")
         
         # Save filtered data to session state
-        if st.button("✅ Apply Filters & Continue", type="primary", use_container_width=True, key="protein_apply_filters"):
+        if st.button("✅ Apply Filters & Continue", type="primary", width=True, key="protein_apply_filters"):
             st.session_state.df_protein_filtered = df_filtered
             st.session_state.protein_filters_applied = {
                 'max_cv': max_cv,
@@ -953,7 +953,7 @@ if has_peptide and tab_peptide:
                 df_stats = pl.from_dict(intensity_data['stats'])
                 
                 st.markdown("**Summary Statistics:**")
-                st.dataframe(df_stats.to_pandas(), use_container_width=True)
+                st.dataframe(df_stats.to_pandas(), width=True)
                 
                 st.download_button(
                     "📥 Download Statistics (CSV)",
@@ -972,7 +972,7 @@ if has_peptide and tab_peptide:
         
         st.markdown("---")
         
-        if st.button("✅ Apply Filters & Continue", type="primary", use_container_width=True, key="peptide_apply_filters"):
+        if st.button("✅ Apply Filters & Continue", type="primary", width=True, key="peptide_apply_filters"):
             # Columns to drop
             cols_to_drop = ['min_completeness', 'max_cv'] + metrics_result['completeness_cols'] + metrics_result['cv_cols']
             
@@ -1032,7 +1032,7 @@ st.markdown("---")
 col1, col2 = st.columns(2)
 
 with col1:
-    if st.button("← Back to Upload", use_container_width=True):
+    if st.button("← Back to Upload", width=True):
         st.switch_page("pages/1_Data_Upload.py")
 
 with col2:
@@ -1045,7 +1045,7 @@ with col2:
     elif has_peptide:
         can_continue = 'peptide_filters_applied' in st.session_state
     
-    if st.button("Continue to Normalization →", type="primary", use_container_width=True, disabled=not can_continue):
+    if st.button("Continue to Normalization →", type="primary", width=True, disabled=not can_continue):
         st.switch_page("pages/3_Normalization.py")
     
     if not can_continue:
