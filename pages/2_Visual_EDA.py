@@ -2,13 +2,6 @@
 pages/2_Visual_EDA.py
 Exploratory data analysis - CORRECTED & OPTIMIZED VERSION
 
-Key Improvements:
-1. Fixed duplicate function definitions
-2. Removed redundant code blocks
-3. Optimized memory management
-4. Corrected filter application logic
-5. Streamlined plot generation
-6. Fixed session state handling
 """
 
 import streamlit as st
@@ -972,7 +965,7 @@ if has_peptide and tab_peptide:
         
         st.markdown("---")
         
-        if st.button("✅ Apply Filters & Continue", type="primary",  width="stretch", key="peptide_apply_filters"):
+        if st.button("✅ Apply Filters & Continue", type="primary", width="stretch", key="peptide_apply_filters"):
             # Columns to drop
             cols_to_drop = ['min_completeness', 'max_cv'] + metrics_result['completeness_cols'] + metrics_result['cv_cols']
             
@@ -1032,7 +1025,7 @@ st.markdown("---")
 col1, col2 = st.columns(2)
 
 with col1:
-    if st.button("← Back to Upload",  width="stretch"):
+    if st.button("← Back to Upload", width="stretch"):
         st.switch_page("pages/1_Data_Upload.py")
 
 with col2:
