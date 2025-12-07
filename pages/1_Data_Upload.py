@@ -83,7 +83,7 @@ if uploaded_file:
 # ============================================================================
 
 st.subheader("3️⃣ Select Quantitative Columns")
-
+df = uploaded_file
 # Auto-detect numeric columns
 numeric_cols = df.select(pl.col(pl.NUMERIC_DTYPES)).columns
 
