@@ -620,7 +620,8 @@ if species_col:
                         
                         col_a, col_b = st.columns(2)
                         col_a.metric("RMSE", f"{rmse:.3f}")
-                        col_b.metric("Bias", f"{bias:.+.3f}")
+                        col_b.metric("Bias", f"{bias:+.3f}")
+
             
             st.markdown("---")
             
