@@ -60,10 +60,6 @@ st.markdown("---")
 # 2. STACKED BAR - PROTEINS PER SPECIES PER SAMPLE
 # ============================================================================
 
-# ============================================================================
-# 2. STACKED BAR - PROTEINS PER SPECIES PER SAMPLE
-# ============================================================================
-
 st.subheader("2️⃣ Valid Proteins per Species per Sample")
 st.info("**Valid = intensity > 1.0** (excludes missing/NaN/zero)")
 
@@ -129,7 +125,6 @@ st.download_button(
 )
 
 st.markdown("---")
-
 
 # ============================================================================
 # TABLE - DETAILED COUNTS
