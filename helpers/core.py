@@ -1,14 +1,15 @@
 """
-helpers/core.py - UPDATED WITH PEPTIDE DATA CLASS
+helpers/core.py - UPDATED
 Core data classes for protein and peptide analysis
 """
 
 from dataclasses import dataclass
 import pandas as pd
-from typing import Optional
+from typing import Optional, Dict
+import numpy as np
 
 # ============================================================================
-# PROTEIN DATA CLASS (existing pattern, maintained)
+# PROTEIN DATA CLASS
 # ============================================================================
 
 @dataclass
@@ -17,7 +18,7 @@ class ProteinData:
     raw: pd.DataFrame
     numeric_cols: list
     id_col: str
-    species_col: str
+    species_col: Optional[str]
     file_path: str
     
     @property
@@ -38,7 +39,7 @@ class ProteinData:
         return len(self.numeric_cols)
 
 # ============================================================================
-# PEPTIDE DATA CLASS (NEW - parallel to ProteinData)
+# PEPTIDE DATA CLASS (NEW)
 # ============================================================================
 
 @dataclass
@@ -47,8 +48,8 @@ class PeptideData:
     raw: pd.DataFrame
     numeric_cols: list
     id_col: str
-    species_col: str
-    sequence_col: str  # Amino acid sequence
+    species_col: Optional[str]
+    sequence_col: str
     file_path: str
     
     @property
@@ -80,14 +81,14 @@ class PeptideData:
         
         lengths = self.raw[self.sequence_col].str.len()
         return {
-            'min_length': lengths.min(),
-            'max_length': lengths.max(),
-            'mean_length': round(lengths.mean(), 1),
-            'median_length': lengths.median()
+            'min_length': int(lengths.min()),
+            'max_length': int(lengths.max()),
+            'mean_length': round(float(lengths.mean()), 1),
+            'median_length': int(lengths.median())
         }
 
 # ============================================================================
-# THEME MANAGEMENT (existing, maintain as-is)
+# THEME MANAGEMENT
 # ============================================================================
 
 THEME_COLORS = {
