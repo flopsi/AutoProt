@@ -551,7 +551,7 @@ if has_peptide and tab_peptide:
         # 2. STACKED BAR
         # ====================================================================
         
-        st.subheader("2️⃣ Valid Peptides per Species per Sample")
+        st.subheader("2️⃣ Valid Proteins per Species per Sample")  # or Peptides
         st.info("**Valid = intensity > 1.0** (excludes missing/NaN/zero)")
         
         df_counts = df.select([id_col, species_col] + numeric_cols).melt(
@@ -562,16 +562,27 @@ if has_peptide and tab_peptide:
             (pl.col('value') > 1.0) & (pl.col('value').is_finite())
         ).group_by(['sample', species_col]).agg(
             pl.len().alias('count')
-        ).sort(['sample', species_col]).with_columns([
+        )
+        
+        # Calculate total per species for ordering
+        species_order = df_counts.group_by(species_col).agg(
+            pl.col('count').sum().alias('total')
+        ).sort('total', descending=True)[species_col].to_list()
+        
+        # Apply ordering and calculate label positions
+        df_counts = df_counts.sort(['sample', species_col]).with_columns([
+            pl.col(species_col).cast(pl.Categorical(categories=species_order)).alias(species_col)
+        ]).sort(['sample', species_col]).with_columns([
             (pl.col('count').cum_sum().over('sample') - pl.col('count') / 2).alias('label_pos')
         ])
         
+        # Plot
         plot = (ggplot(df_counts.to_pandas(), aes(x='sample', y='count', fill=species_col)) +
          geom_bar(stat='identity') +
          geom_text(aes(y='label_pos', label='count'), 
                    size=8, color='white', fontweight='bold') +
-         labs(title='Valid Peptide Count by Species per Sample',
-              x='Sample', y='Peptide Count', fill='Species') +
+         labs(title='Valid Protein Count by Species per Sample',  # or Peptide
+              x='Sample', y='Protein Count', fill='Species') +  # or Peptide Count
          theme_minimal() +
          theme(axis_text_x=element_text(rotation=45, hjust=1),
                figure_size=(10, 5)))
@@ -579,7 +590,7 @@ if has_peptide and tab_peptide:
         fig = ggplot.draw(plot)
         st.pyplot(fig)
         plt.close(fig)
-        del fig, plot
+del fig, plot, species_order
         
         # Table
         df_table = df_counts.pivot(
