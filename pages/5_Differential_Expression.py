@@ -391,45 +391,95 @@ st.markdown("---")
 
 st.header("8️⃣ Benchmark Plots (Spike-in Validation)")
 st.info("**Optional:** For datasets with known mixing ratios, validate quantification accuracy")
+# Replace the "Define Expected Fold Changes" section with this:
 
-if species_col:
+# ============================================================================
+# Define spike-in fractions and calculate expected log2 FC
+# ============================================================================
+
+st.subheader("Define Spike-in Fractions")
+st.info("**Enter mixing ratios** for each species in both conditions. Log2 FC will be calculated automatically.")
+
+species_list = df_trans[species_col].unique().to_list()
+
+# Create input columns for fractions
+col_header1, col_header2 = st.columns(2)
+col_header1.markdown(f"**Condition: {control}**")
+col_header2.markdown(f"**Condition: {treatment}**")
+
+fractions_control = {}
+fractions_treatment = {}
+expected_fc = {}
+
+for species in species_list:
+    col1, col2 = st.columns(2)
     
-    # Define expected fold changes
-    st.subheader("Define Expected Fold Changes")
-    
-    species_list = df_trans[species_col].unique().to_list()
-    expected_fc = {}
-    
-    cols_input = st.columns(min(len(species_list), 4))
-    
-    for i, species in enumerate(species_list):
-        with cols_input[i % 4]:
-            expected_fc[species] = st.number_input(
-                f"{species} expected:",
-                min_value=-5.0,
-                max_value=5.0,
-                value=0.0,
-                step=0.5,
-                key=f"exp_fc_{species}",
-                help="Theoretical log2 fold change for this species"
-            )
-    
-    if st.checkbox("Run Benchmark Analysis", value=False):
-        
-        # Join species info with results
-        df_bench = df_trans.select([id_col, species_col]).join(
-            results_df,
-            left_on=id_col,
-            right_on='protein_id',
-            how='inner'
-        ).with_columns([
-            pl.col(species_col).map_dict(expected_fc).alias('expected_fc')
-        ]).filter(
-            pl.col('effect_size').is_finite() &
-            pl.col('expected_fc').is_not_null()
+    with col1:
+        fractions_control[species] = st.number_input(
+            f"{species} fraction:",
+            min_value=0.0,
+            max_value=100.0,
+            value=33.33 if len(species_list) == 3 else 50.0,
+            step=1.0,
+            key=f"frac_ctrl_{species}",
+            help=f"Percentage of {species} in {control}"
         )
-        
-        st.markdown("---")
+    
+    with col2:
+        fractions_treatment[species] = st.number_input(
+            f"{species} fraction:",
+            min_value=0.0,
+            max_value=100.0,
+            value=33.33 if len(species_list) == 3 else 50.0,
+            step=1.0,
+            key=f"frac_trt_{species}",
+            help=f"Percentage of {species} in {treatment}"
+        )
+
+# Calculate log2 fold changes
+st.markdown("---")
+st.subheader("Calculated Expected Log2 Fold Changes")
+
+expected_fc_data = []
+
+for species in species_list:
+    frac_ctrl = fractions_control[species] / 100  # Convert to proportion
+    frac_trt = fractions_treatment[species] / 100
+    
+    # Avoid log2(0)
+    if frac_ctrl > 0 and frac_trt > 0:
+        log2_fc = np.log2(frac_trt / frac_ctrl)
+        expected_fc[species] = log2_fc
+    elif frac_trt > 0:
+        log2_fc = np.inf
+        expected_fc[species] = 5.0  # Cap at high value
+    elif frac_ctrl > 0:
+        log2_fc = -np.inf
+        expected_fc[species] = -5.0  # Cap at low value
+    else:
+        log2_fc = 0.0
+        expected_fc[species] = 0.0
+    
+    expected_fc_data.append({
+        'Species': species,
+        f'{control} (%)': fractions_control[species],
+        f'{treatment} (%)': fractions_treatment[species],
+        'Fold Change': round(frac_trt / frac_ctrl, 3) if frac_ctrl > 0 else np.inf,
+        'Log2 FC': round(log2_fc, 3) if np.isfinite(log2_fc) else log2_fc
+    })
+
+df_expected = pl.DataFrame(expected_fc_data)
+st.dataframe(df_expected.to_pandas(), use_container_width=True)
+
+# Validation check
+total_ctrl = sum(fractions_control.values())
+total_trt = sum(fractions_treatment.values())
+
+if abs(total_ctrl - 100) > 0.1:
+    st.warning(f"⚠️ {control} fractions sum to {total_ctrl:.1f}% (should be 100%)")
+if abs(total_trt - 100) > 0.1:
+    st.warning(f"⚠️ {treatment} fractions sum to {total_trt:.1f}% (should be 100%)")
+
         
         # ============================================================================
         # 8.1 SCATTER PLOTS (Observed vs Expected)
