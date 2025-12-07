@@ -372,4 +372,76 @@ st.download_button(
 )
 
 st.markdown("---")
+# ============================================================================
+# 6. MISSING VALUES PER PROTEIN
+# ============================================================================
+
+st.subheader("6️⃣ Missing Values per Protein by Condition")
+st.info("**Missing = intensity ≤ 1.0** (includes NaN, zero, and 1.0). Shows how many replicates are missing per protein.")
+
+# Count missing values per protein per condition
+missing_plot_data = []
+
+for condition, cols in conditions.items():
+    # For each protein, count how many replicates have value <= 1.0
+    df_missing = df.select([id_col] + cols).with_columns([
+        pl.sum_horizontal([
+            (pl.col(c) <= 1.0) | (pl.col(c).is_null()) for c in cols
+        ]).alias('n_missing')
+    ])
+    
+    # Count proteins by number of missing values (0, 1, 2, 3, ...)
+    for n_miss in range(len(cols) + 1):
+        count = df_missing.filter(pl.col('n_missing') == n_miss).shape[0]
+        missing_plot_data.append({
+            'condition': condition,
+            'n_missing': f'{n_miss} missing',
+            'count': count
+        })
+
+df_missing_plot = pl.DataFrame(missing_plot_data)
+
+# Grouped bar plot
+plot = (ggplot(df_missing_plot.to_pandas(), aes(x='condition', y='count', fill='n_missing')) +
+ geom_bar(stat='identity', position='dodge') +
+ geom_text(aes(label='count'), position=position_dodge(width=0.9),
+           va='bottom', size=8, fontweight='bold') +
+ scale_fill_brewer(type='seq', palette='YlOrRd') +
+ labs(title='Protein Count by Number of Missing Values per Condition',
+      x='Condition', y='Protein Count', fill='Missing Values') +
+ theme_minimal() +
+ theme(axis_text_x=element_text(size=12),
+       figure_size=(12, 6)))
+
+st.pyplot(ggplot.draw(plot))
+
+# Summary table
+st.markdown("**Missing Values Summary:**")
+
+# Pivot for summary table
+df_missing_summary = df_missing_plot.pivot(
+    index='condition',
+    columns='n_missing',
+    values='count'
+).fill_null(0)
+
+# Add total and complete cases percentage
+col_order = [f'{i} missing' for i in range(replicates + 1)]
+df_missing_summary = df_missing_summary.select(
+    ['condition'] + [c for c in col_order if c in df_missing_summary.columns]
+).with_columns([
+    pl.sum_horizontal([c for c in col_order if c in df_missing_summary.columns]).alias('Total'),
+    (pl.col('0 missing') / pl.sum_horizontal([c for c in col_order if c in df_missing_summary.columns]) * 100).alias('% Complete')
+])
+
+st.dataframe(df_missing_summary.to_pandas(), use_container_width=True)
+
+st.download_button(
+    "📥 Download Missing Values Summary (CSV)",
+    df_missing_summary.write_csv(),
+    "missing_values_summary.csv",
+    "text/csv"
+)
+
+st.markdown("---")
 
