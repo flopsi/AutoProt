@@ -7,21 +7,11 @@ import streamlit as st
 import polars as pl
 import time
 from pathlib import Path
+from io import read_file
 
 # ============================================================================
 # HELPERS
 # ============================================================================
-
-def read_file(file) -> pl.DataFrame:
-    """Read uploaded file into Polars DataFrame."""
-    name = file.name.lower()
-    if name.endswith('.csv'):
-        return pl.read_csv(file)
-    elif name.endswith(('.tsv', '.txt')):
-        return pl.read_csv(file, separator='\t')
-    elif name.endswith('.xlsx'):
-        return pl.read_excel(file)
-    raise ValueError(f"Unsupported format: {name}")
 
 def generate_column_names(n: int, replicates: int = 3) -> list:
     """Generate A1, A2, A3, B1, B2, B3, ..."""
@@ -46,24 +36,16 @@ st.title("📊 Data Upload & Configuration")
 # ============================================================================
 
 st.subheader("1️⃣ Upload File")
-uploaded = st.file_uploader("Choose file", type=['csv', 'tsv', 'txt', 'xlsx'])
 
-if not uploaded:
-    st.warning("⚠️ Upload a file to continue")
-    st.stop()
+uploaded_file = st.file_uploader("Upload CSV/TSV/Excel:", type=['csv', 'tsv', 'txt', 'xlsx'])
 
-# ============================================================================
-# 2. READ (NO CLEANING YET)
-# ============================================================================
-
-st.subheader("2️⃣ Loading...")
-
-try:
-    df = read_file(uploaded)
-    st.success(f"✅ Loaded: {df.shape[0]:,} rows × {df.shape[1]} columns")
-except Exception as e:
-    st.error(f"❌ Error: {e}")
-    st.stop()
+if uploaded_file:
+    try:
+        df = read_file(uploaded_file)
+        st.success(f"✅ Loaded: {df.shape[0]:,} rows × {df.shape[1]:,} columns")
+        st.session_state.df_raw = df
+    except ValueError as e:
+        st.error(f"❌ {e}")
 
 # ============================================================================
 # 3. SELECT NUMERIC COLUMNS (with last 20 chars + checkbox table)
