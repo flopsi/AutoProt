@@ -224,12 +224,31 @@ for condition, cols in conditions.items():
 
 df_cv_long = pl.DataFrame(cv_data)
 
+# Count proteins with CV > 100% per condition
+high_cv_counts = df_cv_long.filter(pl.col('cv') > 100).group_by('condition').agg(
+    pl.count().alias('n_high_cv')
+).sort('condition')
+
+# Display warning if any high CVs exist
+if high_cv_counts.shape[0] > 0:
+    warning_text = "⚠️ **High CV (>100%) detected:**  "
+    warning_parts = []
+    for row in high_cv_counts.iter_rows(named=True):
+        warning_parts.append(f"**{row['condition']}**: {row['n_high_cv']} proteins")
+    st.warning(warning_text + " | ".join(warning_parts))
+
+# Filter CV to max 100% for plotting
+df_cv_plot = df_cv_long.with_columns(
+    pl.col('cv').clip(upper_bound=100).alias('cv_capped')
+)
+
 # Violin plot without points
-plot = (ggplot(df_cv_long.to_pandas(), aes(x='condition', y='cv', fill='condition')) +
+plot = (ggplot(df_cv_plot.to_pandas(), aes(x='condition', y='cv_capped', fill='condition')) +
  geom_violin(alpha=0.7) +
  geom_boxplot(width=0.1, fill='white', outlier_alpha=0) +  # No outlier points
  scale_fill_brewer(type='qual', palette='Set2') +
- labs(title='Coefficient of Variation Distribution by Condition',
+ scale_y_continuous(limits=[0, 100]) +
+ labs(title='Coefficient of Variation Distribution by Condition (capped at 100%)',
       x='Condition', y='CV (%)') +
  theme_minimal() +
  theme(axis_text_x=element_text(size=12),
@@ -238,14 +257,15 @@ plot = (ggplot(df_cv_long.to_pandas(), aes(x='condition', y='cv', fill='conditio
 
 st.pyplot(ggplot.draw(plot))
 
-# Summary statistics
+# Summary statistics (using uncapped values)
 df_cv_stats = df_cv_long.group_by('condition').agg([
     pl.col('cv').count().alias('n_proteins'),
     pl.col('cv').mean().alias('mean_cv'),
     pl.col('cv').median().alias('median_cv'),
     pl.col('cv').std().alias('std_cv'),
     pl.col('cv').quantile(0.25).alias('q25'),
-    pl.col('cv').quantile(0.75).alias('q75')
+    pl.col('cv').quantile(0.75).alias('q75'),
+    (pl.col('cv') > 100).sum().alias('n_cv_over_100')
 ]).sort('condition')
 
 st.markdown("**CV Summary Statistics:**")
@@ -255,6 +275,90 @@ st.download_button(
     "📥 Download CV Statistics (CSV)",
     df_cv_stats.write_csv(),
     "cv_statistics.csv",
+    "text/csv"
+)
+
+st.markdown("---")
+
+# ============================================================================
+# 5. PROTEIN COUNT BY CV THRESHOLD
+# ============================================================================
+
+st.subheader("5️⃣ Protein Count by CV Threshold")
+st.info("**Quality tiers:** CV < 10% (excellent), CV < 20% (good), Total (all valid proteins)")
+
+# Calculate CV categories for each condition
+cv_threshold_data = []
+
+for condition, cols in conditions.items():
+    # Calculate CV for this condition
+    df_cv_cond = df.select([id_col] + cols).with_columns([
+        pl.concat_list(cols).list.mean().alias('mean'),
+        pl.concat_list(cols).list.std().alias('std')
+    ]).with_columns(
+        (pl.col('std') / pl.col('mean') * 100).alias('cv')
+    ).filter(
+        pl.col('cv').is_finite() & (pl.col('cv') > 0)
+    )
+    
+    # Count by threshold
+    total = df_cv_cond.shape[0]
+    cv_under_20 = df_cv_cond.filter(pl.col('cv') < 20).shape[0]
+    cv_under_10 = df_cv_cond.filter(pl.col('cv') < 10).shape[0]
+    
+    cv_threshold_data.append({
+        'condition': condition,
+        'CV < 10%': cv_under_10,
+        'CV < 20%': cv_under_20 - cv_under_10,  # Only between 10-20%
+        'CV ≥ 20%': total - cv_under_20
+    })
+
+df_cv_thresh = pl.DataFrame(cv_threshold_data)
+
+# Melt for stacked bar
+df_cv_thresh_long = df_cv_thresh.melt(
+    id_vars=['condition'],
+    value_vars=['CV < 10%', 'CV < 20%', 'CV ≥ 20%'],
+    variable_name='category',
+    value_name='count'
+).sort(['condition', 'category'])
+
+# Calculate label positions
+df_cv_thresh_long = df_cv_thresh_long.with_columns([
+    (pl.col('count').cum_sum().over('condition') - pl.col('count') / 2).alias('label_pos')
+])
+
+# Stacked bar plot
+plot = (ggplot(df_cv_thresh_long.to_pandas(), aes(x='condition', y='count', fill='category')) +
+ geom_bar(stat='identity') +
+ geom_text(aes(y='label_pos', label='count'), 
+           size=9, color='white', fontweight='bold') +
+ scale_fill_manual(values=['#2ecc71', '#f39c12', '#e74c3c'],  # Green, orange, red
+                   breaks=['CV < 10%', 'CV < 20%', 'CV ≥ 20%']) +
+ labs(title='Protein Count by CV Quality Threshold',
+      x='Condition', y='Protein Count', fill='CV Category') +
+ theme_minimal() +
+ theme(axis_text_x=element_text(size=12),
+       figure_size=(10, 6)))
+
+st.pyplot(ggplot.draw(plot))
+
+# Summary table
+st.markdown("**Protein Counts by CV Threshold:**")
+
+# Add total and percentage columns
+df_cv_summary = df_cv_thresh.with_columns([
+    (pl.col('CV < 10%') + pl.col('CV < 20%') + pl.col('CV ≥ 20%')).alias('Total'),
+    (pl.col('CV < 10%') / (pl.col('CV < 10%') + pl.col('CV < 20%') + pl.col('CV ≥ 20%')) * 100).alias('% < 10%'),
+    ((pl.col('CV < 10%') + pl.col('CV < 20%')) / (pl.col('CV < 10%') + pl.col('CV < 20%') + pl.col('CV ≥ 20%')) * 100).alias('% < 20%')
+])
+
+st.dataframe(df_cv_summary.to_pandas(), use_container_width=True)
+
+st.download_button(
+    "📥 Download CV Threshold Summary (CSV)",
+    df_cv_summary.write_csv(),
+    "cv_threshold_summary.csv",
     "text/csv"
 )
 
