@@ -590,7 +590,7 @@ if has_peptide and tab_peptide:
         fig = ggplot.draw(plot)
         st.pyplot(fig)
         plt.close(fig)
-del fig, plot, species_order
+        del fig, plot, species_order
         
         # Table
         df_table = df_counts.pivot(
