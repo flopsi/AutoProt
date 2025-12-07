@@ -301,7 +301,9 @@ st.markdown("---")
 st.header("3️⃣ Transformation Comparison")
 st.info("**Compare different transformations** - Select best for normality and variance stabilization")
 
-# Define transformations
+from scipy.stats import yeojohnson, boxcox
+
+# Define transformations (complete list)
 TRANSFORM_NAMES = {
     "raw": "Raw (No Transform)",
     "log2": "Log2",
@@ -309,6 +311,8 @@ TRANSFORM_NAMES = {
     "ln": "Natural Log (ln)",
     "sqrt": "Square Root",
     "arcsinh": "Arcsinh",
+    "boxcox": "Box-Cox",
+    "yeo-johnson": "Yeo-Johnson",
 }
 
 # Apply all transformations and collect stats
@@ -331,6 +335,59 @@ def compute_all_transforms(df_dict: dict, cols: list) -> dict:
     ])
     
     transforms = {}
+    
+    # Raw
+    transforms['raw'] = df_clean.to_dict(as_series=False)
+    
+    # Log2
+    transforms['log2'] = df_clean.with_columns([
+        pl.col(c).clip(lower_bound=1.0).log(2).alias(c) for c in cols
+    ]).to_dict(as_series=False)
+    
+    # Log10
+    transforms['log10'] = df_clean.with_columns([
+        pl.col(c).clip(lower_bound=1.0).log10().alias(c) for c in cols
+    ]).to_dict(as_series=False)
+    
+    # Natural log
+    transforms['ln'] = df_clean.with_columns([
+        pl.col(c).clip(lower_bound=1.0).log().alias(c) for c in cols
+    ]).to_dict(as_series=False)
+    
+    # Square root
+    transforms['sqrt'] = df_clean.with_columns([
+        pl.col(c).sqrt().alias(c) for c in cols
+    ]).to_dict(as_series=False)
+    
+    # Arcsinh
+    transforms['arcsinh'] = df_clean.with_columns([
+        pl.col(c).arcsinh().alias(c) for c in cols
+    ]).to_dict(as_series=False)
+    
+    # Box-Cox (requires positive values)
+    df_boxcox = df_clean.to_pandas()[cols]
+    df_boxcox_transformed = df_boxcox.copy()
+    for col in cols:
+        data = df_boxcox[col].values
+        data_positive = data[data > 0]
+        if len(data_positive) > 1:
+            transformed, _ = boxcox(data_positive)
+            # Map back to original indices
+            df_boxcox_transformed.loc[data > 0, col] = transformed
+    transforms['boxcox'] = pl.from_pandas(df_boxcox_transformed).to_dict(as_series=False)
+    
+    # Yeo-Johnson (works with any values)
+    df_yj = df_clean.to_pandas()[cols]
+    df_yj_transformed = df_yj.copy()
+    for col in cols:
+        data = df_yj[col].values
+        data_finite = data[np.isfinite(data)]
+        if len(data_finite) > 1:
+            transformed, _ = yeojohnson(data_finite)
+            df_yj_transformed.loc[np.isfinite(data), col] = transformed
+    transforms['yeo-johnson'] = pl.from_pandas(df_yj_transformed).to_dict(as_series=False)
+    
+    return transforms
     
     # Raw
     transforms['raw'] = df_clean.to_dict(as_series=False)
