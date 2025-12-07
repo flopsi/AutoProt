@@ -730,14 +730,7 @@ if has_peptide and tab_peptide:
             """Pre-calculate completeness and CV for all peptides."""
             df_temp = pl.from_dict(df_dict)
             
-            # Calculate completeness (% of non-missing values)
-            completeness_expr = (
-                pl.sum_horizontal([
-                    (pl.col(c) > 1.0) & pl.col(c).is_finite() for c in numeric_cols
-                ]) / len(numeric_cols) * 100
-            ).alias('completeness')
-            
-            # Group by condition for CV
+            # Group by condition
             conditions = {}
             for col in numeric_cols:
                 condition = col[0]
@@ -745,8 +738,22 @@ if has_peptide and tab_peptide:
                     conditions[condition] = []
                 conditions[condition].append(col)
             
-            # Calculate CV per condition, then take max
-            cv_exprs = []
+            # Calculate completeness per condition (as separate columns)
+            for condition, cols in conditions.items():
+                completeness_expr = (
+                    pl.sum_horizontal([
+                        (pl.col(c) > 1.0) & pl.col(c).is_finite() for c in cols
+                    ]) / len(cols) * 100
+                ).alias(f'completeness_{condition}')
+                df_temp = df_temp.with_columns(completeness_expr)
+            
+            # Calculate min completeness across all conditions
+            completeness_cols = [f'completeness_{cond}' for cond in conditions.keys()]
+            df_temp = df_temp.with_columns(
+                pl.min_horizontal(completeness_cols).alias('min_completeness')
+            )
+            
+            # Calculate CV per condition
             for condition, cols in conditions.items():
                 mean_expr = pl.concat_list(cols).list.eval(
                     pl.element().filter((pl.element() > 1.0) & pl.element().is_finite())
@@ -754,20 +761,26 @@ if has_peptide and tab_peptide:
                 std_expr = pl.concat_list(cols).list.eval(
                     pl.element().filter((pl.element() > 1.0) & pl.element().is_finite())
                 ).list.std()
-                cv_exprs.append((std_expr / mean_expr * 100).alias(f'cv_{condition}'))
-            
-            df_metrics = df_temp.with_columns([completeness_expr] + cv_exprs)
+                cv_expr = (std_expr / mean_expr * 100).alias(f'cv_{condition}')
+                df_temp = df_temp.with_columns(cv_expr)
             
             # Calculate max CV across conditions
             cv_cols = [f'cv_{cond}' for cond in conditions.keys()]
-            df_metrics = df_metrics.with_columns([
+            df_temp = df_temp.with_columns(
                 pl.max_horizontal(cv_cols).fill_nan(999).alias('max_cv')
-            ]).drop(cv_cols)
+            )
             
-            return df_metrics.to_dict(as_series=False)
+            return {
+                'data': df_temp.to_dict(as_series=False),
+                'conditions': list(conditions.keys()),
+                'completeness_cols': completeness_cols,
+                'cv_cols': cv_cols
+            }
         
         with st.spinner("🔄 Computing peptide metrics..."):
-            df_with_metrics = pl.from_dict(compute_peptide_metrics(df.to_dict(as_series=False), numeric_cols, id_col))
+            metrics_result = compute_peptide_metrics(df.to_dict(as_series=False), numeric_cols, id_col)
+            df_with_metrics = pl.from_dict(metrics_result['data'])
+            conditions_list = metrics_result['conditions']
         
         # ====================================================================
         # HIERARCHICAL FILTERS
@@ -775,6 +788,7 @@ if has_peptide and tab_peptide:
         
         st.subheader("🔍 Hierarchical Filters for Peptide → Protein Aggregation")
         st.info("Enable and configure filters as needed. Filters are applied in order: Completeness → CV → Min Peptides")
+        
         # ====================================================================
         # FILTER 1: DATA COMPLETENESS PER CONDITION
         # ====================================================================
@@ -804,9 +818,24 @@ if has_peptide and tab_peptide:
             )
         
         if enable_completeness:
-            df_filtered_1 = df_with_metrics.filter(pl.col('_min_completeness') >= min_completeness)
+            df_filtered_1 = df_with_metrics.filter(pl.col('min_completeness') >= min_completeness)
             n_removed_1 = df_with_metrics.shape[0] - df_filtered_1.shape[0]
             st.success(f"✅ After Filter 1: **{df_filtered_1.shape[0]:,} peptides** (removed {n_removed_1:,})")
+            
+            # Show breakdown by condition
+            with st.expander("📋 View completeness by condition"):
+                comp_stats = []
+                for cond in sorted(conditions_list):
+                    col_name = f'completeness_{cond}'
+                    n_pass = df_with_metrics.filter(pl.col(col_name) >= min_completeness).shape[0]
+                    comp_stats.append({
+                        'Condition': cond,
+                        'Peptides passing': n_pass,
+                        '% passing': round(n_pass / df_with_metrics.shape[0] * 100, 1)
+                    })
+                
+                df_comp_stats = pl.DataFrame(comp_stats)
+                st.dataframe(df_comp_stats.to_pandas(), hide_index=True)
         else:
             df_filtered_1 = df_with_metrics
             n_removed_1 = 0
@@ -841,14 +870,14 @@ if has_peptide and tab_peptide:
             )
         
         if enable_cv_filter:
-            df_filtered_2 = df_filtered_1.filter(pl.col('_max_cv') <= max_cv)
+            df_filtered_2 = df_filtered_1.filter(pl.col('max_cv') <= max_cv)
             n_removed_2 = df_filtered_1.shape[0] - df_filtered_2.shape[0]
             st.success(f"✅ After Filter 2: **{df_filtered_2.shape[0]:,} peptides** (removed {n_removed_2:,})")
         else:
             df_filtered_2 = df_filtered_1
             n_removed_2 = 0
             st.info("⏭️ Filter 2 disabled")
-
+        
         # ====================================================================
         # FILTER 3: MIN PEPTIDES PER PROTEIN
         # ====================================================================
@@ -936,8 +965,14 @@ if has_peptide and tab_peptide:
         st.markdown("---")
         
         if st.button("✅ Apply Filters & Save for Next Step", type="primary", use_container_width=True, key="peptide_apply_filters"):
-            # Save filtered peptide data - drop metric columns
-            st.session_state.df_peptide_filtered = df_filtered_3.drop(['_min_completeness', '_max_cv'])
+            # Columns to drop
+            cols_to_drop = ['min_completeness', 'max_cv'] + metrics_result['completeness_cols'] + metrics_result['cv_cols']
+            
+            # Only drop columns that exist
+            cols_to_drop = [c for c in cols_to_drop if c in df_filtered_3.columns]
+            
+            # Save filtered peptide data
+            st.session_state.df_peptide_filtered = df_filtered_3.drop(cols_to_drop)
             st.session_state.peptide_filters_applied = {
                 'enable_completeness': enable_completeness,
                 'min_completeness': min_completeness if enable_completeness else None,
@@ -952,7 +987,7 @@ if has_peptide and tab_peptide:
             }
             st.success(f"✅ Filters applied! {df_filtered_3.shape[0]:,} peptides from {n_proteins_final:,} proteins ready for aggregation.")
             st.rerun()
-                
+        
         # Show current saved filter status
         if 'peptide_filters_applied' in st.session_state:
             st.markdown("---")
@@ -975,7 +1010,7 @@ if has_peptide and tab_peptide:
             
             st.info(filter_text)
         
-        del df_with_metrics, df_filtered_1, df_filtered_2, df_filtered_3
+        del df_with_metrics, df_filtered_1, df_filtered_2, df_filtered_3, metrics_result
         clear_plot_memory()
 
         
