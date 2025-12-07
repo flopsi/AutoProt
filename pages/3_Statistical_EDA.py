@@ -29,9 +29,9 @@ replicates = st.session_state.replicates
 # ============================================================================
 
 st.header("1️⃣ Raw Intensity Distributions")
-st.info("**Density histograms with KDE overlay** - Raw values before transformation")
+st.info("**Density histograms with KDE overlay** - Raw values with mean line and ±2σ shaded region")
 
-# Prepare raw data (replace missing with 1.0 for visualization)
+# Prepare raw data
 df_raw = df.with_columns([
     pl.when(pl.col(c).cast(pl.Utf8).str.to_uppercase() == "NAN")
     .then(1.0)
@@ -44,38 +44,67 @@ df_raw = df.with_columns([
     for c in numeric_cols
 ])
 
-# Create long format with condition grouping
-df_long_raw = df_raw.select([id_col] + numeric_cols).melt(
-    id_vars=[id_col],
-    value_vars=numeric_cols,
-    variable_name='sample',
-    value_name='intensity'
-).filter(
-    (pl.col('intensity') > 1.0) & (pl.col('intensity').is_finite())
-).with_columns(
-    pl.when(pl.col('sample').str.starts_with('A'))
-    .then(pl.lit('A'))
-    .otherwise(pl.lit('B'))
-    .alias('condition')
-)
-
-# Create 3x2 grid of density plots
-plots_raw = []
+# Color mapping
 colors = {'A': '#66c2a5', 'B': '#fc8d62'}
 
+# Create 3x2 grid
+plots_raw = []
+stats_raw = []
+
 for i, col in enumerate(numeric_cols[:6]):
-    df_sample = df_long_raw.filter(pl.col('sample') == col)
+    # Get clean data
+    data = df_raw[col].to_numpy()
+    data_clean = data[(data > 1.0) & np.isfinite(data)]
+    
+    if len(data_clean) < 10:
+        continue
+    
+    # Calculate statistics
+    mean_val = np.mean(data_clean)
+    std_val = np.std(data_clean)
+    
+    # Determine condition and color
     cond = 'A' if col.startswith('A') else 'B'
     color = colors[cond]
     
-    plot = (ggplot(df_sample.to_pandas(), aes(x='intensity')) +
-     geom_histogram(aes(y='..density..'), bins=50, fill=color, alpha=0.4) +
+    # Create dataframe for plotting
+    df_plot = pl.DataFrame({'intensity': data_clean})
+    
+    # Build plot
+    plot = (ggplot(df_plot.to_pandas(), aes(x='intensity')) +
+     # Histogram
+     geom_histogram(aes(y='..density..'), bins=40, fill=color, alpha=0.4, color='black', size=0.3) +
+     # KDE overlay
      geom_density(color=color, size=1.5) +
-     labs(title=f'{col} (Condition {cond})', x='Raw Intensity', y='Density') +
+     # Mean line
+     geom_vline(xintercept=mean_val, linetype='dashed', color='darkred', size=1) +
+     # ±2σ shaded region
+     annotate('rect', xmin=mean_val-2*std_val, xmax=mean_val+2*std_val,
+              ymin=-np.inf, ymax=np.inf, alpha=0.1, fill='gray') +
+     # Labels
+     labs(title=f'{col} (Cond {cond})', 
+          x='Raw Intensity', 
+          y='Density',
+          subtitle=f'μ={mean_val:.1f}, σ={std_val:.1f}') +
      theme_minimal() +
-     theme(figure_size=(4, 3)))
+     theme(
+         figure_size=(4, 3.5),
+         plot_title=element_text(size=11, weight='bold'),
+         plot_subtitle=element_text(size=9, color='gray'),
+         axis_text=element_text(size=8)
+     ))
     
     plots_raw.append(plot)
+    
+    # Collect stats
+    stats_raw.append({
+        'Sample': col,
+        'Mean': round(mean_val, 2),
+        'SD': round(std_val, 2),
+        'Min': round(np.min(data_clean), 2),
+        'Max': round(np.max(data_clean), 2),
+        'N': len(data_clean)
+    })
 
 # Display in 3x2 grid
 col1, col2, col3 = st.columns(3)
@@ -98,7 +127,12 @@ with col3:
     if len(plots_raw) > 5:
         st.pyplot(ggplot.draw(plots_raw[5]))
 
-# Normality tests (extended)
+# Basic statistics table
+st.subheader("Distribution Statistics (Raw)")
+df_stats_raw = pl.DataFrame(stats_raw)
+st.dataframe(df_stats_raw.to_pandas(), use_container_width=True)
+
+# Normality tests
 st.subheader("Normality Tests (Raw Values)")
 
 normality_raw = []
@@ -107,13 +141,8 @@ for col in numeric_cols:
     data_clean = data[(data > 1.0) & np.isfinite(data)]
     
     if len(data_clean) > 3:
-        # Shapiro-Wilk test
         stat_sw, pval_sw = stats.shapiro(data_clean[:5000])
-        
-        # Kurtosis (excess kurtosis, normal = 0)
         kurt = stats.kurtosis(data_clean)
-        
-        # Skewness (normal = 0)
         skew = stats.skew(data_clean)
         
         normality_raw.append({
@@ -128,7 +157,7 @@ for col in numeric_cols:
 df_normality_raw = pl.DataFrame(normality_raw)
 st.dataframe(df_normality_raw.to_pandas(), use_container_width=True)
 
-st.caption("**Interpretation:** Shapiro p>0.05, |Kurtosis|<2, |Skewness|<1 suggest normality")
+st.caption("**Shaded region:** ±2σ from mean | **Red line:** Mean | **Normal if:** p>0.05, |Kurt|<2, |Skew|<1")
 
 st.markdown("---")
 
@@ -137,65 +166,59 @@ st.markdown("---")
 # ============================================================================
 
 st.header("2️⃣ Log2 Transformed Intensity Distributions")
-st.info("**After log2 transformation** - Should be more normal for statistical tests")
+st.info("**After log2 transformation** - Should be more normal for parametric tests")
 
 # Compute log2
-@st.cache_data
-def compute_log2_safe(df_dict: dict, cols: list) -> dict:
-    """Cache log2 transformation with missing value handling."""
-    df = pl.from_dict(df_dict)
-    
-    df_log2 = df.with_columns([
-        pl.when(pl.col(c).cast(pl.Utf8).str.to_uppercase() == "NAN")
-        .then(1.0)
-        .when(pl.col(c).is_null())
-        .then(1.0)
-        .when(pl.col(c) == 0.0)
-        .then(1.0)
-        .otherwise(pl.col(c))
-        .clip(lower_bound=1.0)
-        .log(2)
-        .alias(c)
-        for c in cols
-    ])
-    
-    return df_log2.to_dict(as_series=False)
-
 df_log2 = pl.from_dict(compute_log2_safe(df.to_dict(as_series=False), numeric_cols))
-
-# Long format
-df_long_log2 = df_log2.select([id_col] + numeric_cols).melt(
-    id_vars=[id_col],
-    value_vars=numeric_cols,
-    variable_name='sample',
-    value_name='log2_intensity'
-).filter(
-    pl.col('log2_intensity').is_finite()
-).with_columns(
-    pl.when(pl.col('sample').str.starts_with('A'))
-    .then(pl.lit('A'))
-    .otherwise(pl.lit('B'))
-    .alias('condition')
-)
 
 # Create plots
 plots_log2 = []
+stats_log2 = []
 
 for i, col in enumerate(numeric_cols[:6]):
-    df_sample = df_long_log2.filter(pl.col('sample') == col)
+    data = df_log2[col].to_numpy()
+    data_clean = data[np.isfinite(data)]
+    
+    if len(data_clean) < 10:
+        continue
+    
+    mean_val = np.mean(data_clean)
+    std_val = np.std(data_clean)
     cond = 'A' if col.startswith('A') else 'B'
     color = colors[cond]
     
-    plot = (ggplot(df_sample.to_pandas(), aes(x='log2_intensity')) +
-     geom_histogram(aes(y='..density..'), bins=50, fill=color, alpha=0.4) +
+    df_plot = pl.DataFrame({'log2_intensity': data_clean})
+    
+    plot = (ggplot(df_plot.to_pandas(), aes(x='log2_intensity')) +
+     geom_histogram(aes(y='..density..'), bins=40, fill=color, alpha=0.4, color='black', size=0.3) +
      geom_density(color=color, size=1.5) +
-     labs(title=f'{col} (Condition {cond})', x='Log2 Intensity', y='Density') +
+     geom_vline(xintercept=mean_val, linetype='dashed', color='darkred', size=1) +
+     annotate('rect', xmin=mean_val-2*std_val, xmax=mean_val+2*std_val,
+              ymin=-np.inf, ymax=np.inf, alpha=0.1, fill='gray') +
+     labs(title=f'{col} (Cond {cond})', 
+          x='Log2 Intensity', 
+          y='Density',
+          subtitle=f'μ={mean_val:.2f}, σ={std_val:.2f}') +
      theme_minimal() +
-     theme(figure_size=(4, 3)))
+     theme(
+         figure_size=(4, 3.5),
+         plot_title=element_text(size=11, weight='bold'),
+         plot_subtitle=element_text(size=9, color='gray'),
+         axis_text=element_text(size=8)
+     ))
     
     plots_log2.append(plot)
+    
+    stats_log2.append({
+        'Sample': col,
+        'Mean': round(mean_val, 2),
+        'SD': round(std_val, 2),
+        'Min': round(np.min(data_clean), 2),
+        'Max': round(np.max(data_clean), 2),
+        'N': len(data_clean)
+    })
 
-# Display in 3x2 grid
+# Display grid
 col1, col2, col3 = st.columns(3)
 
 with col1:
@@ -216,7 +239,12 @@ with col3:
     if len(plots_log2) > 5:
         st.pyplot(ggplot.draw(plots_log2[5]))
 
-# Normality tests for log2
+# Statistics
+st.subheader("Distribution Statistics (Log2)")
+df_stats_log2 = pl.DataFrame(stats_log2)
+st.dataframe(df_stats_log2.to_pandas(), use_container_width=True)
+
+# Normality tests
 st.subheader("Normality Tests (Log2 Transformed)")
 
 normality_log2 = []
