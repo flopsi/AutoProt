@@ -543,6 +543,8 @@ if species_col:
         if abs(total_trt - 100) > 0.1:
             st.warning(f"⚠️ {treatment} fractions sum to {total_trt:.1f}% (should be 100%)")
         
+        # Replace this section (around line 553):
+        
         # Join species info with results
         df_bench = df_trans.select([id_col, species_col]).join(
             results_df,
@@ -550,11 +552,12 @@ if species_col:
             right_on='protein_id',
             how='inner'
         ).with_columns([
-            pl.col(species_col).map_dict(expected_fc).alias('expected_fc')
+            pl.col(species_col).replace(expected_fc, default=None).alias('expected_fc')
         ]).filter(
             pl.col('effect_size').is_finite() &
             pl.col('expected_fc').is_not_null()
         )
+
         
         st.markdown("---")
         
