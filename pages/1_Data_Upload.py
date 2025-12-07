@@ -1,6 +1,14 @@
 """
 pages/1_Data_Upload.py
-Upload protein and/or peptide data with tabs - MEMORY OPTIMIZED WITH SHARED CONFIG
+Upload protein and/or peptide data with tabs - CORRECTED & OPTIMIZED
+
+Key Improvements:
+1. Fixed deprecated 'width' parameter
+2. Improved data caching strategy
+3. Better error handling
+4. Optimized memory management
+5. Fixed button state handling
+6. Enhanced validation logic
 """
 
 import streamlit as st
@@ -75,6 +83,12 @@ def tag_species(text: str, tags: list, has_others: bool) -> str:
     # No match found
     return 'OTHERS' if has_others else 'UNKNOWN'
 
+def validate_column_selection(selected: list, min_cols: int = 4) -> tuple:
+    """Validate selected columns."""
+    if len(selected) < min_cols:
+        return False, f"⚠️ Need ≥{min_cols} columns. Selected: {len(selected)}"
+    return True, f"✅ Selected {len(selected)} columns for analysis"
+
 def process_dataset(uploaded_file, data_type: str, key_prefix: str):
     """Process uploaded dataset (protein or peptide) with shared configuration."""
     
@@ -131,7 +145,7 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
             'Sample': st.column_config.TextColumn('Sample', disabled=True)
         },
         hide_index=True,
-        width='stretch',
+        use_container_width=True,
         height=400,
         key=f"{key_prefix}_col_editor"
     )
@@ -142,11 +156,13 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
     del col_data, df_cols
     gc.collect()
     
-    if len(selected) < 4:
-        st.warning(f"⚠️ Need ≥4 columns. Selected: {len(selected)}")
+    # Validate selection
+    is_valid, message = validate_column_selection(selected, min_cols=4)
+    if not is_valid:
+        st.warning(message)
         return False
     
-    st.success(f"✅ Selected {len(selected)} columns for analysis")
+    st.success(message)
     st.markdown("---")
     
     # ============================================================================
@@ -312,7 +328,7 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
     # Show sample values
     sample_values = df[species_col].unique().to_list()[:10]
     with st.expander(f"📋 Sample values from '{species_col}' column"):
-        st.write(", ".join([f"`{v}`" for v in sample_values]))
+        st.write(", ".join([f"`{v}`" for v in sample_values if v is not None]))
     
     # Species tag input - USE SHARED
     species_tags_input = st.text_input(
@@ -339,7 +355,9 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
     
     if has_others:
         st.info("✅ **OTHERS** tag detected - all unmatched entries will be grouped as contaminants")
-        species_tags.remove('OTHERS')  # Remove for processing
+        species_tags_for_processing = [tag for tag in species_tags if tag != 'OTHERS']
+    else:
+        species_tags_for_processing = species_tags.copy()
     
     # ============================================================================
     # APPLY SPECIES TAGGING
@@ -355,7 +373,7 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
     # Apply tagging
     df = df.with_columns(
         pl.col(species_col).map_elements(
-            lambda x: tag_species(x, species_tags, has_others), 
+            lambda x: tag_species(x, species_tags_for_processing, has_others), 
             return_dtype=pl.Utf8
         ).alias('species')
     )
@@ -384,7 +402,7 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
         st.dataframe(
             species_counts_with_pct.to_pandas().style.format({'percentage': '{:.1f}%'}),
             hide_index=True,
-            width='stretch'
+            use_container_width=True
         )
     
     with col2:
@@ -408,7 +426,7 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
         for species_name in species_counts['species'].to_list():
             sample_entries = df.filter(pl.col('species') == species_name).select([id_col, species_col]).head(3)
             st.markdown(f"**{species_name}:**")
-            st.dataframe(sample_entries.to_pandas(), hide_index=True, width='stretch')
+            st.dataframe(sample_entries.to_pandas(), hide_index=True, use_container_width=True)
     
     # Clean up
     del species_counts, species_counts_with_pct
@@ -423,7 +441,7 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
     # ============================================================================
     
     st.subheader("6️⃣ Preview")
-    st.dataframe(df.head(10), width='stretch', height=350)
+    st.dataframe(df.head(10), use_container_width=True, height=350)
     st.markdown("---")
     
     # ============================================================================
@@ -465,13 +483,20 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
     - Missing: {missing_pct:.1f}%
     """)
     
-    if st.button(f"✅ Cache {data_type.title()} Data", type="primary", width='stretch', key=f"{key_prefix}_cache"):
-        # Store dataset
-        st.session_state[f'df_{data_type}'] = df
-        st.session_state[f'{data_type}_cols'] = selected
+    if st.button(
+        f"✅ Cache {data_type.title()} Data", 
+        type="primary", 
+        use_container_width=True, 
+        key=f"{key_prefix}_cache"
+    ):
+        # Store dataset with proper cloning to avoid reference issues
+        st.session_state[f'df_{data_type}'] = df.clone()
+        st.session_state[f'{data_type}_cols'] = selected.copy()
         st.session_state[f'{data_type}_id_col'] = id_col
         st.session_state[f'{data_type}_species_col'] = species_col
         st.session_state[f'{data_type}_replicates'] = replicates
+        st.session_state[f'{data_type}_filename'] = uploaded_file.name
+        st.session_state[f'{data_type}_missing_pct'] = missing_pct
         
         # Store shared config
         st.session_state[f'{data_type}_shared_config'] = {
@@ -483,14 +508,21 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
         if sequence_col:
             st.session_state[f'{data_type}_sequence_col'] = sequence_col
         
+        # Mark as cached
+        st.session_state[f'{data_type}_cached'] = True
+        st.session_state[f'{data_type}_cache_timestamp'] = time.time()
+        
         # FREE MEMORY
         del edited
         clear_temp_session_data()
         gc.collect()
         
-        st.success(f"🎉 {data_type.title()} data cached!")
+        st.success(f"🎉 {data_type.title()} data cached successfully!")
         st.info("💡 Configuration saved for other tab")
-        return True
+        
+        # Force rerun to update UI
+        time.sleep(0.3)
+        st.rerun()
     
     return False
 
@@ -498,7 +530,7 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
 # PAGE CONFIG
 # ============================================================================
 
-st.set_page_config(page_title="Data Upload", layout="wide")
+st.set_page_config(page_title="Data Upload", page_icon="📊", layout="wide")
 st.title("📊 Data Upload")
 
 # Initialize shared configuration
@@ -544,6 +576,19 @@ with tab_protein:
         key='protein_upload'
     )
     
+    # Show cached status if available
+    if 'protein_cached' in st.session_state and st.session_state.protein_cached:
+        st.success(f"✅ **Protein data cached:** {st.session_state.df_protein.shape[0]:,} proteins from `{st.session_state.protein_filename}`")
+        
+        if st.button("🔄 Upload Different File", key='protein_clear_cache'):
+            # Clear protein cache
+            keys_to_clear = [k for k in st.session_state.keys() if k.startswith('protein_') or k == 'df_protein']
+            for key in keys_to_clear:
+                if key in st.session_state:
+                    del st.session_state[key]
+            gc.collect()
+            st.rerun()
+    
     if protein_file:
         process_dataset(protein_file, 'protein', 'prot')
 
@@ -553,6 +598,19 @@ with tab_peptide:
         type=['csv', 'tsv', 'txt', 'xlsx'],
         key='peptide_upload'
     )
+    
+    # Show cached status if available
+    if 'peptide_cached' in st.session_state and st.session_state.peptide_cached:
+        st.success(f"✅ **Peptide data cached:** {st.session_state.df_peptide.shape[0]:,} peptides from `{st.session_state.peptide_filename}`")
+        
+        if st.button("🔄 Upload Different File", key='peptide_clear_cache'):
+            # Clear peptide cache
+            keys_to_clear = [k for k in st.session_state.keys() if k.startswith('peptide_') or k == 'df_peptide']
+            for key in keys_to_clear:
+                if key in st.session_state:
+                    del st.session_state[key]
+            gc.collect()
+            st.rerun()
     
     if peptide_file:
         process_dataset(peptide_file, 'peptide', 'pep')
@@ -578,16 +636,20 @@ col1, col2 = st.columns(2)
 with col1:
     if has_protein:
         st.success(f"✅ **Protein data:** {st.session_state.df_protein.shape[0]:,} proteins")
+        if 'protein_missing_pct' in st.session_state:
+            st.caption(f"Missing: {st.session_state.protein_missing_pct:.1f}%")
     else:
         st.info("ℹ️ No protein data uploaded")
 
 with col2:
     if has_peptide:
         st.success(f"✅ **Peptide data:** {st.session_state.df_peptide.shape[0]:,} peptides")
+        if 'peptide_missing_pct' in st.session_state:
+            st.caption(f"Missing: {st.session_state.peptide_missing_pct:.1f}%")
     else:
         st.info("ℹ️ No peptide data uploaded")
 
-if st.button("🎯 Continue to Analysis", type="primary", width='stretch'):
+if st.button("🎯 Continue to Analysis", type="primary", use_container_width=True):
     st.session_state.data_type = 'both' if (has_protein and has_peptide) else ('protein' if has_protein else 'peptide')
     time.sleep(0.5)
     st.switch_page("pages/2_Visual_EDA.py")
