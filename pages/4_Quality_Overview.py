@@ -224,7 +224,7 @@ if 'df_transformed' in st.session_state:
     with col1:
         st.download_button(
             "Download Filtered (Raw)",
-            df.write_csv(),
+            st.session_state.df_filtered.write_csv(),  # Use df_filtered from session state
             "filtered_raw.csv",
             "text/csv",
             use_container_width=True
@@ -240,3 +240,4 @@ if 'df_transformed' in st.session_state:
         )
 
 st.markdown("---")
+
