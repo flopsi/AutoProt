@@ -229,7 +229,9 @@ def run_limma_analysis(df_dict, control_cols, treatment_cols, min_valid_count, i
         # Statistics
         mean_ctrl = np.mean(control_vals)
         mean_trt = np.mean(treatment_vals)
-        effect_size = mean_trt - mean_ctrl
+        
+        # FIXED: log2(Control/Treatment) = log2(A/B)
+        effect_size = mean_ctrl - mean_trt  # Changed from mean_trt - mean_ctrl
         
         try:
             t_stat, pval = stats.ttest_ind(treatment_vals, control_vals, equal_var=False)
@@ -245,6 +247,7 @@ def run_limma_analysis(df_dict, control_cols, treatment_cols, min_valid_count, i
             'n_control': len(control_vals),
             'n_treatment': len(treatment_vals)
         })
+    
     
     df_results = pl.DataFrame(results)
     
