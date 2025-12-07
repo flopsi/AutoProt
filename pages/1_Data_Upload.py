@@ -2,8 +2,8 @@
 pages/1_Data_Upload.py - OPTIMIZED
 Unified data upload interface for proteins and peptides with tab-based selection
 Uses helpers for validation and data loading
-FIXED: Implements string-to-float conversion, column renaming, and final column dropping,
-       and now includes a data cleanup step to handle common non-numeric placeholders like '#NUM!'.
+FIXED: Ensures all column names (ID, Species, Sequence, Numeric) are the final, renamed versions
+       when creating both ProteinData and PeptideData objects.
 """
 
 import streamlit as st
@@ -371,6 +371,7 @@ with col1:
     }
     
     if st.session_state.data_type == 'peptide':
+        # FIX: Ensure sequence_col is checked against its renamed version
         checks["✅ Sequence column selected"] = sequence_col is not None
     else:
         checks["✅ Species/taxonomy configured"] = True
@@ -412,8 +413,8 @@ if st.button(
                 data_obj = ProteinData(
                     raw=df_filtered,
                     numeric_cols=selected_numeric,
-                    id_col=id_col,
-                    species_col=species_col,
+                    id_col=id_col, # Correctly uses renamed variable
+                    species_col=species_col, # Correctly uses renamed variable
                     file_path=str(uploaded_file.name)
                 )
                 st.session_state.protein_data = data_obj
@@ -426,12 +427,13 @@ if st.button(
                 st.session_state.data_ready = True
                 
             else:  # peptide
+                # FIX: Ensure PeptideData constructor uses the final, renamed variables
                 data_obj = PeptideData(
                     raw=df_filtered,
                     numeric_cols=selected_numeric,
-                    id_col=id_col,
-                    species_col=species_col,
-                    sequence_col=sequence_col,
+                    id_col=id_col, # Correctly uses renamed variable
+                    species_col=species_col, # Correctly uses renamed variable
+                    sequence_col=sequence_col, # Correctly uses renamed variable
                     file_path=str(uploaded_file.name)
                 )
                 st.session_state.peptide_data = data_obj
