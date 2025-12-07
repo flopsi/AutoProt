@@ -325,8 +325,7 @@ if st.button("🎯 Apply Transformation & Continue", type="primary", use_contain
             
             st.pyplot(ggplot.draw(plot_mv))
 
-
-    # ============================================================================
+# ============================================================================
 # 5. PCA ANALYSIS
 # ============================================================================
 
@@ -543,8 +542,5 @@ if species_col:
                 st.info("Cohen's d requires exactly 2 conditions")
         else:
             st.warning("Not enough contaminant proteins for PCA")
-
-st.markdown("---")
-st.info("**Next step:** Proceed to Differential Expression Analysis")
 
 st.markdown("---")
