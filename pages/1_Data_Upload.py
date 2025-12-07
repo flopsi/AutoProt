@@ -2,7 +2,8 @@
 pages/1_Data_Upload.py - OPTIMIZED
 Unified data upload interface for proteins and peptides with tab-based selection
 Uses helpers for validation and data loading
-FIXED: Implements string-to-float conversion, column renaming, and final column dropping.
+FIXED: Implements string-to-float conversion, column renaming, and final column dropping,
+       and now includes a data cleanup step to handle common non-numeric placeholders like '#NUM!'.
 """
 
 import streamlit as st
@@ -15,7 +16,6 @@ import gc
 # Import helpers
 from helpers.io import validate_dataframe, detect_numeric_columns, convert_string_numbers_to_float
 from helpers.core import ProteinData, PeptideData
-# FIX: Import renaming utility
 from helpers.naming import rename_columns_for_display 
 
 # ============================================================================
@@ -105,6 +105,16 @@ except Exception as e:
     st.error(f"❌ Error loading file: {str(e)}")
     st.stop()
 
+# ============================================================================
+# DATA CLEANUP (FIX FOR '#NUM!')
+# ============================================================================
+try:
+    # Replace common non-numeric string placeholders with NaN for correct numeric detection
+    df_raw = df_raw.replace(['#NUM!', '#N/A', '#REF!', 'N/A', 'NA', ''], np.nan)
+    st.caption("🔍 Applied preliminary data cleanup (replaced common proteomics placeholders like `#NUM!` with NaN)")
+except Exception as e:
+    st.warning(f"⚠️ Could not perform data cleanup: {str(e)}")
+
 st.markdown("---")
 
 # ============================================================================
@@ -146,7 +156,7 @@ else:
 st.markdown("---")
 
 # ============================================================================
-# NUMERIC COLUMN DETECTION & CONVERSION (FIX)
+# NUMERIC COLUMN DETECTION & CONVERSION
 # ============================================================================
 
 st.subheader("4️⃣ Select Numeric Columns (Abundance Data)")
@@ -293,7 +303,7 @@ else:
 st.markdown("---")
 
 # ============================================================================
-# COLUMN RENAMING & FINAL DROPPING (FIX)
+# COLUMN RENAMING & FINAL DROPPING
 # ============================================================================
 
 st.subheader("7️⃣ Renaming & Final Column Selection")
@@ -315,7 +325,8 @@ id_col_renamed = name_mapping.get(id_col, id_col)
 species_col_renamed = name_mapping.get(species_col, species_col) if species_col else None
 sequence_col_renamed = name_mapping.get(sequence_col, sequence_col) if sequence_col else None
 
-st.caption(f"**Renamed Columns:** {len(name_mapping)} numeric columns were checked. The first column name is now **'{selected_numeric_renamed[0]}'**.")
+if selected_numeric_renamed:
+    st.caption(f"**Renamed Columns:** {len(name_mapping)} numeric columns were checked. The first column name is now **'{selected_numeric_renamed[0]}'**.")
 
 # Determine final columns to keep
 final_cols = [id_col_renamed] + selected_numeric_renamed
