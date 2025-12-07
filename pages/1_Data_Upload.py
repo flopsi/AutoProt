@@ -140,4 +140,257 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
         n_one = df.filter(pl.col(c) == 1.0).shape[0]
         
         missing_stats.append({
-            'column
+            'column': c,
+            'null': n_null,
+            'nan_string': n_nan_string,
+            'zero': n_zero,
+            'one': n_one
+        })
+    
+    n_null = sum(s['null'] for s in missing_stats)
+    n_nan_string = sum(s['nan_string'] for s in missing_stats)
+    n_zero = sum(s['zero'] for s in missing_stats)
+    n_one = sum(s['one'] for s in missing_stats)
+    total_missing = n_null + n_nan_string + n_zero + n_one
+    total_values = df.shape[0] * len(selected)
+    missing_pct = total_missing / total_values * 100 if total_values > 0 else 0
+    
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Null", f"{n_null:,}")
+    c2.metric("'NaN' string", f"{n_nan_string:,}")
+    c3.metric("Zero", f"{n_zero:,}")
+    c4.metric("Value = 1.0", f"{n_one:,}")
+    c5.metric("Missing %", f"{missing_pct:.1f}%")
+    
+    st.info("**Note:** All missing values will be normalized to 1.0 for log2 transformation.")
+    
+    df = df.with_columns([
+        pl.when(pl.col(c).is_null())
+        .then(1.0)
+        .when(pl.col(c) == 0.0)
+        .then(1.0)
+        .otherwise(pl.col(c))
+        .alias(c)
+        for c in selected
+    ])
+    
+    st.success("✅ All missing values normalized to 1.0")
+    st.markdown("---")
+    
+    # ============================================================================
+    # RENAME COLUMNS
+    # ============================================================================
+    
+    st.subheader("4️⃣ Rename Columns")
+    
+    replicates = st.number_input(
+        "Replicates per condition", 
+        1, 10, 3, 
+        key=f"{key_prefix}_replicates"
+    )
+    
+    if st.checkbox("Auto-rename (A1, A2, B1...)", value=True, key=f"{key_prefix}_autorename"):
+        new_names = generate_column_names(len(selected), replicates)
+        rename_map = dict(zip(selected, new_names))
+        df = df.rename(rename_map)
+        selected = new_names
+        st.info(f"✅ Renamed: {', '.join(new_names[:6])}...")
+    
+    st.markdown("---")
+    
+    # ============================================================================
+    # IDENTIFY METADATA
+    # ============================================================================
+    
+    st.subheader("5️⃣ Metadata")
+    
+    non_numeric = [c for c in df.columns if c not in selected]
+    
+    if not non_numeric:
+        st.warning("⚠️ No metadata columns found")
+        return False
+    
+    # PROTEIN ID
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        id_col = st.selectbox(
+            "🔍 Protein ID", 
+            non_numeric, 
+            index=0,
+            key=f"{key_prefix}_id"
+        )
+    
+    # SPECIES
+    with col2:
+        species_col = st.selectbox(
+            "🧬 Species (optional)", 
+            ['(None)'] + non_numeric,
+            key=f"{key_prefix}_species"
+        )
+        if species_col == '(None)':
+            species_col = None
+    
+    # PEPTIDE SEQUENCE (only for peptide data)
+    sequence_col = None
+    if data_type == 'peptide':
+        st.markdown("**Peptide-Specific:**")
+        sequence_col = st.selectbox(
+            "🔬 Peptide Sequence",
+            non_numeric,
+            help="Column containing peptide sequences (e.g., 'PEPTIDER', 'SEQUENCE')",
+            key=f"{key_prefix}_sequence"
+        )
+    
+    # ============================================================================
+    # KEEP ONLY NEEDED COLUMNS
+    # ============================================================================
+    
+    keep_cols = [id_col] + selected
+    if species_col:
+        keep_cols.append(species_col)
+    if sequence_col:
+        keep_cols.append(sequence_col)
+    
+    df = df.select(keep_cols)
+    
+    # Infer species if not provided
+    if not species_col:
+        df = df.with_columns(
+            pl.col(id_col).map_elements(infer_species, return_dtype=pl.Utf8).alias('species')
+        )
+        species_col = 'species'
+    
+    st.markdown("---")
+    
+    # ============================================================================
+    # PREVIEW
+    # ============================================================================
+    
+    st.subheader("6️⃣ Preview")
+    st.dataframe(df.head(10), use_container_width=True, height=350)
+    st.markdown("---")
+    
+    # ============================================================================
+    # STATS
+    # ============================================================================
+    
+    st.subheader("7️⃣ Statistics")
+    
+    n_rows = df.shape[0]
+    n_samples = len(selected)
+    n_conditions = n_samples // replicates
+    species_count = df[species_col].n_unique()
+    
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric(f"{data_type.title()}s", f"{n_rows:,}")
+    c2.metric("Samples", n_samples)
+    c3.metric("Conditions", n_conditions)
+    c4.metric("Species", species_count)
+    
+    if data_type == 'peptide' and sequence_col:
+        n_unique_peptides = df[sequence_col].n_unique()
+        st.metric("Unique Sequences", f"{n_unique_peptides:,}")
+    
+    st.markdown("---")
+    
+    # ============================================================================
+    # CACHE TO SESSION STATE
+    # ============================================================================
+    
+    st.subheader("8️⃣ Confirm")
+    
+    st.info(f"""
+    **Summary:**
+    - File: `{uploaded_file.name}`
+    - Rows: {n_rows:,}
+    - Samples: {n_samples}
+    - Conditions: {n_conditions}
+    - Species: {species_count}
+    - Missing: {missing_pct:.1f}%
+    """)
+    
+    if st.button(f"✅ Cache {data_type.title()} Data", type="primary", use_container_width=True, key=f"{key_prefix}_cache"):
+        st.session_state[f'df_{data_type}'] = df
+        st.session_state[f'{data_type}_cols'] = selected
+        st.session_state[f'{data_type}_id_col'] = id_col
+        st.session_state[f'{data_type}_species_col'] = species_col
+        st.session_state[f'{data_type}_replicates'] = replicates
+        
+        if sequence_col:
+            st.session_state[f'{data_type}_sequence_col'] = sequence_col
+        
+        st.success(f"🎉 {data_type.title()} data cached!")
+        return True
+    
+    return False
+
+# ============================================================================
+# PAGE CONFIG
+# ============================================================================
+
+st.set_page_config(page_title="Data Upload", layout="wide")
+st.title("📊 Data Upload")
+
+st.info("**Upload protein-level data, peptide-level data, or both**")
+
+# ============================================================================
+# TABS
+# ============================================================================
+
+tab_protein, tab_peptide = st.tabs(["🧬 Protein Data", "🔬 Peptide Data"])
+
+with tab_protein:
+    protein_file = st.file_uploader(
+        "Upload protein matrix:",
+        type=['csv', 'tsv', 'txt', 'xlsx'],
+        key='protein_upload'
+    )
+    
+    if protein_file:
+        process_dataset(protein_file, 'protein', 'prot')
+
+with tab_peptide:
+    peptide_file = st.file_uploader(
+        "Upload peptide matrix:",
+        type=['csv', 'tsv', 'txt', 'xlsx'],
+        key='peptide_upload'
+    )
+    
+    if peptide_file:
+        process_dataset(peptide_file, 'peptide', 'pep')
+
+# ============================================================================
+# VALIDATION & CONTINUE
+# ============================================================================
+
+st.markdown("---")
+st.markdown("---")
+
+st.header("✅ Ready to Continue")
+
+has_protein = 'df_protein' in st.session_state
+has_peptide = 'df_peptide' in st.session_state
+
+if not has_protein and not has_peptide:
+    st.warning("⚠️ Upload and cache at least one dataset to continue")
+    st.stop()
+
+col1, col2 = st.columns(2)
+
+with col1:
+    if has_protein:
+        st.success(f"✅ **Protein data:** {st.session_state.df_protein.shape[0]:,} proteins")
+    else:
+        st.info("ℹ️ No protein data uploaded")
+
+with col2:
+    if has_peptide:
+        st.success(f"✅ **Peptide data:** {st.session_state.df_peptide.shape[0]:,} peptides")
+    else:
+        st.info("ℹ️ No peptide data uploaded")
+
+if st.button("🎯 Continue to Analysis", type="primary", use_container_width=True):
+    st.session_state.data_type = 'both' if (has_protein and has_peptide) else ('protein' if has_protein else 'peptide')
+    time.sleep(0.5)
+    st.switch_page("pages/2_Visual_EDA.py")
