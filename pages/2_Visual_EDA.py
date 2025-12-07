@@ -1,6 +1,6 @@
 """
 pages/2_Visual_EDA.py
-Exploratory data analysis for protein and/or peptide data - YOUR ORIGINAL PLOTS
+Exploratory data analysis for protein and/or peptide data - FULLY OPTIMIZED
 """
 
 import streamlit as st
@@ -13,13 +13,161 @@ import gc
 st.set_page_config(page_title="Visual EDA", page_icon="📊", layout="wide")
 
 # ============================================================================
-# HELPER FUNCTIONS (MEMORY OPTIMIZATION ONLY)
+# HELPER FUNCTIONS
 # ============================================================================
 
 def clear_plot_memory():
     """Close all matplotlib figures and collect garbage."""
     plt.close('all')
     gc.collect()
+
+# ============================================================================
+# SHARED CACHE FUNCTIONS
+# ============================================================================
+
+@st.cache_data
+def compute_log2(df_dict: dict, cols: list, data_type: str) -> dict:
+    """Cache log2 transformation."""
+    df_temp = pl.from_dict(df_dict)
+    df_log2 = df_temp.with_columns([
+        pl.col(c).clip(lower_bound=1.0).log(2).alias(c) for c in cols
+    ])
+    return df_log2.to_dict(as_series=False)
+
+@st.cache_data
+def compute_valid_counts(df_dict: dict, id_col: str, species_col: str, numeric_cols: list) -> dict:
+    """Cache valid protein/peptide counts per species per sample."""
+    df_temp = pl.from_dict(df_dict)
+    
+    df_counts = df_temp.select([id_col, species_col] + numeric_cols).melt(
+        id_vars=[id_col, species_col],
+        value_vars=numeric_cols,
+        variable_name='sample'
+    ).filter(
+        (pl.col('value') > 1.0) & (pl.col('value').is_finite())
+    ).group_by(['sample', species_col]).agg(
+        pl.len().alias('count')
+    )
+    
+    # Calculate species order
+    species_order = df_counts.group_by(species_col).agg(
+        pl.col('count').sum().alias('total')
+    ).sort('total', descending=True)[species_col].to_list()
+    
+    # Apply ordering
+    df_counts = df_counts.with_columns([
+        pl.col(species_col).cast(pl.Categorical(categories=species_order)).alias(species_col)
+    ]).sort(['sample', species_col]).with_columns([
+        (pl.col('count').cum_sum().over('sample') - pl.col('count') / 2).alias('label_pos')
+    ])
+    
+    return {
+        'counts': df_counts.to_dict(as_series=False),
+        'species_order': species_order
+    }
+
+@st.cache_data
+def compute_valid_table(df_dict: dict, id_col: str, species_col: str, numeric_cols: list) -> dict:
+    """Cache valid protein/peptide table."""
+    df_temp = pl.from_dict(df_dict)
+    
+    # Pivot table
+    df_counts = df_temp.select([id_col, species_col] + numeric_cols).melt(
+        id_vars=[id_col, species_col],
+        value_vars=numeric_cols,
+        variable_name='sample'
+    ).filter(
+        (pl.col('value') > 1.0) & (pl.col('value').is_finite())
+    ).group_by(['sample', species_col]).agg(
+        pl.len().alias('count')
+    )
+    
+    df_table = df_counts.pivot(
+        index=species_col,
+        columns='sample',
+        values='count'
+    ).fill_null(0)
+    
+    # Add totals
+    species_totals = df_temp.select([id_col, species_col] + numeric_cols).melt(
+        id_vars=[id_col, species_col],
+        value_vars=numeric_cols
+    ).filter(
+        (pl.col('value') > 1.0) & (pl.col('value').is_finite())
+    ).group_by([id_col, species_col]).agg(
+        pl.len()
+    ).group_by(species_col).agg(
+        pl.len().alias('Total')
+    )
+    
+    df_table = df_table.join(species_totals, on=species_col).sort('Total', descending=True)
+    
+    return df_table.to_dict(as_series=False)
+
+@st.cache_data
+def compute_cv_data(df_dict: dict, id_col: str, numeric_cols: list, data_type: str) -> dict:
+    """Cache CV calculations."""
+    df_temp = pl.from_dict(df_dict)
+    
+    # Group by condition
+    conditions = {}
+    for col in numeric_cols:
+        condition = col[0]
+        if condition not in conditions:
+            conditions[condition] = []
+        conditions[condition].append(col)
+    
+    cv_data = []
+    for condition, cols in conditions.items():
+        df_cv = df_temp.select([id_col] + cols).with_columns([
+            pl.concat_list(cols).list.mean().alias('mean'),
+            pl.concat_list(cols).list.std().alias('std')
+        ]).with_columns(
+            (pl.col('std') / pl.col('mean') * 100).alias('cv')
+        ).filter(
+            pl.col('cv').is_finite() & (pl.col('cv') > 0)
+        )
+        
+        for row in df_cv.select([id_col, 'cv']).iter_rows(named=True):
+            cv_data.append({
+                'id': row[id_col],
+                'condition': condition,
+                'cv': row['cv']
+            })
+    
+    return {'cv_data': cv_data, 'conditions': conditions}
+
+@st.cache_data
+def compute_missing_data(df_dict: dict, id_col: str, numeric_cols: list, replicates: int) -> dict:
+    """Cache missing value calculations."""
+    df_temp = pl.from_dict(df_dict)
+    
+    # Group by condition
+    conditions = {}
+    for col in numeric_cols:
+        condition = col[0]
+        if condition not in conditions:
+            conditions[condition] = []
+        conditions[condition].append(col)
+    
+    missing_plot_data = []
+    
+    for condition, cols in conditions.items():
+        df_missing = df_temp.select([id_col] + cols).with_columns([
+            pl.sum_horizontal([
+                (pl.col(c) <= 1.0) | (pl.col(c).is_null()) for c in cols
+            ]).alias('n_missing')
+        ])
+        
+        for n_miss in range(len(cols) + 1):
+            count = df_missing.filter(pl.col('n_missing') == n_miss).shape[0]
+            missing_plot_data.append({
+                'condition': condition,
+                'n_missing': f'{n_miss} missing',
+                'count': count
+            })
+    
+    return missing_plot_data
 
 # ============================================================================
 # CHECK DATA AVAILABILITY
@@ -37,7 +185,7 @@ if not has_protein and not has_peptide:
 st.title("📊 Visual Exploratory Data Analysis")
 
 # ============================================================================
-# CREATE TABS BASED ON AVAILABLE DATA
+# CREATE TABS
 # ============================================================================
 
 if has_protein and has_peptide:
@@ -64,20 +212,8 @@ if has_protein and tab_protein:
         
         st.header("🧬 Protein-Level Analysis")
         
-        # ====================================================================
-        # CACHE TRANSFORMS
-        # ====================================================================
-        
-        @st.cache_data
-        def compute_log2_protein(df_dict: dict, cols: list) -> dict:
-            """Cache log2 transformation."""
-            df_temp = pl.from_dict(df_dict)
-            df_log2 = df_temp.with_columns([
-                pl.col(c).clip(lower_bound=1.0).log(2).alias(c) for c in cols
-            ])
-            return df_log2.to_dict(as_series=False)
-        
-        df_log2 = pl.from_dict(compute_log2_protein(df.to_dict(as_series=False), numeric_cols))
+        # Load cached data
+        df_log2 = pl.from_dict(compute_log2(df.to_dict(as_series=False), numeric_cols, 'protein'))
         
         # ====================================================================
         # 1. OVERVIEW
@@ -95,42 +231,23 @@ if has_protein and tab_protein:
         c4.metric("Avg/Species", int(df.shape[0] / n_species))
         
         st.markdown("---")
+        
         # ====================================================================
         # 2. STACKED BAR
         # ====================================================================
         
-        st.subheader("2️⃣ Valid Proteins per Species per Sample")  # or Peptides
+        st.subheader("2️⃣ Valid Proteins per Species per Sample")
         st.info("**Valid = intensity > 1.0** (excludes missing/NaN/zero)")
         
-        df_counts = df.select([id_col, species_col] + numeric_cols).melt(
-            id_vars=[id_col, species_col],
-            value_vars=numeric_cols,
-            variable_name='sample'
-        ).filter(
-            (pl.col('value') > 1.0) & (pl.col('value').is_finite())
-        ).group_by(['sample', species_col]).agg(
-            pl.len().alias('count')
-        )
+        counts_data = compute_valid_counts(df.to_dict(as_series=False), id_col, species_col, numeric_cols)
+        df_counts = pl.from_dict(counts_data['counts'])
         
-        # Calculate total per species for ordering
-        species_order = df_counts.group_by(species_col).agg(
-            pl.col('count').sum().alias('total')
-        ).sort('total', descending=True)[species_col].to_list()
-        
-        # Apply ordering and calculate label positions
-        df_counts = df_counts.sort(['sample', species_col]).with_columns([
-            pl.col(species_col).cast(pl.Categorical(categories=species_order)).alias(species_col)
-        ]).sort(['sample', species_col]).with_columns([
-            (pl.col('count').cum_sum().over('sample') - pl.col('count') / 2).alias('label_pos')
-        ])
-        
-        # Plot
         plot = (ggplot(df_counts.to_pandas(), aes(x='sample', y='count', fill=species_col)) +
          geom_bar(stat='identity') +
          geom_text(aes(y='label_pos', label='count'), 
                    size=8, color='white', fontweight='bold') +
-         labs(title='Valid Protein Count by Species per Sample',  # or Peptide
-              x='Sample', y='Protein Count', fill='Species') +  # or Peptide Count
+         labs(title='Valid Protein Count by Species per Sample',
+              x='Sample', y='Protein Count', fill='Species') +
          theme_minimal() +
          theme(axis_text_x=element_text(rotation=45, hjust=1),
                figure_size=(10, 5)))
@@ -138,27 +255,10 @@ if has_protein and tab_protein:
         fig = ggplot.draw(plot)
         st.pyplot(fig)
         plt.close(fig)
-        del fig, plot, species_order
+        del fig, plot
         
         # Table
-        df_table = df_counts.pivot(
-            index=species_col,
-            columns='sample',
-            values='count'
-        ).fill_null(0)
-        
-        species_totals = df.select([id_col, species_col] + numeric_cols).melt(
-            id_vars=[id_col, species_col],
-            value_vars=numeric_cols
-        ).filter(
-            (pl.col('value') > 1.0) & (pl.col('value').is_finite())
-        ).group_by([id_col, species_col]).agg(
-            pl.len()
-        ).group_by(species_col).agg(
-            pl.len().alias('Total')
-        )
-        
-        df_table = df_table.join(species_totals, on=species_col).sort('Total', descending=True)
+        df_table = pl.from_dict(compute_valid_table(df.to_dict(as_series=False), id_col, species_col, numeric_cols))
         
         st.markdown("**Valid Proteins per Species per Sample:**")
         st.dataframe(df_table.to_pandas(), width='stretch')
@@ -171,7 +271,7 @@ if has_protein and tab_protein:
             key="protein_download_valid_table"
         )
         
-        del df_counts, df_table, species_totals
+        del df_counts, df_table, counts_data
         gc.collect()
         
         st.markdown("---")
@@ -245,32 +345,9 @@ if has_protein and tab_protein:
         st.subheader("4️⃣ Coefficient of Variation (CV) by Condition")
         st.info("**CV = (std / mean) × 100** for each protein across replicates. Lower CV = better reproducibility.")
         
-        conditions = {}
-        for i, col in enumerate(numeric_cols):
-            condition = col[0]
-            if condition not in conditions:
-                conditions[condition] = []
-            conditions[condition].append(col)
-        
-        cv_data = []
-        for condition, cols in conditions.items():
-            df_cv = df.select([id_col] + cols).with_columns([
-                pl.concat_list(cols).list.mean().alias('mean'),
-                pl.concat_list(cols).list.std().alias('std')
-            ]).with_columns(
-                (pl.col('std') / pl.col('mean') * 100).alias('cv')
-            ).filter(
-                pl.col('cv').is_finite() & (pl.col('cv') > 0)
-            )
-            
-            for row in df_cv.select([id_col, 'cv']).iter_rows(named=True):
-                cv_data.append({
-                    'protein_id': row[id_col],
-                    'condition': condition,
-                    'cv': row['cv']
-                })
-        
-        df_cv_long = pl.DataFrame(cv_data)
+        cv_result = compute_cv_data(df.to_dict(as_series=False), id_col, numeric_cols, 'protein')
+        df_cv_long = pl.DataFrame(cv_result['cv_data'])
+        conditions = cv_result['conditions']
         
         high_cv_counts = df_cv_long.filter(pl.col('cv') > 100).group_by('condition').agg(
             pl.len().alias('n_high_cv')
@@ -325,7 +402,7 @@ if has_protein and tab_protein:
             key="protein_download_cv_stats"
         )
         
-        del df_cv_long, df_cv_plot, df_cv_stats, high_cv_counts, cv_data
+        del df_cv_long, df_cv_plot, df_cv_stats, high_cv_counts
         gc.collect()
         
         st.markdown("---")
@@ -431,23 +508,7 @@ if has_protein and tab_protein:
         st.subheader("6️⃣ Missing Values per Protein by Condition")
         st.info("**Missing = intensity ≤ 1.0** (includes NaN, zero, and 1.0). Shows how many replicates are missing per protein.")
         
-        missing_plot_data = []
-        
-        for condition, cols in conditions.items():
-            df_missing = df.select([id_col] + cols).with_columns([
-                pl.sum_horizontal([
-                    (pl.col(c) <= 1.0) | (pl.col(c).is_null()) for c in cols
-                ]).alias('n_missing')
-            ])
-            
-            for n_miss in range(len(cols) + 1):
-                count = df_missing.filter(pl.col('n_missing') == n_miss).shape[0]
-                missing_plot_data.append({
-                    'condition': condition,
-                    'n_missing': f'{n_miss} missing',
-                    'count': count
-                })
-        
+        missing_plot_data = compute_missing_data(df.to_dict(as_series=False), id_col, numeric_cols, replicates)
         df_missing_plot = pl.DataFrame(missing_plot_data)
         
         plot = (ggplot(df_missing_plot.to_pandas(), aes(x='condition', y='count', fill='n_missing')) +
@@ -515,20 +576,8 @@ if has_peptide and tab_peptide:
         
         st.header("🔬 Peptide-Level Analysis")
         
-        # ====================================================================
-        # CACHE TRANSFORMS
-        # ====================================================================
-        
-        @st.cache_data
-        def compute_log2_peptide(df_dict: dict, cols: list) -> dict:
-            """Cache log2 transformation."""
-            df_temp = pl.from_dict(df_dict)
-            df_log2 = df_temp.with_columns([
-                pl.col(c).clip(lower_bound=1.0).log(2).alias(c) for c in cols
-            ])
-            return df_log2.to_dict(as_series=False)
-        
-        df_log2 = pl.from_dict(compute_log2_peptide(df.to_dict(as_series=False), numeric_cols))
+        # Load cached data
+        df_log2 = pl.from_dict(compute_log2(df.to_dict(as_series=False), numeric_cols, 'peptide'))
         
         # ====================================================================
         # 1. OVERVIEW
@@ -551,38 +600,18 @@ if has_peptide and tab_peptide:
         # 2. STACKED BAR
         # ====================================================================
         
-        st.subheader("2️⃣ Valid Proteins per Species per Sample")  # or Peptides
+        st.subheader("2️⃣ Valid Peptides per Species per Sample")
         st.info("**Valid = intensity > 1.0** (excludes missing/NaN/zero)")
         
-        df_counts = df.select([id_col, species_col] + numeric_cols).melt(
-            id_vars=[id_col, species_col],
-            value_vars=numeric_cols,
-            variable_name='sample'
-        ).filter(
-            (pl.col('value') > 1.0) & (pl.col('value').is_finite())
-        ).group_by(['sample', species_col]).agg(
-            pl.len().alias('count')
-        )
+        counts_data = compute_valid_counts(df.to_dict(as_series=False), id_col, species_col, numeric_cols)
+        df_counts = pl.from_dict(counts_data['counts'])
         
-        # Calculate total per species for ordering
-        species_order = df_counts.group_by(species_col).agg(
-            pl.col('count').sum().alias('total')
-        ).sort('total', descending=True)[species_col].to_list()
-        
-        # Apply ordering and calculate label positions
-        df_counts = df_counts.sort(['sample', species_col]).with_columns([
-            pl.col(species_col).cast(pl.Categorical(categories=species_order)).alias(species_col)
-        ]).sort(['sample', species_col]).with_columns([
-            (pl.col('count').cum_sum().over('sample') - pl.col('count') / 2).alias('label_pos')
-        ])
-        
-        # Plot
         plot = (ggplot(df_counts.to_pandas(), aes(x='sample', y='count', fill=species_col)) +
          geom_bar(stat='identity') +
          geom_text(aes(y='label_pos', label='count'), 
                    size=8, color='white', fontweight='bold') +
-         labs(title='Valid Protein Count by Species per Sample',  # or Peptide
-              x='Sample', y='Protein Count', fill='Species') +  # or Peptide Count
+         labs(title='Valid Peptide Count by Species per Sample',
+              x='Sample', y='Peptide Count', fill='Species') +
          theme_minimal() +
          theme(axis_text_x=element_text(rotation=45, hjust=1),
                figure_size=(10, 5)))
@@ -590,27 +619,10 @@ if has_peptide and tab_peptide:
         fig = ggplot.draw(plot)
         st.pyplot(fig)
         plt.close(fig)
-        del fig, plot, species_order
+        del fig, plot
         
         # Table
-        df_table = df_counts.pivot(
-            index=species_col,
-            columns='sample',
-            values='count'
-        ).fill_null(0)
-        
-        species_totals = df.select([id_col, species_col] + numeric_cols).melt(
-            id_vars=[id_col, species_col],
-            value_vars=numeric_cols
-        ).filter(
-            (pl.col('value') > 1.0) & (pl.col('value').is_finite())
-        ).group_by([id_col, species_col]).agg(
-            pl.len()
-        ).group_by(species_col).agg(
-            pl.len().alias('Total')
-        )
-        
-        df_table = df_table.join(species_totals, on=species_col).sort('Total', descending=True)
+        df_table = pl.from_dict(compute_valid_table(df.to_dict(as_series=False), id_col, species_col, numeric_cols))
         
         st.markdown("**Valid Peptides per Species per Sample:**")
         st.dataframe(df_table.to_pandas(), width='stretch')
@@ -623,7 +635,7 @@ if has_peptide and tab_peptide:
             key="peptide_download_valid_table"
         )
         
-        del df_counts, df_table, species_totals
+        del df_counts, df_table, counts_data
         gc.collect()
         
         st.markdown("---")
@@ -697,32 +709,9 @@ if has_peptide and tab_peptide:
         st.subheader("4️⃣ Coefficient of Variation (CV) by Condition")
         st.info("**CV = (std / mean) × 100** for each peptide across replicates. Lower CV = better reproducibility.")
         
-        conditions = {}
-        for i, col in enumerate(numeric_cols):
-            condition = col[0]
-            if condition not in conditions:
-                conditions[condition] = []
-            conditions[condition].append(col)
-        
-        cv_data = []
-        for condition, cols in conditions.items():
-            df_cv = df.select([id_col] + cols).with_columns([
-                pl.concat_list(cols).list.mean().alias('mean'),
-                pl.concat_list(cols).list.std().alias('std')
-            ]).with_columns(
-                (pl.col('std') / pl.col('mean') * 100).alias('cv')
-            ).filter(
-                pl.col('cv').is_finite() & (pl.col('cv') > 0)
-            )
-            
-            for row in df_cv.select([id_col, 'cv']).iter_rows(named=True):
-                cv_data.append({
-                    'peptide_id': row[id_col],
-                    'condition': condition,
-                    'cv': row['cv']
-                })
-        
-        df_cv_long = pl.DataFrame(cv_data)
+        cv_result = compute_cv_data(df.to_dict(as_series=False), id_col, numeric_cols, 'peptide')
+        df_cv_long = pl.DataFrame(cv_result['cv_data'])
+        conditions = cv_result['conditions']
         
         high_cv_counts = df_cv_long.filter(pl.col('cv') > 100).group_by('condition').agg(
             pl.len().alias('n_high_cv')
@@ -777,7 +766,7 @@ if has_peptide and tab_peptide:
             key="peptide_download_cv_stats"
         )
         
-        del df_cv_long, df_cv_plot, df_cv_stats, high_cv_counts, cv_data
+        del df_cv_long, df_cv_plot, df_cv_stats, high_cv_counts
         gc.collect()
         
         st.markdown("---")
@@ -883,23 +872,7 @@ if has_peptide and tab_peptide:
         st.subheader("6️⃣ Missing Values per Peptide by Condition")
         st.info("**Missing = intensity ≤ 1.0** (includes NaN, zero, and 1.0). Shows how many replicates are missing per peptide.")
         
-        missing_plot_data = []
-        
-        for condition, cols in conditions.items():
-            df_missing = df.select([id_col] + cols).with_columns([
-                pl.sum_horizontal([
-                    (pl.col(c) <= 1.0) | (pl.col(c).is_null()) for c in cols
-                ]).alias('n_missing')
-            ])
-            
-            for n_miss in range(len(cols) + 1):
-                count = df_missing.filter(pl.col('n_missing') == n_miss).shape[0]
-                missing_plot_data.append({
-                    'condition': condition,
-                    'n_missing': f'{n_miss} missing',
-                    'count': count
-                })
-        
+        missing_plot_data = compute_missing_data(df.to_dict(as_series=False), id_col, numeric_cols, replicates)
         df_missing_plot = pl.DataFrame(missing_plot_data)
         
         plot = (ggplot(df_missing_plot.to_pandas(), aes(x='condition', y='count', fill='n_missing')) +
