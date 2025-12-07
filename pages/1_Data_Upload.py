@@ -122,26 +122,74 @@ st.success(f"✅ Selected {len(selected)} columns for analysis")
 # 4. DATA QUALITY INFO (before cleaning)
 # ============================================================================
 
+# ============================================================================
+# 4. DATA QUALITY INFO (before cleaning)
+# ============================================================================
+
 st.subheader("4️⃣ Data Quality Check")
 
-# Count nulls and zeros efficiently
-quality_check = df.select([
-    pl.col(c).is_null().sum().alias(f"{c}_null") for c in selected
-] + [
-    (pl.col(c) == 0.0).sum().alias(f"{c}_zero") for c in selected
+# Count nulls, zeros, string "NaN", and values == 1.0 in selected columns
+missing_stats = []
+
+for c in selected:
+    n_null = df[c].null_count()
+    
+    # Count string "NaN" (case-insensitive)
+    n_nan_string = df.filter(
+        pl.col(c).cast(pl.Utf8).str.to_uppercase() == "NAN"
+    ).shape[0]
+    
+    # Count zeros
+    n_zero = df.filter(pl.col(c) == 0.0).shape[0]
+    
+    # Count values exactly == 1.0
+    n_one = df.filter(pl.col(c) == 1.0).shape[0]
+    
+    missing_stats.append({
+        'column': c,
+        'null': n_null,
+        'nan_string': n_nan_string,
+        'zero': n_zero,
+        'one': n_one
+    })
+
+# Totals
+n_null = sum(s['null'] for s in missing_stats)
+n_nan_string = sum(s['nan_string'] for s in missing_stats)
+n_zero = sum(s['zero'] for s in missing_stats)
+n_one = sum(s['one'] for s in missing_stats)
+total_missing = n_null + n_nan_string + n_zero + n_one
+total_values = df.shape[0] * len(selected)
+missing_pct = total_missing / total_values * 100 if total_values > 0 else 0
+
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("Null", f"{n_null:,}")
+c2.metric("'NaN' string", f"{n_nan_string:,}")
+c3.metric("Zero", f"{n_zero:,}")
+c4.metric("Value = 1.0", f"{n_one:,}")
+c5.metric("Missing %", f"{missing_pct:.1f}%")
+
+st.info("**Note:** Nulls, 'NaN' strings, zeros, and values == 1.0 are all treated as missing. All will be normalized to 1.0 for log2 transformation.")
+
+# ============================================================================
+# NORMALIZE MISSING VALUES TO 1.0
+# ============================================================================
+
+# Replace all missing types with exactly 1.0
+df = df.with_columns([
+    pl.when(pl.col(c).cast(pl.Utf8).str.to_uppercase() == "NAN")
+    .then(1.0)
+    .when(pl.col(c).is_null())
+    .then(1.0)
+    .when(pl.col(c) == 0.0)
+    .then(1.0)
+    .otherwise(pl.col(c))
+    .alias(c)
+    for c in selected
 ])
 
-n_null = sum(quality_check[f"{c}_null"][0] for c in selected)
-n_zero = sum(quality_check[f"{c}_zero"][0] for c in selected)
-total_values = df.shape[0] * len(selected)
-missing_pct = (n_null + n_zero) / total_values * 100 if total_values > 0 else 0
+st.success("✅ All missing values normalized to 1.0")
 
-c1, c2, c3 = st.columns(3)
-c1.metric("Null values", f"{n_null:,}")
-c2.metric("Zero values", f"{n_zero:,}")
-c3.metric("Missing %", f"{missing_pct:.1f}%")
-
-st.info("**Note:** Nulls and zeros kept for QC. Will be replaced with 1.0 during log2 transformation.")
 # ============================================================================
 # 5. RENAME COLUMNS
 # ============================================================================
