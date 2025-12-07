@@ -313,15 +313,27 @@ for condition, cols in conditions.items():
 df_cv_plot = pl.DataFrame(cv_plot_data)
 
 # Grouped bar plot
-plot = (ggplot(df_cv_plot.to_pandas(), aes(x='condition', y='count', fill='threshold')) +
+# Grouped bar plot with custom order (Total -> CV<20% -> CV<10%)
+df_cv_plot = df_cv_plot.with_columns(
+    pl.col('threshold').cast(pl.Categorical(ordering='physical'))
+)
+
+# Reorder to: Total, CV < 20%, CV < 10%
+df_cv_plot_ordered = df_cv_plot.sort(['condition', 'threshold'], 
+                                     descending=[False, False])
+
+plot = (ggplot(df_cv_plot_ordered.to_pandas(), aes(x='condition', y='count', fill='threshold')) +
  geom_bar(stat='identity', position='dodge') +
  geom_text(aes(label='count'), position=position_dodge(width=0.9),
            va='bottom', size=9, fontweight='bold') +
- scale_fill_manual(values={
-     'Total': '#95a5a6',        # Gray
-     'CV < 20%': '#f39c12',     # Orange
-     'CV < 10%': '#2ecc71'      # Green
- }) +
+ scale_fill_manual(
+     values={
+         'Total': '#95a5a6',        # Gray
+         'CV < 20%': '#f39c12',     # Orange
+         'CV < 10%': '#2ecc71'      # Green
+     },
+     breaks=['Total', 'CV < 20%', 'CV < 10%']  # Explicit order
+ ) +
  labs(title='Protein Count by CV Quality Threshold',
       x='Condition', y='Protein Count', fill='Threshold') +
  theme_minimal() +
@@ -329,7 +341,6 @@ plot = (ggplot(df_cv_plot.to_pandas(), aes(x='condition', y='count', fill='thres
        figure_size=(10, 6)))
 
 st.pyplot(ggplot.draw(plot))
-
 # Summary table
 st.markdown("**Protein Counts by CV Threshold:**")
 
