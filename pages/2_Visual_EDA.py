@@ -126,42 +126,6 @@ st.download_button(
 
 st.markdown("---")
 
-# ============================================================================
-# TABLE - DETAILED COUNTS
-# ============================================================================
-
-# Pivot table: species × samples
-df_table = df_counts.pivot(
-    index=species_col,
-    columns='sample',
-    values='count'
-).fill_null(0)
-
-# Add total column (unique proteins per species across all samples)
-species_totals = df.select([id_col, species_col] + numeric_cols).melt(
-    id_vars=[id_col, species_col],
-    value_vars=numeric_cols
-).filter(
-    pl.col('value') > 1.0
-).group_by([id_col, species_col]).agg(
-    pl.count()
-).group_by(species_col).agg(
-    pl.count().alias('Total')
-)
-
-df_table = df_table.join(species_totals, on=species_col).sort('Total', descending=True)
-
-st.markdown("**Unique Proteins per Species per Sample:**")
-st.dataframe(df_table.to_pandas(), use_container_width=True)
-
-st.download_button(
-    "📥 Download Table (CSV)",
-    df_table.write_csv(),
-    "unique_proteins_per_species.csv",
-    "text/csv"
-)
-
-st.markdown("---")
 
 # ============================================================================
 # 3. VIOLIN/BOX PLOT - LOG2 INTENSITY DISTRIBUTION
