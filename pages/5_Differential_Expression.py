@@ -450,30 +450,29 @@ st.markdown("---")
 # 8. BENCHMARK PLOTS (For Spike-in Validation)
 # ============================================================================
 
-st.header("8️⃣ Benchmark Plots (Spike-in Validation)")
-st.info("**Optional:** For datasets with known mixing ratios, validate quantification accuracy")
+# Replace the fraction input section with this static version:
 
-if species_col:
+# ============================================================================
+# Define spike-in fractions and calculate expected log2 FC
+# ============================================================================
+
+    st.subheader("Define Spike-in Fractions")
+    st.info("**Enter mixing ratios** for each species in both conditions. Log2 FC will be calculated automatically.")
     
-    if st.checkbox("🔬 Run Benchmark Analysis", value=False):
-        
-        # ============================================================================
-        # Define spike-in fractions and calculate expected log2 FC
-        # ============================================================================
-        
-        st.subheader("Define Spike-in Fractions")
-        st.info("**Enter mixing ratios** for each species in both conditions. Log2 FC will be calculated automatically.")
-        
-        species_list = df_trans[species_col].unique().to_list()
-        
-        # Create input columns for fractions
+    species_list = df_trans[species_col].unique().to_list()
+    
+    # Initialize session state for fractions if not exists
+    if 'fractions_defined' not in st.session_state:
+        st.session_state.fractions_defined = False
+    
+    # Create input form
+    with st.form("spike_in_fractions"):
         col_header1, col_header2 = st.columns(2)
         col_header1.markdown(f"**Condition: {control}**")
         col_header2.markdown(f"**Condition: {treatment}**")
         
         fractions_control = {}
         fractions_treatment = {}
-        expected_fc = {}
         
         for species in species_list:
             col1, col2 = st.columns(2)
@@ -483,9 +482,9 @@ if species_col:
                     f"{species} fraction (%):",
                     min_value=0.0,
                     max_value=100.0,
-                    value=33.33 if len(species_list) == 3 else 50.0,
+                    value=st.session_state.get(f'frac_ctrl_{species}', 33.33 if len(species_list) == 3 else 50.0),
                     step=1.0,
-                    key=f"frac_ctrl_{species}",
+                    key=f"input_ctrl_{species}",
                     help=f"Percentage of {species} in {control}"
                 )
             
@@ -494,35 +493,52 @@ if species_col:
                     f"{species} fraction (%):",
                     min_value=0.0,
                     max_value=100.0,
-                    value=33.33 if len(species_list) == 3 else 50.0,
+                    value=st.session_state.get(f'frac_trt_{species}', 33.33 if len(species_list) == 3 else 50.0),
                     step=1.0,
-                    key=f"frac_trt_{species}",
+                    key=f"input_trt_{species}",
                     help=f"Percentage of {species} in {treatment}"
                 )
+        
+        submit_fractions = st.form_submit_button("✅ Lock Fractions", use_container_width=True)
+        
+        if submit_fractions:
+            # Save to session state
+            for species in species_list:
+                st.session_state[f'frac_ctrl_{species}'] = fractions_control[species]
+                st.session_state[f'frac_trt_{species}'] = fractions_treatment[species]
+            st.session_state.fractions_defined = True
+            st.rerun()
+    
+    # If fractions are defined, show them and proceed
+    if st.session_state.fractions_defined:
+        
+        # Load fractions from session state
+        fractions_control = {s: st.session_state[f'frac_ctrl_{s}'] for s in species_list}
+        fractions_treatment = {s: st.session_state[f'frac_trt_{s}'] for s in species_list}
         
         # Calculate log2 fold changes
         st.markdown("---")
         st.subheader("Calculated Expected Log2 Fold Changes")
         
+        expected_fc = {}
         expected_fc_data = []
         
         for species in species_list:
-            frac_ctrl = fractions_control[species] / 100  # Convert to proportion
+            frac_ctrl = fractions_control[species] / 100
             frac_trt = fractions_treatment[species] / 100
             
-            # Avoid log2(0)
             if frac_ctrl > 0 and frac_trt > 0:
                 log2_fc = np.log2(frac_trt / frac_ctrl)
                 expected_fc[species] = log2_fc
             elif frac_trt > 0:
+                expected_fc[species] = 5.0
                 log2_fc = np.inf
-                expected_fc[species] = 5.0  # Cap at high value
             elif frac_ctrl > 0:
+                expected_fc[species] = -5.0
                 log2_fc = -np.inf
-                expected_fc[species] = -5.0  # Cap at low value
             else:
-                log2_fc = 0.0
                 expected_fc[species] = 0.0
+                log2_fc = 0.0
             
             expected_fc_data.append({
                 'Species': species,
@@ -544,20 +560,17 @@ if species_col:
         if abs(total_trt - 100) > 0.1:
             st.warning(f"⚠️ {treatment} fractions sum to {total_trt:.1f}% (should be 100%)")
         
-        # Join species info with results
-        df_bench = df_trans.select([id_col, species_col]).join(
-            results_df,
-            left_on=id_col,
-            right_on='protein_id',
-            how='inner'
-        ).with_columns([
-            pl.col(species_col).replace(expected_fc, default=None).alias('expected_fc')
-        ]).filter(
-            pl.col('effect_size').is_finite() &
-            pl.col('expected_fc').is_not_null()
-        )
-        
-        st.markdown("---")
+        # Button to reset fractions
+        if st.button("🔄 Reset Fractions"):
+            st.session_state.fractions_defined = False
+            for species in species_list:
+                if f'frac_ctrl_{species}' in st.session_state:
+                    del st.session_state[f'frac_ctrl_{species}']
+                if f'frac_trt_{species}' in st.session_state:
+                    del st.session_state[f'frac_trt_{species}']
+            st.rerun()
+       
+
         
         # ============================================================================
         # 8.1 SCATTER PLOTS (Observed vs Expected)
