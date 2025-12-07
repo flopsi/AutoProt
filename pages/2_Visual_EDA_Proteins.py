@@ -1,7 +1,8 @@
 """
-pages/2_Visual_EDA_Proteins.py - PRODUCTION VERSION
+pages/2_Visual_EDA_Proteins.py - FIXED VERSION
 Exploratory Data Analysis with advanced visualization and analysis functions
 Uses plotnine (ggplot2-style) and Polars for high-performance data processing
+FIX: Pandas → Polars conversion for to_dict()
 """
 
 import streamlit as st
@@ -44,6 +45,10 @@ numeric_cols = st.session_state.numeric_cols
 id_col = st.session_state.id_col
 species_col = st.session_state.species_col
 data_type = 'Protein'
+
+# FIX: Convert Pandas DataFrame to dict for Polars
+# Use pl.from_pandas() then .to_dict(as_series=False)
+df_raw_dict = pl.from_pandas(df_raw).to_dict(as_series=False)
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -286,9 +291,9 @@ st.subheader("2️⃣ Valid Proteins per Species per Sample")
 st.info("**Valid = intensity > 1.0** (excludes missing/NaN/zero)")
 
 df_counts = pl.from_dict(compute_valid_counts(
-    df_raw.to_dict(as_series=False), 
-    id_col, 
-    species_col, 
+    df_raw_dict,
+    id_col,
+    species_col,
     numeric_cols
 ))
 
@@ -307,9 +312,9 @@ st.pyplot(fig)
 clear_plot_memory()
 
 df_table = pl.from_dict(compute_valid_table(
-    df_raw.to_dict(as_series=False), 
-    id_col, 
-    species_col, 
+    df_raw_dict,
+    id_col,
+    species_col,
     numeric_cols
 ))
 
@@ -333,9 +338,7 @@ st.markdown("---")
 st.subheader("3️⃣ Log2 Intensity Distribution by Sample")
 
 # Compute log2 transformed data
-df_raw_dict = df_raw.to_dict(as_series=False)
 df_log2_dict = compute_log2(df_raw_dict, numeric_cols)
-df_log2 = pd.DataFrame(df_log2_dict)
 
 intensity_data = compute_intensity_stats(df_log2_dict, id_col, numeric_cols)
 df_long = pl.from_dict(intensity_data['long_data'])
