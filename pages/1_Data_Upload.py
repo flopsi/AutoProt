@@ -1,12 +1,13 @@
 """
 pages/1_Data_Upload.py
-Upload protein and/or peptide data with tabs
+Upload protein and/or peptide data with tabs - MEMORY OPTIMIZED
 """
 
 import streamlit as st
 import polars as pl
 import polars.selectors as cs
 import time
+import gc
 
 # ============================================================================
 # HELPERS
@@ -63,6 +64,13 @@ def infer_species(protein_name: str) -> str:
         return protein_name.split('_')[-1].upper()
     
     return 'UNKNOWN'
+
+def clear_temp_session_data():
+    """Remove temporary data from session state to free memory."""
+    keys_to_remove = [k for k in st.session_state.keys() if k.startswith(('temp_', 'plot_', 'preview_'))]
+    for key in keys_to_remove:
+        del st.session_state[key]
+    gc.collect()
 
 def process_dataset(uploaded_file, data_type: str, key_prefix: str):
     """Process uploaded dataset (protein or peptide) - returns True if successful."""
@@ -127,6 +135,10 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
     
     selected = edited[edited['Select']]['Full Name'].tolist()
     
+    # Free memory
+    del col_data, df_cols
+    gc.collect()
+    
     if len(selected) < 4:
         st.warning(f"⚠️ Need ≥4 columns. Selected: {len(selected)}")
         return False
@@ -189,6 +201,10 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
         .alias(c)
         for c in selected
     ])
+    
+    # Free memory
+    del missing_stats
+    gc.collect()
     
     st.success("✅ All missing values normalized to 1.0")
     st.markdown("---")
@@ -327,6 +343,7 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
             pl.len().alias('count')
         ).sort('count', descending=True)
         st.dataframe(species_counts.to_pandas(), hide_index=True, width='stretch')
+        del species_counts
     
     st.markdown("---")
     
@@ -347,6 +364,7 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
     """)
     
     if st.button(f"✅ Cache {data_type.title()} Data", type="primary", width='stretch', key=f"{key_prefix}_cache"):
+        # Store only essential data
         st.session_state[f'df_{data_type}'] = df
         st.session_state[f'{data_type}_cols'] = selected
         st.session_state[f'{data_type}_id_col'] = id_col
@@ -355,6 +373,11 @@ def process_dataset(uploaded_file, data_type: str, key_prefix: str):
         
         if sequence_col:
             st.session_state[f'{data_type}_sequence_col'] = sequence_col
+        
+        # FREE MEMORY
+        del edited
+        clear_temp_session_data()
+        gc.collect()
         
         st.success(f"🎉 {data_type.title()} data cached!")
         return True
@@ -369,6 +392,9 @@ st.set_page_config(page_title="Data Upload", layout="wide")
 st.title("📊 Data Upload")
 
 st.info("**Upload protein-level data, peptide-level data, or both**")
+
+# Clear any leftover temp data
+clear_temp_session_data()
 
 # ============================================================================
 # TABS
