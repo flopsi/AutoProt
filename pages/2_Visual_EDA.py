@@ -303,38 +303,46 @@ for condition, cols in conditions.items():
     
     # Count by threshold
     total = df_cv_cond.shape[0]
-    cv_under_20 = df_cv_cond.filter(pl.col('cv') < 20).shape[0]
     cv_under_10 = df_cv_cond.filter(pl.col('cv') < 10).shape[0]
+    cv_10_to_20 = df_cv_cond.filter((pl.col('cv') >= 10) & (pl.col('cv') < 20)).shape[0]
+    cv_over_20 = df_cv_cond.filter(pl.col('cv') >= 20).shape[0]
     
     cv_threshold_data.append({
         'condition': condition,
-        'CV < 10%': cv_under_10,
-        'CV < 20%': cv_under_20 - cv_under_10,  # Only between 10-20%
-        'CV ≥ 20%': total - cv_under_20
+        'category': 'CV ≥ 20%',
+        'count': cv_over_20,
+        'order': 1
+    })
+    cv_threshold_data.append({
+        'condition': condition,
+        'category': 'CV 10-20%',
+        'count': cv_10_to_20,
+        'order': 2
+    })
+    cv_threshold_data.append({
+        'condition': condition,
+        'category': 'CV < 10%',
+        'count': cv_under_10,
+        'order': 3
     })
 
-df_cv_thresh = pl.DataFrame(cv_threshold_data)
-
-# Melt for stacked bar
-df_cv_thresh_long = df_cv_thresh.melt(
-    id_vars=['condition'],
-    value_vars=['CV < 10%', 'CV < 20%', 'CV ≥ 20%'],
-    variable_name='category',
-    value_name='count'
-).sort(['condition', 'category'])
+df_cv_thresh_long = pl.DataFrame(cv_threshold_data).sort(['condition', 'order'])
 
 # Calculate label positions
 df_cv_thresh_long = df_cv_thresh_long.with_columns([
     (pl.col('count').cum_sum().over('condition') - pl.col('count') / 2).alias('label_pos')
 ])
 
-# Stacked bar plot
+# Stacked bar plot with correct order (bottom to top: red, orange, green)
 plot = (ggplot(df_cv_thresh_long.to_pandas(), aes(x='condition', y='count', fill='category')) +
  geom_bar(stat='identity') +
  geom_text(aes(y='label_pos', label='count'), 
            size=9, color='white', fontweight='bold') +
- scale_fill_manual(values=['#2ecc71', '#f39c12', '#e74c3c'],  # Green, orange, red
-                   breaks=['CV < 10%', 'CV < 20%', 'CV ≥ 20%']) +
+ scale_fill_manual(values={
+     'CV ≥ 20%': '#e74c3c',      # Red (bottom)
+     'CV 10-20%': '#f39c12',     # Orange (middle)
+     'CV < 10%': '#2ecc71'       # Green (top)
+ }) +
  labs(title='Protein Count by CV Quality Threshold',
       x='Condition', y='Protein Count', fill='CV Category') +
  theme_minimal() +
@@ -346,18 +354,26 @@ st.pyplot(ggplot.draw(plot))
 # Summary table
 st.markdown("**Protein Counts by CV Threshold:**")
 
-# Add total and percentage columns
-df_cv_summary = df_cv_thresh.with_columns([
-    (pl.col('CV < 10%') + pl.col('CV < 20%') + pl.col('CV ≥ 20%')).alias('Total'),
-    (pl.col('CV < 10%') / (pl.col('CV < 10%') + pl.col('CV < 20%') + pl.col('CV ≥ 20%')) * 100).alias('% < 10%'),
-    ((pl.col('CV < 10%') + pl.col('CV < 20%')) / (pl.col('CV < 10%') + pl.col('CV < 20%') + pl.col('CV ≥ 20%')) * 100).alias('% < 20%')
+# Pivot back to wide format for summary
+df_summary = pl.DataFrame([
+    {
+        'Condition': cond,
+        'CV < 10%': df_cv_thresh_long.filter((pl.col('condition') == cond) & (pl.col('category') == 'CV < 10%'))['count'][0],
+        'CV 10-20%': df_cv_thresh_long.filter((pl.col('condition') == cond) & (pl.col('category') == 'CV 10-20%'))['count'][0],
+        'CV ≥ 20%': df_cv_thresh_long.filter((pl.col('condition') == cond) & (pl.col('category') == 'CV ≥ 20%'))['count'][0]
+    }
+    for cond in sorted(conditions.keys())
+]).with_columns([
+    (pl.col('CV < 10%') + pl.col('CV 10-20%') + pl.col('CV ≥ 20%')).alias('Total'),
+    (pl.col('CV < 10%') / (pl.col('CV < 10%') + pl.col('CV 10-20%') + pl.col('CV ≥ 20%')) * 100).alias('% < 10%'),
+    ((pl.col('CV < 10%') + pl.col('CV 10-20%')) / (pl.col('CV < 10%') + pl.col('CV 10-20%') + pl.col('CV ≥ 20%')) * 100).alias('% < 20%')
 ])
 
-st.dataframe(df_cv_summary.to_pandas(), use_container_width=True)
+st.dataframe(df_summary.to_pandas(), use_container_width=True)
 
 st.download_button(
     "📥 Download CV Threshold Summary (CSV)",
-    df_cv_summary.write_csv(),
+    df_summary.write_csv(),
     "cv_threshold_summary.csv",
     "text/csv"
 )
