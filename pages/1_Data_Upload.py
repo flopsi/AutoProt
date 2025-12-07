@@ -6,12 +6,11 @@ Keep NaN/0 as-is for quality checks, show last 20 chars in selection table
 import streamlit as st
 import polars as pl
 import time
-from pathlib import Path
-
 
 # ============================================================================
 # HELPERS
 # ============================================================================
+
 def read_file(file) -> pl.DataFrame:
     """Read uploaded file into Polars DataFrame with robust error handling."""
     name = file.name.lower()
@@ -33,16 +32,11 @@ def read_file(file) -> pl.DataFrame:
                 infer_schema_length=10000
             )
         elif name.endswith('.xlsx'):
-            # Excel files handle #NUM! automatically as NaN
             return pl.read_excel(file)
         else:
             raise ValueError(f"Unsupported format: {name}")
     except Exception as e:
         raise ValueError(f"Error reading {name}: {str(e)}")
-
-def generate_column_names(n: int, replicates: int = 3) -> list:
-    """Generate A1, A2, A3, B1, B2, B3, ..."""
-    return [f"{chr(65 + i//replicates)}{i%replicates + 1}" for i in range(n)]
 
 def generate_column_names(n: int, replicates: int = 3) -> list:
     """Generate A1, A2, A3, B1, B2, B3, ..."""
@@ -59,7 +53,6 @@ def infer_species(protein_id: str) -> str:
 # ============================================================================
 
 st.set_page_config(page_title="Data Upload", layout="wide")
-
 st.title("📊 Data Upload & Configuration")
 
 # ============================================================================
@@ -70,24 +63,30 @@ st.subheader("1️⃣ Upload File")
 
 uploaded_file = st.file_uploader("Upload CSV/TSV/Excel:", type=['csv', 'tsv', 'txt', 'xlsx'])
 
-if uploaded_file:
-    try:
-        df = read_file(uploaded_file)
-        st.success(f"✅ Loaded: {df.shape[0]:,} rows × {df.shape[1]:,} columns")
-        st.session_state.df_raw = df
-    except ValueError as e:
-        st.error(f"❌ {e}")
+if not uploaded_file:
+    st.info("👆 Upload a file to begin")
+    st.stop()
+
+# Load file
+try:
+    df = read_file(uploaded_file)
+    st.success(f"✅ Loaded: {df.shape[0]:,} rows × {df.shape[1]:,} columns")
+except ValueError as e:
+    st.error(f"❌ {e}")
+    st.stop()
+
+st.markdown("---")
 
 # ============================================================================
-# 3. SELECT NUMERIC COLUMNS (with last 20 chars + checkbox table)
+# 2. SELECT NUMERIC COLUMNS
 # ============================================================================
 
-st.subheader("3️⃣ Select Quantitative Columns")
-df = uploaded_file
+st.subheader("2️⃣ Select Quantitative Columns")
+
 # Auto-detect numeric columns
 numeric_cols = df.select(pl.col(pl.NUMERIC_DTYPES)).columns
 
-# Create selection table with last 20 chars + sample value
+# Create selection table
 col_data = []
 for col in df.columns:
     is_numeric = col in numeric_cols
@@ -131,26 +130,27 @@ if len(selected) < 4:
 
 st.success(f"✅ Selected {len(selected)} columns for analysis")
 
-# ============================================================================
-# 4. DATA QUALITY INFO (before cleaning)
-# ============================================================================
+st.markdown("---")
 
 # ============================================================================
-# 4. DATA QUALITY INFO (before cleaning)
+# 3. DATA QUALITY INFO
 # ============================================================================
 
-st.subheader("4️⃣ Data Quality Check")
+st.subheader("3️⃣ Data Quality Check")
 
-# Count nulls, zeros, string "NaN", and values == 1.0 in selected columns
+# Count nulls, zeros, and string "NaN" in selected columns
 missing_stats = []
 
 for c in selected:
     n_null = df[c].null_count()
     
-    # Count string "NaN" (case-insensitive)
-    n_nan_string = df.filter(
-        pl.col(c).cast(pl.Utf8).str.to_uppercase() == "NAN"
-    ).shape[0]
+    # Count string "NaN" (case-insensitive) - only if column is castable to string
+    try:
+        n_nan_string = df.filter(
+            pl.col(c).cast(pl.Utf8).str.to_uppercase() == "NAN"
+        ).shape[0]
+    except:
+        n_nan_string = 0
     
     # Count zeros
     n_zero = df.filter(pl.col(c) == 0.0).shape[0]
@@ -184,15 +184,9 @@ c5.metric("Missing %", f"{missing_pct:.1f}%")
 
 st.info("**Note:** Nulls, 'NaN' strings, zeros, and values == 1.0 are all treated as missing. All will be normalized to 1.0 for log2 transformation.")
 
-# ============================================================================
-# NORMALIZE MISSING VALUES TO 1.0
-# ============================================================================
-
 # Replace all missing types with exactly 1.0
 df = df.with_columns([
-    pl.when(pl.col(c).cast(pl.Utf8).str.to_uppercase() == "NAN")
-    .then(1.0)
-    .when(pl.col(c).is_null())
+    pl.when(pl.col(c).is_null())
     .then(1.0)
     .when(pl.col(c) == 0.0)
     .then(1.0)
@@ -203,11 +197,13 @@ df = df.with_columns([
 
 st.success("✅ All missing values normalized to 1.0")
 
+st.markdown("---")
+
 # ============================================================================
-# 5. RENAME COLUMNS
+# 4. RENAME COLUMNS
 # ============================================================================
 
-st.subheader("5️⃣ Rename Columns")
+st.subheader("4️⃣ Rename Columns")
 
 replicates = st.number_input("Replicates per condition", 1, 10, 3)
 
@@ -218,11 +214,13 @@ if st.checkbox("Auto-rename (A1, A2, B1...)", value=True):
     selected = new_names
     st.info(f"✅ Renamed: {', '.join(new_names[:6])}...")
 
+st.markdown("---")
+
 # ============================================================================
-# 6. IDENTIFY METADATA
+# 5. IDENTIFY METADATA
 # ============================================================================
 
-st.subheader("6️⃣ Metadata")
+st.subheader("5️⃣ Metadata")
 
 # Non-numeric columns for ID/species
 non_numeric = [c for c in df.columns if c not in selected]
@@ -242,7 +240,7 @@ with c2:
         species_col = None
 
 # ============================================================================
-# 7. KEEP ONLY NEEDED COLUMNS
+# 6. KEEP ONLY NEEDED COLUMNS
 # ============================================================================
 
 keep_cols = [id_col] + selected
@@ -258,18 +256,22 @@ if not species_col:
     )
     species_col = 'species'
 
+st.markdown("---")
+
 # ============================================================================
-# 8. PREVIEW
+# 7. PREVIEW
 # ============================================================================
 
-st.subheader("7️⃣ Preview")
+st.subheader("6️⃣ Preview")
 st.dataframe(df.head(10), use_container_width=True, height=350)
 
+st.markdown("---")
+
 # ============================================================================
-# 9. STATS
+# 8. STATS
 # ============================================================================
 
-st.subheader("8️⃣ Statistics")
+st.subheader("7️⃣ Statistics")
 
 n_proteins = df.shape[0]
 n_samples = len(selected)
@@ -282,25 +284,26 @@ c2.metric("Samples", n_samples)
 c3.metric("Conditions", n_conditions)
 c4.metric("Species", species_count)
 
+st.markdown("---")
+
 # ============================================================================
-# 10. CACHE & CONFIRM
+# 9. CACHE & CONFIRM
 # ============================================================================
 
-st.markdown("---")
-st.subheader("✅ Confirm & Cache")
+st.subheader("8️⃣ Confirm & Cache")
 
 st.info(f"""
 **Summary:**
-- File: `{uploaded.name}`
+- File: `{uploaded_file.name}`
 - Proteins: {n_proteins:,}
 - Samples: {n_samples}
 - Conditions: {n_conditions}
 - Species: {species_count}
-- Missing data: {missing_pct:.1f}% (NaN/zeros kept for QC)
+- Missing data: {missing_pct:.1f}%
 """)
 
 if st.button("🎯 Cache & Continue", type="primary", use_container_width=True):
-    # Cache in session state (NaN and zeros preserved!)
+    # Cache in session state
     st.session_state.df = df
     st.session_state.numeric_cols = selected
     st.session_state.id_col = id_col
