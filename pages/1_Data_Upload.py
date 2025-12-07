@@ -50,14 +50,14 @@ st.subheader("1️⃣ Select Data Type")
 col1, col2 = st.columns(2)
 
 with col1:
-    if st.button("🧬 Protein Data", use_container_width=True, 
-                 key="btn_protein" if st.session_state.data_type == 'protein' else "btn_peptide"):
+    if st.button("🧬 Protein Data", use_container_width=True,
+                 key="data_type_protein_button"):
         st.session_state.data_type = 'protein'
         st.rerun()
 
 with col2:
     if st.button("🔬 Peptide Data", use_container_width=True,
-                 key= "btn_peptide" if st.session_state.data_type == 'peptide' else "btn_protein"):
+                 key="data_type_peptide_button"):
         st.session_state.data_type = 'peptide'
         st.rerun()
 
