@@ -445,6 +445,8 @@ with col3:
 
 st.markdown("---")
 
+st.markdown("---")
+
 # ============================================================================
 # 8. BENCHMARK PLOTS (For Spike-in Validation)
 # ============================================================================
@@ -543,8 +545,6 @@ if species_col:
         if abs(total_trt - 100) > 0.1:
             st.warning(f"⚠️ {treatment} fractions sum to {total_trt:.1f}% (should be 100%)")
         
-        # Replace this section (around line 553):
-        
         # Join species info with results
         df_bench = df_trans.select([id_col, species_col]).join(
             results_df,
@@ -557,7 +557,6 @@ if species_col:
             pl.col('effect_size').is_finite() &
             pl.col('expected_fc').is_not_null()
         )
-
         
         st.markdown("---")
         
@@ -730,252 +729,4 @@ if species_col:
             
             st.pyplot(ggplot.draw(plot_pr))
             max_f1 = max([2*p*r/(p+r) if (p+r) > 0 else 0 for p, r in zip(precision_list, recall_list)])
-            st.metric("Max F1", f"{max_f1:.3f}", help="Maximum F1 score")
-        
-        st.markdown("---")
-
-        # Add after the Precision-Recall section (section 8.3), before Summary Table
-st.markdown("---")
-
-# ============================================================================
-# 8.4 ERROR ANALYSIS PLOTS
-# ============================================================================
-    
-    st.subheader("8.4 Error Analysis & Distribution Diagnostics")
-    
-    # ============================================================================
-    # Left: Average Distance Plot (Panel B style)
-    # ============================================================================
-    
-    col_dist, col_error = st.columns([1, 1])
-    
-    with col_dist:
-        st.markdown("**Average Distance from Expected**")
-        
-        # Calculate average distance per protein
-        distance_data = []
-        
-        for species in unique_species:
-            df_sp = df_bench.filter(pl.col(species_col) == species)
-            
-            if df_sp.shape[0] > 0:
-                for row in df_sp.iter_rows(named=True):
-                    distance = abs(row['effect_size'] - row['expected_fc'])
-                    distance_data.append({
-                        'species': species,
-                        'mean_intensity': row['mean_control'],  # Use control as reference
-                        'log2fc_obs': row['effect_size'],
-                        'log2fc_exp': row['expected_fc'],
-                        'distance': distance
-                    })
-        
-        df_distance = pl.DataFrame(distance_data)
-        
-        # Calculate average distance per species
-        avg_distances = df_distance.group_by('species').agg([
-            pl.col('distance').mean().alias('avg_distance')
-        ])
-        
-        # Scatter plot with mean ± SD
-        plot_distance = (ggplot(df_distance.to_pandas(), 
-                                aes(x='mean_intensity', y='log2fc_obs', color='species')) +
-         geom_point(alpha=0.3, size=1) +
-         geom_hline(data=df_expected.to_pandas(), 
-                    mapping=aes(yintercept='Log2 FC', color='Species'),
-                    linetype='dashed', size=1) +
-         labs(title='Observed vs Expected Log2FC',
-              x='log2(Intensity)',
-              y='log2(A/B)',
-              color='Species') +
-         theme_minimal() +
-         theme(figure_size=(5, 5)))
-        
-        st.pyplot(ggplot.draw(plot_distance))
-        
-        # Show average distances
-        st.markdown("**Average distance between measured and expected log2FC:**")
-        for row in avg_distances.iter_rows(named=True):
-            st.caption(f"• {row['species']}: {row['avg_distance']:.3f}")
-    
-    # ============================================================================
-    # Right: Error Types Analysis (Panel C style)
-    # ============================================================================
-    
-    with col_error:
-        st.markdown("**Error Type Classification**")
-        
-        # Classify errors
-        error_types = []
-        
-        for species in unique_species:
-            df_sp = df_bench.filter(pl.col(species_col) == species)
-            exp_fc_val = expected_fc.get(species, 0)
-            
-            if df_sp.shape[0] > 0:
-                obs_vals = df_sp['effect_size'].to_numpy()
-                
-                # Error metrics
-                bias = np.mean(obs_vals - exp_fc_val)
-                std_dev = np.std(obs_vals)
-                compression = std_dev / abs(exp_fc_val) if abs(exp_fc_val) > 0 else np.nan
-                
-                # Classify error type
-                if abs(bias) > 0.5:
-                    error_type = "Systematic bias"
-                elif std_dev > 1.0:
-                    error_type = "High dispersion"
-                elif compression < 0.5:
-                    error_type = "Ratio compression"
-                else:
-                    error_type = "Normal"
-                
-                error_types.append({
-                    'Species': species,
-                    'Bias': round(bias, 3),
-                    'Std Dev': round(std_dev, 3),
-                    'Compression': round(compression, 3) if np.isfinite(compression) else 'N/A',
-                    'Error Type': error_type
-                })
-        
-        if error_types:
-            st.dataframe(pl.DataFrame(error_types).to_pandas(), 
-                        hide_index=True, use_container_width=True)
-    
-    st.markdown("---")
-    
-    # ============================================================================
-    # 8.5 DISTRIBUTION COMPARISON (Panel C bottom - 4 density plots)
-    # ============================================================================
-    
-    st.subheader("8.5 Distribution Quality Assessment")
-    
-    import matplotlib.pyplot as plt
-    from scipy.stats import gaussian_kde
-    
-    # Create subplots: one per species + combined
-    fig_densities, axes = plt.subplots(1, len(unique_species) + 1, figsize=(12, 3))
-    
-    if len(unique_species) == 1:
-        axes = [axes]
-    
-    for idx, species in enumerate(unique_species):
-        df_sp = df_bench.filter(pl.col(species_col) == species)
-        
-        if df_sp.shape[0] > 0:
-            obs_vals = df_sp['effect_size'].to_numpy()
-            exp_fc_val = expected_fc.get(species, 0)
-            
-            ax = axes[idx]
-            
-            # Density plot
-            if len(obs_vals) > 2:
-                kde = gaussian_kde(obs_vals)
-                x_range = np.linspace(obs_vals.min(), obs_vals.max(), 100)
-                ax.plot(x_range, kde(x_range), linewidth=2)
-                ax.fill_between(x_range, kde(x_range), alpha=0.3)
-            
-            # Expected line
-            ax.axvline(exp_fc_val, color='red', linestyle='--', linewidth=2)
-            
-            ax.set_title(f'{species}', fontsize=10)
-            ax.set_xlabel('log2(A/B)', fontsize=9)
-            ax.set_ylabel('Density', fontsize=9)
-            ax.grid(True, alpha=0.3)
-    
-    # Combined plot
-    ax_combined = axes[-1]
-    for species in unique_species:
-        df_sp = df_bench.filter(pl.col(species_col) == species)
-        
-        if df_sp.shape[0] > 0:
-            obs_vals = df_sp['effect_size'].to_numpy()
-            
-            if len(obs_vals) > 2:
-                kde = gaussian_kde(obs_vals)
-                x_range = np.linspace(obs_vals.min(), obs_vals.max(), 100)
-                ax_combined.plot(x_range, kde(x_range), linewidth=2, label=species)
-    
-    ax_combined.set_title('Combined', fontsize=10)
-    ax_combined.set_xlabel('log2(A/B)', fontsize=9)
-    ax_combined.legend(fontsize=8)
-    ax_combined.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    st.pyplot(fig_densities)
-    
-    # Interpretation
-    st.info("""
-    **Quality indicators:**
-    - **Ratio compression:** Observed variance < expected (narrow peaks)
-    - **Dispersion:** High variance around expected value (wide peaks)
-    - **Normalization issues:** Systematic shifts from expected (bias)
-    - **Identification errors:** Random scatter around expected
-    """)
-
-st.markdown("---")
-
-# ============================================================================
-# 8.6 SUMMARY TABLE
-# ============================================================================
-
-st.subheader("8.6 Benchmark Summary Statistics")
-
-summary_stats = []
-
-for species in unique_species:
-    df_sp = df_bench.filter(pl.col(species_col) == species)
-    
-    if df_sp.shape[0] > 0:
-        exp_fc_val = expected_fc.get(species, 0)
-        
-        n_total = df_sp.shape[0]
-        n_sig = df_sp.filter(pl.col('regulation').is_in(['upregulated', 'downregulated'])).shape[0]
-        
-        obs_vals = df_sp['effect_size'].to_numpy()
-        exp_vals = np.full_like(obs_vals, exp_fc_val)
-        
-        bias = np.mean(obs_vals - exp_vals)
-        rmse = np.sqrt(np.mean((obs_vals - exp_vals)**2))
-        mae = np.mean(np.abs(obs_vals - exp_vals))
-        corr = np.corrcoef(obs_vals, exp_vals)[0, 1] if len(obs_vals) > 1 else np.nan
-        
-        summary_stats.append({
-            'Species': species,
-            'Expected FC': exp_fc_val,
-            'N Proteins': n_total,
-            'N Significant': n_sig,
-            'Bias': round(bias, 3),
-            'RMSE': round(rmse, 3),
-            'MAE': round(mae, 3),
-            'Correlation': round(corr, 3)
-        })
-
-df_summary = pl.DataFrame(summary_stats)
-st.dataframe(df_summary.to_pandas(), use_container_width=True)
-
-# Download benchmark results
-col1, col2 = st.columns(2)
-
-with col1:
-    st.download_button(
-        "📥 Download Benchmark Summary",
-        df_summary.write_csv(),
-        f"benchmark_{treatment}_vs_{control}.csv",
-        "text/csv",
-        use_container_width=True
-    )
-
-with col2:
-    st.download_button(
-        "📥 Download Full Benchmark Data",
-        df_bench.write_csv(),
-        f"benchmark_full_{treatment}_vs_{control}.csv",
-        "text/csv",
-        use_container_width=True
-    )
-
-else:
-    st.info("Species information not available. Benchmark plots require species labels for validation.")
-
-st.markdown("---")
-st.success("✅ Differential expression analysis complete!")
+            st.metric
