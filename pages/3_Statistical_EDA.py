@@ -294,6 +294,302 @@ df_normality_log2 = pl.DataFrame(normality_log2)
 st.dataframe(df_normality_log2.to_pandas(), use_container_width=True)
 
 st.markdown("---")
+# ============================================================================
+# 3. TRANSFORMATION COMPARISON
+# ============================================================================
+
+st.header("3️⃣ Transformation Comparison")
+st.info("**Compare different transformations** - Select best for normality and variance stabilization")
+
+# Define transformations
+TRANSFORM_NAMES = {
+    "raw": "Raw (No Transform)",
+    "log2": "Log2",
+    "log10": "Log10",
+    "ln": "Natural Log (ln)",
+    "sqrt": "Square Root",
+    "arcsinh": "Arcsinh",
+}
+
+# Apply all transformations and collect stats
+@st.cache_data
+def compute_all_transforms(df_dict: dict, cols: list) -> dict:
+    """Compute all transformations and their normality metrics."""
+    df = pl.from_dict(df_dict)
+    
+    # Clean data first
+    df_clean = df.with_columns([
+        pl.when(pl.col(c).cast(pl.Utf8).str.to_uppercase() == "NAN")
+        .then(1.0)
+        .when(pl.col(c).is_null())
+        .then(1.0)
+        .when(pl.col(c) == 0.0)
+        .then(1.0)
+        .otherwise(pl.col(c))
+        .alias(c)
+        for c in cols
+    ])
+    
+    transforms = {}
+    
+    # Raw
+    transforms['raw'] = df_clean.to_dict(as_series=False)
+    
+    # Log2
+    transforms['log2'] = df_clean.with_columns([
+        pl.col(c).clip(lower_bound=1.0).log(2).alias(c) for c in cols
+    ]).to_dict(as_series=False)
+    
+    # Log10
+    transforms['log10'] = df_clean.with_columns([
+        pl.col(c).clip(lower_bound=1.0).log10().alias(c) for c in cols
+    ]).to_dict(as_series=False)
+    
+    # Natural log
+    transforms['ln'] = df_clean.with_columns([
+        pl.col(c).clip(lower_bound=1.0).log().alias(c) for c in cols
+    ]).to_dict(as_series=False)
+    
+    # Square root
+    transforms['sqrt'] = df_clean.with_columns([
+        pl.col(c).sqrt().alias(c) for c in cols
+    ]).to_dict(as_series=False)
+    
+    # Arcsinh
+    transforms['arcsinh'] = df_clean.with_columns([
+        pl.col(c).arcsinh().alias(c) for c in cols
+    ]).to_dict(as_series=False)
+    
+    return transforms
+
+# Compute transforms
+all_transforms = compute_all_transforms(df.to_dict(as_series=False), numeric_cols)
+
+# Calculate normality metrics for each transform
+transform_stats = []
+
+for trans_name, trans_key in TRANSFORM_NAMES.items():
+    df_trans = pl.from_dict(all_transforms[trans_name])
+    
+    # Aggregate all samples
+    all_values = []
+    for col in numeric_cols:
+        data = df_trans[col].to_numpy()
+        data_clean = data[np.isfinite(data) & (data > 0 if trans_name == 'raw' else True)]
+        all_values.extend(data_clean)
+    
+    all_values = np.array(all_values)
+    
+    if len(all_values) > 3:
+        # Shapiro test
+        stat_sw, pval_sw = stats.shapiro(all_values[:5000])
+        
+        # Kurtosis & Skewness
+        kurt = stats.kurtosis(all_values)
+        skew = stats.skew(all_values)
+        
+        # Mean-variance correlation (across proteins)
+        means = df_trans.select(numeric_cols).mean_horizontal().to_numpy()
+        vars = df_trans.select(numeric_cols).select([
+            pl.var(c) for c in numeric_cols
+        ]).row(0)
+        
+        # Calculate Pearson correlation between mean and variance
+        mean_vals = []
+        var_vals = []
+        for i in range(len(df_trans)):
+            row_data = [df_trans[col][i] for col in numeric_cols]
+            row_data = [x for x in row_data if np.isfinite(x)]
+            if len(row_data) >= 2:
+                mean_vals.append(np.mean(row_data))
+                var_vals.append(np.var(row_data))
+        
+        if len(mean_vals) > 2:
+            mean_var_corr = np.corrcoef(mean_vals, var_vals)[0, 1]
+        else:
+            mean_var_corr = np.nan
+        
+        # Normality score (lower is better)
+        norm_score = (1 - pval_sw) + abs(kurt)/10 + abs(skew)/5 + abs(mean_var_corr)
+        
+        transform_stats.append({
+            'Transform': trans_key,
+            'Shapiro W': round(stat_sw, 4),
+            'Shapiro p': round(pval_sw, 4),
+            'Kurtosis': round(kurt, 3),
+            'Skewness': round(skew, 3),
+            'Mean-Var Corr': round(mean_var_corr, 3),
+            'Normality Score': round(norm_score, 3),
+            '_key': trans_name
+        })
+
+df_transform_stats = pl.DataFrame(transform_stats).sort('Normality Score')
+
+st.subheader("Transformation Statistics (Lower Score = Better Normality)")
+st.dataframe(df_transform_stats.to_pandas().drop('_key', axis=1), use_container_width=True)
+
+st.caption("**Normality Score:** Composite metric (lower = better). Based on Shapiro p-value, kurtosis, skewness, and mean-variance correlation.")
+
+# Select transform to compare
+selected_transform = st.selectbox(
+    "Select transformation to compare with raw:",
+    options=list(TRANSFORM_NAMES.keys())[1:],  # Exclude raw
+    format_func=lambda x: TRANSFORM_NAMES[x],
+    index=0  # Default to log2
+)
+
+st.markdown("---")
+
+# ============================================================================
+# 4. DIAGNOSTIC PLOTS: RAW VS TRANSFORMED
+# ============================================================================
+
+st.header("4️⃣ Diagnostic Plots: Raw vs Transformed")
+
+# Get raw and transformed data
+df_raw_np = pl.from_dict(all_transforms['raw'])
+df_trans_np = pl.from_dict(all_transforms[selected_transform])
+
+# Create 2 rows of 3 plots each (raw on top, transformed on bottom)
+st.subheader(f"Raw Data Diagnostics")
+
+# Row 1: Raw data
+col1, col2, col3 = st.columns(3)
+
+# Raw: Distribution
+with col1:
+    st.markdown("**Distribution**")
+    raw_vals = np.concatenate([df_raw_np[c].to_numpy() for c in numeric_cols])
+    raw_vals = raw_vals[(raw_vals > 1.0) & np.isfinite(raw_vals)]
+    
+    mu_raw = np.mean(raw_vals)
+    sigma_raw = np.std(raw_vals)
+    
+    df_plot_raw = pl.DataFrame({'value': raw_vals})
+    
+    plot_raw_dist = (ggplot(df_plot_raw.to_pandas(), aes(x='value')) +
+     geom_histogram(aes(y='..density..'), bins=50, fill='#1f77b4', alpha=0.6) +
+     geom_density(color='#1f77b4', size=1.5) +
+     geom_vline(xintercept=mu_raw, linetype='dashed', color='red', size=1) +
+     annotate('rect', xmin=mu_raw-2*sigma_raw, xmax=mu_raw+2*sigma_raw,
+              ymin=-np.inf, ymax=np.inf, alpha=0.1, fill='gray') +
+     labs(title='Raw Intensities', x='Intensity', y='Density',
+          subtitle=f'μ={mu_raw:.1f}, σ={sigma_raw:.1f}') +
+     theme_minimal() +
+     theme(figure_size=(4, 3.5), plot_subtitle=element_text(size=8)))
+    
+    st.pyplot(ggplot.draw(plot_raw_dist))
+
+# Raw: Q-Q plot
+with col2:
+    st.markdown("**Q-Q Plot**")
+    from scipy.stats import probplot
+    
+    qq_raw = probplot(raw_vals[:5000], dist="norm")
+    df_qq_raw = pl.DataFrame({'theoretical': qq_raw[0][0], 'sample': qq_raw[0][1]})
+    
+    plot_qq_raw = (ggplot(df_qq_raw.to_pandas(), aes(x='theoretical', y='sample')) +
+     geom_point(color='#1f77b4', alpha=0.5, size=1) +
+     geom_abline(intercept=0, slope=1, color='red', linetype='dashed') +
+     labs(title='Q-Q Plot (Raw)', x='Theoretical Quantiles', y='Sample Quantiles') +
+     theme_minimal() +
+     theme(figure_size=(4, 3.5)))
+    
+    st.pyplot(ggplot.draw(plot_qq_raw))
+
+# Raw: Mean-Variance
+with col3:
+    st.markdown("**Mean-Variance Relationship**")
+    
+    means_raw = []
+    vars_raw = []
+    for i in range(len(df_raw_np)):
+        row_data = [df_raw_np[col][i] for col in numeric_cols]
+        row_data = [x for x in row_data if x > 1.0 and np.isfinite(x)]
+        if len(row_data) >= 2:
+            means_raw.append(np.mean(row_data))
+            vars_raw.append(np.var(row_data))
+    
+    df_mv_raw = pl.DataFrame({'mean': means_raw, 'variance': vars_raw})
+    
+    plot_mv_raw = (ggplot(df_mv_raw.to_pandas(), aes(x='mean', y='variance')) +
+     geom_point(color='#1f77b4', alpha=0.3, size=1) +
+     labs(title='Mean-Variance (Raw)', x='Mean', y='Variance') +
+     theme_minimal() +
+     theme(figure_size=(4, 3.5)))
+    
+    st.pyplot(ggplot.draw(plot_mv_raw))
+
+# Row 2: Transformed data
+st.subheader(f"{TRANSFORM_NAMES[selected_transform]} Diagnostics")
+
+col1, col2, col3 = st.columns(3)
+
+# Transformed: Distribution
+with col1:
+    st.markdown("**Distribution**")
+    trans_vals = np.concatenate([df_trans_np[c].to_numpy() for c in numeric_cols])
+    trans_vals = trans_vals[np.isfinite(trans_vals)]
+    
+    mu_trans = np.mean(trans_vals)
+    sigma_trans = np.std(trans_vals)
+    
+    df_plot_trans = pl.DataFrame({'value': trans_vals})
+    
+    plot_trans_dist = (ggplot(df_plot_trans.to_pandas(), aes(x='value')) +
+     geom_histogram(aes(y='..density..'), bins=50, fill='#ff7f0e', alpha=0.6) +
+     geom_density(color='#ff7f0e', size=1.5) +
+     geom_vline(xintercept=mu_trans, linetype='dashed', color='darkred', size=1) +
+     annotate('rect', xmin=mu_trans-2*sigma_trans, xmax=mu_trans+2*sigma_trans,
+              ymin=-np.inf, ymax=np.inf, alpha=0.1, fill='gray') +
+     labs(title=f'{TRANSFORM_NAMES[selected_transform]} Intensities', 
+          x='Transformed Intensity', y='Density',
+          subtitle=f'μ={mu_trans:.2f}, σ={sigma_trans:.2f}') +
+     theme_minimal() +
+     theme(figure_size=(4, 3.5), plot_subtitle=element_text(size=8)))
+    
+    st.pyplot(ggplot.draw(plot_trans_dist))
+
+# Transformed: Q-Q plot
+with col2:
+    st.markdown("**Q-Q Plot**")
+    
+    qq_trans = probplot(trans_vals[:5000], dist="norm")
+    df_qq_trans = pl.DataFrame({'theoretical': qq_trans[0][0], 'sample': qq_trans[0][1]})
+    
+    plot_qq_trans = (ggplot(df_qq_trans.to_pandas(), aes(x='theoretical', y='sample')) +
+     geom_point(color='#ff7f0e', alpha=0.5, size=1) +
+     geom_abline(intercept=0, slope=1, color='red', linetype='dashed') +
+     labs(title='Q-Q Plot (Transformed)', x='Theoretical Quantiles', y='Sample Quantiles') +
+     theme_minimal() +
+     theme(figure_size=(4, 3.5)))
+    
+    st.pyplot(ggplot.draw(plot_qq_trans))
+
+# Transformed: Mean-Variance
+with col3:
+    st.markdown("**Mean-Variance Relationship**")
+    
+    means_trans = []
+    vars_trans = []
+    for i in range(len(df_trans_np)):
+        row_data = [df_trans_np[col][i] for col in numeric_cols]
+        row_data = [x for x in row_data if np.isfinite(x)]
+        if len(row_data) >= 2:
+            means_trans.append(np.mean(row_data))
+            vars_trans.append(np.var(row_data))
+    
+    df_mv_trans = pl.DataFrame({'mean': means_trans, 'variance': vars_trans})
+    
+    plot_mv_trans = (ggplot(df_mv_trans.to_pandas(), aes(x='mean', y='variance')) +
+     geom_point(color='#ffb74d', alpha=0.3, size=1) +
+     labs(title='Mean-Variance (Transformed)', x='Mean', y='Variance') +
+     theme_minimal() +
+     theme(figure_size=(4, 3.5)))
+    
+    st.pyplot(ggplot.draw(plot_mv_trans))
+
+st.markdown("---")
 
 # ============================================================================
 # PLACEHOLDER FOR NEXT SECTIONS
