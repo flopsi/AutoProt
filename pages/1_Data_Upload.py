@@ -7,11 +7,42 @@ import streamlit as st
 import polars as pl
 import time
 from pathlib import Path
-from io import read_file
+
 
 # ============================================================================
 # HELPERS
 # ============================================================================
+def read_file(file) -> pl.DataFrame:
+    """Read uploaded file into Polars DataFrame with robust error handling."""
+    name = file.name.lower()
+    
+    try:
+        if name.endswith('.csv'):
+            return pl.read_csv(
+                file,
+                null_values=["#NUM!", "#N/A", "#VALUE!", "#REF!", "#DIV/0!", "#NAME?", "#NULL!", ""],
+                ignore_errors=True,
+                infer_schema_length=10000
+            )
+        elif name.endswith(('.tsv', '.txt')):
+            return pl.read_csv(
+                file,
+                separator='\t',
+                null_values=["#NUM!", "#N/A", "#VALUE!", "#REF!", "#DIV/0!", "#NAME?", "#NULL!", ""],
+                ignore_errors=True,
+                infer_schema_length=10000
+            )
+        elif name.endswith('.xlsx'):
+            # Excel files handle #NUM! automatically as NaN
+            return pl.read_excel(file)
+        else:
+            raise ValueError(f"Unsupported format: {name}")
+    except Exception as e:
+        raise ValueError(f"Error reading {name}: {str(e)}")
+
+def generate_column_names(n: int, replicates: int = 3) -> list:
+    """Generate A1, A2, A3, B1, B2, B3, ..."""
+    return [f"{chr(65 + i//replicates)}{i%replicates + 1}" for i in range(n)]
 
 def generate_column_names(n: int, replicates: int = 3) -> list:
     """Generate A1, A2, A3, B1, B2, B3, ..."""
