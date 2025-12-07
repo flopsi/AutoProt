@@ -324,6 +324,228 @@ if st.button("🎯 Apply Transformation & Continue", type="primary", use_contain
              theme(figure_size=(4, 3.5)))
             
             st.pyplot(ggplot.draw(plot_mv))
+
+
+    # ============================================================================
+# 5. PCA ANALYSIS
+# ============================================================================
+
+st.header("5️⃣ PCA Analysis - Sample Clustering")
+st.info("**Principal Component Analysis** - Assess batch effects and biological separation")
+
+from sklearn.decomposition import PCA
+from scipy.spatial.distance import pdist, squareform
+from sklearn.metrics import pairwise_distances
+
+# Prepare data for PCA (samples as rows, proteins as columns)
+# Use filtered data (before transformation for interpretability)
+df_pca_input = df.select(numeric_cols).transpose()
+
+# Remove any rows with missing values
+df_pca_clean = df_pca_input.fill_null(0).fill_nan(0)
+pca_data = df_pca_clean.to_numpy()
+
+# Run PCA
+pca = PCA(n_components=min(3, len(numeric_cols)))
+pca_transformed = pca.fit_transform(pca_data)
+
+# Create PCA dataframe
+pca_df = pl.DataFrame({
+    'Sample': numeric_cols,
+    'PC1': pca_transformed[:, 0],
+    'PC2': pca_transformed[:, 1],
+    'Condition': [col[0] for col in numeric_cols]  # A, B, etc.
+})
+
+# Add species info if available
+if species_col:
+    # Map samples to their dominant species
+    species_per_sample = []
+    for col in numeric_cols:
+        sample_data = df.select([species_col, col]).filter(pl.col(col) > 1.0)
+        if sample_data.shape[0] > 0:
+            dominant = sample_data[species_col].mode().to_list()[0]
+        else:
+            dominant = 'Unknown'
+        species_per_sample.append(dominant)
+    
+    pca_df = pca_df.with_columns(pl.Series('Species', species_per_sample))
+
+# Variance explained
+var_exp = pca.explained_variance_ratio_ * 100
+
+# ============================================================================
+# PCA PLOTS (3 PANELS)
+# ============================================================================
+
+col1, col2, col3 = st.columns(3)
+
+# Panel 1: All samples
+with col1:
+    st.markdown("**All Samples**")
+    
+    plot_pca_all = (ggplot(pca_df.to_pandas(), aes(x='PC1', y='PC2', color='Condition')) +
+     geom_point(size=4, alpha=0.8) +
+     labs(title='PCA - All Samples',
+          x=f'PC1 ({var_exp[0]:.1f}%)',
+          y=f'PC2 ({var_exp[1]:.1f}%)') +
+     theme_minimal() +
+     theme(figure_size=(4.5, 4)))
+    
+    st.pyplot(ggplot.draw(plot_pca_all))
+    
+    # PERMANOVA test for condition separation
+    st.markdown("**PERMANOVA Test**")
+    
+    # Calculate distance matrix
+    dist_matrix = squareform(pdist(pca_transformed[:, :2], metric='euclidean'))
+    
+    # Simple PERMANOVA (pseudo F-statistic)
+    conditions = [col[0] for col in numeric_cols]
+    unique_conds = sorted(set(conditions))
+    
+    # Between-group variance
+    group_means = {}
+    for cond in unique_conds:
+        indices = [i for i, c in enumerate(conditions) if c == cond]
+        group_means[cond] = np.mean(pca_transformed[indices, :2], axis=0)
+    
+    ss_between = sum(
+        len([c for c in conditions if c == cond]) * 
+        np.sum((group_means[cond] - np.mean(pca_transformed[:, :2], axis=0))**2)
+        for cond in unique_conds
+    )
+    
+    ss_total = np.sum((pca_transformed[:, :2] - np.mean(pca_transformed[:, :2], axis=0))**2)
+    ss_within = ss_total - ss_between
+    
+    df_between = len(unique_conds) - 1
+    df_within = len(conditions) - len(unique_conds)
+    
+    pseudo_f = (ss_between / df_between) / (ss_within / df_within)
+    
+    st.dataframe(pl.DataFrame({
+        'Metric': ['Pseudo-F', 'R²'],
+        'Value': [f"{pseudo_f:.3f}", f"{ss_between/ss_total:.3f}"]
+    }).to_pandas(), hide_index=True)
+
+# Panel 2: Human only
+if species_col:
+    with col2:
+        st.markdown("**Human Proteins Only**")
+        
+        # Filter for human proteins
+        df_human = df.filter(pl.col(species_col).str.to_uppercase() == 'HUMAN')
+        
+        if df_human.shape[0] >= 3:
+            df_pca_human = df_human.select(numeric_cols).transpose().fill_null(0).fill_nan(0)
+            pca_human = PCA(n_components=2)
+            pca_human_transformed = pca_human.fit_transform(df_pca_human.to_numpy())
+            
+            pca_human_df = pl.DataFrame({
+                'Sample': numeric_cols,
+                'PC1': pca_human_transformed[:, 0],
+                'PC2': pca_human_transformed[:, 1],
+                'Condition': [col[0] for col in numeric_cols]
+            })
+            
+            var_exp_human = pca_human.explained_variance_ratio_ * 100
+            
+            plot_pca_human = (ggplot(pca_human_df.to_pandas(), aes(x='PC1', y='PC2', color='Condition')) +
+             geom_point(size=4, alpha=0.8) +
+             labs(title='PCA - Human Only',
+                  x=f'PC1 ({var_exp_human[0]:.1f}%)',
+                  y=f'PC2 ({var_exp_human[1]:.1f}%)') +
+             theme_minimal() +
+             theme(figure_size=(4.5, 4)))
+            
+            st.pyplot(ggplot.draw(plot_pca_human))
+            
+            # Cohen's d for two-group comparison
+            st.markdown("**Effect Size (Cohen's d)**")
+            
+            if len(unique_conds) == 2:
+                cond1, cond2 = unique_conds
+                indices1 = [i for i, c in enumerate(conditions) if c == cond1]
+                indices2 = [i for i, c in enumerate(conditions) if c == cond2]
+                
+                pc1_cond1 = pca_human_transformed[indices1, 0]
+                pc1_cond2 = pca_human_transformed[indices2, 0]
+                
+                pooled_std = np.sqrt((np.var(pc1_cond1) + np.var(pc1_cond2)) / 2)
+                cohens_d = (np.mean(pc1_cond1) - np.mean(pc1_cond2)) / pooled_std
+                
+                st.dataframe(pl.DataFrame({
+                    'Comparison': [f'{cond1} vs {cond2}'],
+                    'Cohen\'s d': [f"{cohens_d:.3f}"],
+                    'Magnitude': ['Large' if abs(cohens_d) > 0.8 else 'Medium' if abs(cohens_d) > 0.5 else 'Small']
+                }).to_pandas(), hide_index=True)
+            else:
+                st.info("Cohen's d requires exactly 2 conditions")
+        else:
+            st.warning("Not enough Human proteins for PCA")
+
+# Panel 3: E.coli + Yeast
+if species_col:
+    with col3:
+        st.markdown("**E.coli + Yeast**")
+        
+        # Filter for E.coli and Yeast
+        df_contam = df.filter(
+            (pl.col(species_col).str.to_uppercase() == 'ECOLI') |
+            (pl.col(species_col).str.to_uppercase() == 'YEAST')
+        )
+        
+        if df_contam.shape[0] >= 3:
+            df_pca_contam = df_contam.select(numeric_cols).transpose().fill_null(0).fill_nan(0)
+            pca_contam = PCA(n_components=2)
+            pca_contam_transformed = pca_contam.fit_transform(df_pca_contam.to_numpy())
+            
+            pca_contam_df = pl.DataFrame({
+                'Sample': numeric_cols,
+                'PC1': pca_contam_transformed[:, 0],
+                'PC2': pca_contam_transformed[:, 1],
+                'Condition': [col[0] for col in numeric_cols]
+            })
+            
+            var_exp_contam = pca_contam.explained_variance_ratio_ * 100
+            
+            plot_pca_contam = (ggplot(pca_contam_df.to_pandas(), aes(x='PC1', y='PC2', color='Condition')) +
+             geom_point(size=4, alpha=0.8) +
+             labs(title='PCA - Contaminants',
+                  x=f'PC1 ({var_exp_contam[0]:.1f}%)',
+                  y=f'PC2 ({var_exp_contam[1]:.1f}%)') +
+             theme_minimal() +
+             theme(figure_size=(4.5, 4)))
+            
+            st.pyplot(ggplot.draw(plot_pca_contam))
+            
+            # Cohen's d
+            st.markdown("**Effect Size (Cohen's d)**")
+            
+            if len(unique_conds) == 2:
+                cond1, cond2 = unique_conds
+                indices1 = [i for i, c in enumerate(conditions) if c == cond1]
+                indices2 = [i for i, c in enumerate(conditions) if c == cond2]
+                
+                pc1_cond1 = pca_contam_transformed[indices1, 0]
+                pc1_cond2 = pca_contam_transformed[indices2, 0]
+                
+                pooled_std = np.sqrt((np.var(pc1_cond1) + np.var(pc1_cond2)) / 2)
+                cohens_d = (np.mean(pc1_cond1) - np.mean(pc1_cond2)) / pooled_std
+                
+                st.dataframe(pl.DataFrame({
+                    'Comparison': [f'{cond1} vs {cond2}'],
+                    'Cohen\'s d': [f"{cohens_d:.3f}"],
+                    'Magnitude': ['Large' if abs(cohens_d) > 0.8 else 'Medium' if abs(cohens_d) > 0.5 else 'Small']
+                }).to_pandas(), hide_index=True)
+            else:
+                st.info("Cohen's d requires exactly 2 conditions")
+        else:
+            st.warning("Not enough contaminant proteins for PCA")
+
+st.markdown("---")
+
     
     st.markdown("---")
     st.info("**Next step:** Proceed to Differential Expression Analysis")
