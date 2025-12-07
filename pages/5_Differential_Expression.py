@@ -733,7 +733,183 @@ if species_col:
             st.metric("Max F1", f"{max_f1:.3f}", help="Maximum F1 score")
         
         st.markdown("---")
+
+        # Add after the Precision-Recall section (section 8.3), before Summary Table
+
+st.markdown("---")
+
+# ============================================================================
+# 8.4 ERROR ANALYSIS PLOTS
+# ============================================================================
+
+st.subheader("8.4 Error Analysis & Distribution Diagnostics")
+
+# ============================================================================
+# Left: Average Distance Plot (Panel B style)
+# ============================================================================
+
+col_dist, col_error = st.columns([1, 1])
+
+with col_dist:
+    st.markdown("**Average Distance from Expected**")
+    
+    # Calculate average distance per protein
+    distance_data = []
+    
+    for species in unique_species:
+        df_sp = df_bench.filter(pl.col(species_col) == species)
         
+        if df_sp.shape[0] > 0:
+            for row in df_sp.iter_rows(named=True):
+                distance = abs(row['effect_size'] - row['expected_fc'])
+                distance_data.append({
+                    'species': species,
+                    'mean_intensity': row['mean_control'],  # Use control as reference
+                    'log2fc_obs': row['effect_size'],
+                    'log2fc_exp': row['expected_fc'],
+                    'distance': distance
+                })
+    
+    df_distance = pl.DataFrame(distance_data)
+    
+    # Calculate average distance per species
+    avg_distances = df_distance.group_by('species').agg([
+        pl.col('distance').mean().alias('avg_distance')
+    ])
+    
+    # Scatter plot with mean ± SD
+    plot_distance = (ggplot(df_distance.to_pandas(), 
+                            aes(x='mean_intensity', y='log2fc_obs', color='species')) +
+     geom_point(alpha=0.3, size=1) +
+     geom_hline(data=df_expected.to_pandas(), 
+                mapping=aes(yintercept='Log2 FC', color='Species'),
+                linetype='dashed', size=1) +
+     labs(title='Observed vs Expected Log2FC',
+          x='log2(Intensity)',
+          y='log2(A/B)',
+          color='Species') +
+     theme_minimal() +
+     theme(figure_size=(5, 5)))
+    
+    st.pyplot(ggplot.draw(plot_distance))
+    
+    # Show average distances
+    st.markdown("**Average distance between measured and expected log2FC:**")
+    for row in avg_distances.iter_rows(named=True):
+        st.caption(f"• {row['species']}: {row['avg_distance']:.3f}")
+
+# ============================================================================
+# Right: Error Types Analysis (Panel C style)
+# ============================================================================
+
+with col_error:
+    st.markdown("**Error Type Classification**")
+    
+    # Classify errors
+    error_types = []
+    
+    for species in unique_species:
+        df_sp = df_bench.filter(pl.col(species_col) == species)
+        exp_fc_val = expected_fc.get(species, 0)
+        
+        if df_sp.shape[0] > 0:
+            obs_vals = df_sp['effect_size'].to_numpy()
+            
+            # Error metrics
+            bias = np.mean(obs_vals - exp_fc_val)
+            std_dev = np.std(obs_vals)
+            compression = std_dev / abs(exp_fc_val) if abs(exp_fc_val) > 0 else np.nan
+            
+            # Classify error type
+            if abs(bias) > 0.5:
+                error_type = "Systematic bias"
+            elif std_dev > 1.0:
+                error_type = "High dispersion"
+            elif compression < 0.5:
+                error_type = "Ratio compression"
+            else:
+                error_type = "Normal"
+            
+            error_types.append({
+                'Species': species,
+                'Bias': round(bias, 3),
+                'Std Dev': round(std_dev, 3),
+                'Compression': round(compression, 3) if np.isfinite(compression) else 'N/A',
+                'Error Type': error_type
+            })
+    
+    if error_types:
+        st.dataframe(pl.DataFrame(error_types).to_pandas(), 
+                    hide_index=True, use_container_width=True)
+
+st.markdown("---")
+
+# ============================================================================
+# 8.5 DISTRIBUTION COMPARISON (Panel C bottom - 4 density plots)
+# ============================================================================
+
+st.subheader("8.5 Distribution Quality Assessment")
+
+# Create 4 subplots: one per species + combined
+fig_densities, axes = plt.subplots(1, len(unique_species) + 1, figsize=(12, 3))
+
+for idx, species in enumerate(unique_species):
+    df_sp = df_bench.filter(pl.col(species_col) == species)
+    
+    if df_sp.shape[0] > 0:
+        obs_vals = df_sp['effect_size'].to_numpy()
+        exp_fc_val = expected_fc.get(species, 0)
+        
+        ax = axes[idx]
+        
+        # Density plot
+        from scipy.stats import gaussian_kde
+        if len(obs_vals) > 2:
+            kde = gaussian_kde(obs_vals)
+            x_range = np.linspace(obs_vals.min(), obs_vals.max(), 100)
+            ax.plot(x_range, kde(x_range), linewidth=2)
+            ax.fill_between(x_range, kde(x_range), alpha=0.3)
+        
+        # Expected line
+        ax.axvline(exp_fc_val, color='red', linestyle='--', linewidth=2)
+        
+        ax.set_title(f'{species}', fontsize=10)
+        ax.set_xlabel('log2(A/B)', fontsize=9)
+        ax.set_ylabel('Density', fontsize=9)
+        ax.grid(True, alpha=0.3)
+
+# Combined plot
+ax_combined = axes[-1]
+for species in unique_species:
+    df_sp = df_bench.filter(pl.col(species_col) == species)
+    
+    if df_sp.shape[0] > 0:
+        obs_vals = df_sp['effect_size'].to_numpy()
+        
+        if len(obs_vals) > 2:
+            kde = gaussian_kde(obs_vals)
+            x_range = np.linspace(obs_vals.min(), obs_vals.max(), 100)
+            ax_combined.plot(x_range, kde(x_range), linewidth=2, label=species)
+
+ax_combined.set_title('Combined', fontsize=10)
+ax_combined.set_xlabel('log2(A/B)', fontsize=9)
+ax_combined.legend(fontsize=8)
+ax_combined.grid(True, alpha=0.3)
+
+plt.tight_layout()
+st.pyplot(fig_densities)
+
+# Interpretation
+st.info("""
+**Quality indicators:**
+- **Ratio compression:** Observed variance < expected (narrow peaks)
+- **Dispersion:** High variance around expected value (wide peaks)
+- **Normalization issues:** Systematic shifts from expected (bias)
+- **Identification errors:** Random scatter around expected
+""")
+
+st.markdown("---")
+
         # ============================================================================
         # 8.4 SUMMARY TABLE
         # ============================================================================
