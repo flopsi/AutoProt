@@ -62,10 +62,10 @@ def render_eda(df, numeric_cols, species_col, id_col, replicates, data_type):
     
     @st.cache_data
     def compute_log2(df_dict: dict, cols: list) -> dict:
-        """Cache log2 transformation."""
+        """Cache log2 transformation. Values of 1.0 are missing and already log2(1)=0."""
         df_temp = pl.from_dict(df_dict)
         df_log2 = df_temp.with_columns([
-            pl.col(c).clip(lower_bound=1.0).log(2).alias(c) for c in cols
+            pl.col(c).log(2).alias(c) for c in cols
         ])
         return df_log2.to_dict(as_series=False)
     
@@ -92,7 +92,7 @@ def render_eda(df, numeric_cols, species_col, id_col, replicates, data_type):
     # ========================================================================
     
     st.subheader(f"2️⃣ Valid {data_type.title()}s per Species per Sample")
-    st.info("**Valid = intensity > 1.0** (excludes missing/NaN/zero)")
+    st.info("**Valid = intensity > 1.0** (1.0 = missing value)")
     
     # Count valid proteins (>1.0) per species per sample
     df_counts = df.select([id_col, species_col] + numeric_cols).melt(
@@ -100,7 +100,7 @@ def render_eda(df, numeric_cols, species_col, id_col, replicates, data_type):
         value_vars=numeric_cols,
         variable_name='sample'
     ).filter(
-        (pl.col('value') > 1.0) & (pl.col('value').is_finite())
+        pl.col('value') > 1.0  # Only valid values (1.0 is missing)
     ).group_by(['sample', species_col]).agg(
         pl.len().alias('count')
     ).sort(['sample', species_col]).with_columns([
@@ -135,7 +135,7 @@ def render_eda(df, numeric_cols, species_col, id_col, replicates, data_type):
         id_vars=[id_col, species_col],
         value_vars=numeric_cols
     ).filter(
-        (pl.col('value') > 1.0) & (pl.col('value').is_finite())
+        pl.col('value') > 1.0  # Only valid values
     ).group_by([id_col, species_col]).agg(
         pl.len()
     ).group_by(species_col).agg(
@@ -171,15 +171,12 @@ def render_eda(df, numeric_cols, species_col, id_col, replicates, data_type):
         variable_name='sample',
         value_name='log2_intensity'
     ).filter(
-        pl.col('log2_intensity').is_finite()
+        pl.col('log2_intensity') > 0  # Exclude missing values (log2(1.0) = 0)
     )
     
     # Add condition grouping
     df_long = df_long.with_columns(
-        pl.when(pl.col('sample').str.starts_with('A'))
-        .then(pl.lit('A'))
-        .otherwise(pl.lit('B'))
-        .alias('condition')
+        pl.col('sample').str.slice(0, 1).alias('condition')
     )
     
     # Violin plot
@@ -238,10 +235,13 @@ def render_eda(df, numeric_cols, species_col, id_col, replicates, data_type):
             conditions[condition] = []
         conditions[condition].append(col)
     
-    # Calculate CV
+    # Calculate CV (excluding missing values = 1.0)
     cv_data = []
     for condition, cols in conditions.items():
+        # Replace 1.0 with null for CV calculation
         df_cv = df.select([id_col] + cols).with_columns([
+            pl.when(pl.col(c) == 1.0).then(None).otherwise(pl.col(c)).alias(c) for c in cols
+        ]).with_columns([
             pl.concat_list(cols).list.mean().alias('mean'),
             pl.concat_list(cols).list.std().alias('std')
         ]).with_columns(
@@ -329,7 +329,10 @@ def render_eda(df, numeric_cols, species_col, id_col, replicates, data_type):
     cv_plot_data = []
     
     for condition, cols in conditions.items():
+        # Replace 1.0 with null for CV calculation
         df_cv_cond = df.select([id_col] + cols).with_columns([
+            pl.when(pl.col(c) == 1.0).then(None).otherwise(pl.col(c)).alias(c) for c in cols
+        ]).with_columns([
             pl.concat_list(cols).list.mean().alias('mean'),
             pl.concat_list(cols).list.std().alias('std')
         ]).with_columns(
@@ -418,14 +421,14 @@ def render_eda(df, numeric_cols, species_col, id_col, replicates, data_type):
     # ========================================================================
     
     st.subheader("6️⃣ Missing Values per Protein by Condition")
-    st.info("**Missing = intensity ≤ 1.0** (includes NaN, zero, and 1.0). Shows how many replicates are missing per protein.")
+    st.info("**Missing = intensity == 1.0** (preprocessed missing value marker). Shows how many replicates are missing per protein.")
     
     missing_plot_data = []
     
     for condition, cols in conditions.items():
         df_missing = df.select([id_col] + cols).with_columns([
             pl.sum_horizontal([
-                (pl.col(c) <= 1.0) | (pl.col(c).is_null()) for c in cols
+                pl.col(c) == 1.0 for c in cols
             ]).alias('n_missing')
         ])
         
