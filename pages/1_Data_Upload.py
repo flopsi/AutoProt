@@ -1,6 +1,6 @@
 """
 pages/1_Data_Upload.py
-Simplified Polars version - minimal, efficient data upload
+Keep NaN/0 as-is for quality checks, show last 20 chars in selection table
 """
 
 import streamlit as st
@@ -53,7 +53,7 @@ if not uploaded:
     st.stop()
 
 # ============================================================================
-# 2. READ
+# 2. READ (NO CLEANING YET)
 # ============================================================================
 
 st.subheader("2️⃣ Loading...")
@@ -66,7 +66,7 @@ except Exception as e:
     st.stop()
 
 # ============================================================================
-# 3. SELECT NUMERIC COLUMNS
+# 3. SELECT NUMERIC COLUMNS (with last 20 chars + checkbox table)
 # ============================================================================
 
 st.subheader("3️⃣ Select Quantitative Columns")
@@ -74,30 +74,68 @@ st.subheader("3️⃣ Select Quantitative Columns")
 # Auto-detect numeric columns
 numeric_cols = df.select(pl.col(pl.NUMERIC_DTYPES)).columns
 
-# Multiselect with all numeric preselected
-selected = st.multiselect(
-    "Select columns for analysis",
-    df.columns,
-    default=numeric_cols,
-    help="Choose numeric intensity/abundance columns"
+# Create selection table with last 20 chars + sample value
+col_data = []
+for col in df.columns:
+    is_numeric = col in numeric_cols
+    last_20 = col[-20:] if len(col) > 20 else col
+    sample_val = str(df[col][0])[:30] if df.shape[0] > 0 else ""
+    dtype = str(df[col].dtype)
+    
+    col_data.append({
+        'Select': is_numeric,
+        'Column (last 20)': last_20,
+        'Full Name': col,
+        'Type': dtype,
+        'Sample': sample_val
+    })
+
+df_cols = pl.DataFrame(col_data)
+
+st.info(f"**ℹ️ Auto-detected {len(numeric_cols)} numeric columns.** Review and adjust selection below.")
+
+# Editable table
+edited = st.data_editor(
+    df_cols.to_pandas(),
+    column_config={
+        'Select': st.column_config.CheckboxColumn('✓', width='small'),
+        'Column (last 20)': st.column_config.TextColumn('Column (last 20)', width='medium'),
+        'Full Name': st.column_config.TextColumn('Full Name', disabled=True),
+        'Type': st.column_config.TextColumn('Type', width='small', disabled=True),
+        'Sample': st.column_config.TextColumn('Sample', disabled=True)
+    },
+    hide_index=True,
+    use_container_width=True,
+    height=400
 )
+
+# Get selected columns
+selected = edited[edited['Select']]['Full Name'].tolist()
 
 if len(selected) < 4:
     st.warning(f"⚠️ Need ≥4 columns. Selected: {len(selected)}")
     st.stop()
 
+st.success(f"✅ Selected {len(selected)} columns for analysis")
+
 # ============================================================================
-# 4. CLEAN DATA
+# 4. DATA QUALITY INFO (before cleaning)
 # ============================================================================
 
-st.subheader("4️⃣ Data Cleaning")
+st.subheader("4️⃣ Data Quality Check")
 
-# Replace nulls and zeros with 1.0 in selected columns
-df = df.with_columns([
-    pl.col(c).fill_null(1.0).replace(0.0, 1.0) for c in selected
-])
+# Count NaN and zeros in selected columns
+n_nan = sum(df[c].null_count() for c in selected)
+n_zero = sum((df[c] == 0).sum() for c in selected)
+total_values = df.shape[0] * len(selected)
+missing_pct = (n_nan + n_zero) / total_values * 100 if total_values > 0 else 0
 
-st.success("✅ Replaced NaN/0 with 1.0")
+c1, c2, c3 = st.columns(3)
+c1.metric("NaN values", f"{n_nan:,}")
+c2.metric("Zero values", f"{n_zero:,}")
+c3.metric("Missing %", f"{missing_pct:.1f}%")
+
+st.info("**Note:** NaN and zeros will be kept as-is for downstream quality checks. They'll be replaced with 1.0 only during log2 transformation.")
 
 # ============================================================================
 # 5. RENAME COLUMNS
@@ -192,10 +230,11 @@ st.info(f"""
 - Samples: {n_samples}
 - Conditions: {n_conditions}
 - Species: {species_count}
+- Missing data: {missing_pct:.1f}% (NaN/zeros kept for QC)
 """)
 
 if st.button("🎯 Cache & Continue", type="primary", use_container_width=True):
-    # Cache in session state
+    # Cache in session state (NaN and zeros preserved!)
     st.session_state.df = df
     st.session_state.numeric_cols = selected
     st.session_state.id_col = id_col
