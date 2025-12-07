@@ -380,3 +380,285 @@ with col3:
 
 st.markdown("---")
 st.success("✅ Differential expression analysis complete!")
+
+# Add this after the "7️⃣ Export Results" section in pages/5_Differential_Expression.py
+
+st.markdown("---")
+
+# ============================================================================
+# 8. BENCHMARK PLOTS (For Spike-in Validation)
+# ============================================================================
+
+st.header("8️⃣ Benchmark Plots (Spike-in Validation)")
+st.info("**Optional:** For datasets with known mixing ratios, validate quantification accuracy")
+
+if species_col:
+    
+    # Define expected fold changes
+    st.subheader("Define Expected Fold Changes")
+    
+    species_list = df_trans[species_col].unique().to_list()
+    expected_fc = {}
+    
+    cols_input = st.columns(min(len(species_list), 4))
+    
+    for i, species in enumerate(species_list):
+        with cols_input[i % 4]:
+            expected_fc[species] = st.number_input(
+                f"{species} expected:",
+                min_value=-5.0,
+                max_value=5.0,
+                value=0.0,
+                step=0.5,
+                key=f"exp_fc_{species}",
+                help="Theoretical log2 fold change for this species"
+            )
+    
+    if st.checkbox("Run Benchmark Analysis", value=False):
+        
+        # Join species info with results
+        df_bench = df_trans.select([id_col, species_col]).join(
+            results_df,
+            left_on=id_col,
+            right_on='protein_id',
+            how='inner'
+        ).with_columns([
+            pl.col(species_col).map_dict(expected_fc).alias('expected_fc')
+        ]).filter(
+            pl.col('effect_size').is_finite() &
+            pl.col('expected_fc').is_not_null()
+        )
+        
+        st.markdown("---")
+        
+        # ============================================================================
+        # 8.1 SCATTER PLOTS (Observed vs Expected)
+        # ============================================================================
+        
+        st.subheader("8.1 Observed vs Expected Fold Change")
+        
+        unique_species = df_bench[species_col].unique().to_list()
+        cols = st.columns(min(3, len(unique_species)))
+        
+        for idx, species in enumerate(unique_species):
+            with cols[idx % 3]:
+                df_sp = df_bench.filter(pl.col(species_col) == species)
+                
+                if df_sp.shape[0] > 0:
+                    exp_fc_val = expected_fc.get(species, 0)
+                    
+                    plot = (ggplot(df_sp.to_pandas(), aes(x='expected_fc', y='effect_size')) +
+                     geom_point(alpha=0.5, size=1.5, color='#3498db') +
+                     geom_abline(intercept=0, slope=1, color='red', linetype='dashed', size=1) +
+                     geom_hline(yintercept=exp_fc_val, color='gray', linetype='dotted') +
+                     geom_vline(xintercept=exp_fc_val, color='gray', linetype='dotted') +
+                     labs(title=f'{species}',
+                          x='Expected FC',
+                          y='Observed FC') +
+                     theme_minimal() +
+                     theme(figure_size=(4, 4)))
+                    
+                    st.pyplot(ggplot.draw(plot))
+                    
+                    # Accuracy metrics
+                    bias = (df_sp['effect_size'] - df_sp['expected_fc']).mean()
+                    rmse = np.sqrt(((df_sp['effect_size'] - df_sp['expected_fc'])**2).mean())
+                    mae = (df_sp['effect_size'] - df_sp['expected_fc']).abs().mean()
+                    
+                    col_a, col_b = st.columns(2)
+                    col_a.metric("RMSE", f"{rmse:.3f}")
+                    col_b.metric("Bias", f"{bias:.3f}")
+                    st.caption(f"MAE: {mae:.3f} | N={df_sp.shape[0]}")
+        
+        st.markdown("---")
+        
+        # ============================================================================
+        # 8.2 DENSITY PLOTS
+        # ============================================================================
+        
+        st.subheader("8.2 Effect Size Distribution by Species")
+        
+        plot_density = (ggplot(df_bench.to_pandas(), aes(x='effect_size', fill=species_col)) +
+         geom_density(alpha=0.5) +
+         geom_vline(data=pd.DataFrame({'species': list(expected_fc.keys()), 
+                                       'expected': list(expected_fc.values())}),
+                    mapping=aes(xintercept='expected', color='species'),
+                    linetype='dashed', size=1) +
+         labs(title='Effect Size Distribution by Species',
+              x=effect_label,
+              y='Density',
+              fill='Species',
+              color='Expected') +
+         theme_minimal() +
+         theme(figure_size=(10, 5)))
+        
+        st.pyplot(ggplot.draw(plot_density))
+        
+        # Asymmetry factors
+        st.markdown("**Asymmetry Factors** (ideal range: 0.5-2.0)")
+        
+        asym_data = []
+        for species in unique_species:
+            df_sp = df_bench.filter(pl.col(species_col) == species)
+            if df_sp.shape[0] > 10:
+                fc_vals = df_sp['effect_size'].to_numpy()
+                median_fc = np.median(fc_vals)
+                
+                above = fc_vals[fc_vals > median_fc]
+                below = fc_vals[fc_vals < median_fc]
+                
+                if len(below) > 0 and len(above) > 0:
+                    asym = np.mean(above - median_fc) / np.mean(median_fc - below)
+                    status = '✓' if 0.5 <= asym <= 2.0 else '⚠️'
+                    asym_data.append({
+                        'Species': species, 
+                        'Asymmetry': round(asym, 3),
+                        'Status': status
+                    })
+        
+        if asym_data:
+            st.dataframe(pl.DataFrame(asym_data).to_pandas(), hide_index=True, use_container_width=True)
+        
+        st.markdown("---")
+        
+        # ============================================================================
+        # 8.3 ROC CURVE
+        # ============================================================================
+        
+        st.subheader("8.3 ROC Curve (True Positive Detection)")
+        
+        col_roc, col_pr = st.columns(2)
+        
+        with col_roc:
+            # Define true positives (species with expected FC != 0)
+            df_roc = df_bench.with_columns([
+                (pl.col('expected_fc') != 0).alias('true_positive')
+            ]).sort('pvalue')
+            
+            n_true_pos = df_roc['true_positive'].sum()
+            n_true_neg = (~df_roc['true_positive']).sum()
+            
+            tpr_list = []
+            fpr_list = []
+            cumsum_tp = 0
+            cumsum_fp = 0
+            
+            for row in df_roc.iter_rows(named=True):
+                if row['true_positive']:
+                    cumsum_tp += 1
+                else:
+                    cumsum_fp += 1
+                
+                tpr = cumsum_tp / n_true_pos if n_true_pos > 0 else 0
+                fpr = cumsum_fp / n_true_neg if n_true_neg > 0 else 0
+                
+                tpr_list.append(tpr)
+                fpr_list.append(fpr)
+            
+            df_roc_plot = pl.DataFrame({'FPR': fpr_list, 'TPR': tpr_list})
+            auc = np.trapz(tpr_list, fpr_list)
+            
+            plot_roc = (ggplot(df_roc_plot.to_pandas(), aes(x='FPR', y='TPR')) +
+             geom_line(color='#e74c3c', size=1.5) +
+             geom_abline(intercept=0, slope=1, linetype='dashed', color='gray') +
+             labs(title=f'ROC Curve (AUC = {auc:.3f})',
+                  x='False Positive Rate',
+                  y='True Positive Rate') +
+             theme_minimal() +
+             theme(figure_size=(5, 5)))
+            
+            st.pyplot(ggplot.draw(plot_roc))
+            st.metric("AUC", f"{auc:.3f}", help="Area Under Curve (1.0 = perfect)")
+        
+        # ============================================================================
+        # 8.4 PRECISION-RECALL CURVE
+        # ============================================================================
+        
+        with col_pr:
+            precision_list = []
+            recall_list = []
+            cumsum_tp = 0
+            cumsum_fp = 0
+            
+            for row in df_roc.iter_rows(named=True):
+                if row['true_positive']:
+                    cumsum_tp += 1
+                else:
+                    cumsum_fp += 1
+                
+                precision = cumsum_tp / (cumsum_tp + cumsum_fp) if (cumsum_tp + cumsum_fp) > 0 else 0
+                recall = cumsum_tp / n_true_pos if n_true_pos > 0 else 0
+                
+                precision_list.append(precision)
+                recall_list.append(recall)
+            
+            df_pr_plot = pl.DataFrame({'Recall': recall_list, 'Precision': precision_list})
+            
+            plot_pr = (ggplot(df_pr_plot.to_pandas(), aes(x='Recall', y='Precision')) +
+             geom_line(color='#2ecc71', size=1.5) +
+             labs(title='Precision-Recall Curve',
+                  x='Recall (Sensitivity)',
+                  y='Precision (PPV)') +
+             theme_minimal() +
+             theme(figure_size=(5, 5)))
+            
+            st.pyplot(ggplot.draw(plot_pr))
+            max_f1 = max([2*p*r/(p+r) if (p+r) > 0 else 0 for p, r in zip(precision_list, recall_list)])
+            st.metric("Max F1", f"{max_f1:.3f}", help="Maximum F1 score")
+        
+        st.markdown("---")
+        
+        # ============================================================================
+        # 8.5 SUMMARY TABLE
+        # ============================================================================
+        
+        st.subheader("8.5 Benchmark Summary Statistics")
+        
+        summary_stats = []
+        
+        for species in unique_species:
+            df_sp = df_bench.filter(pl.col(species_col) == species)
+            
+            if df_sp.shape[0] > 0:
+                exp_fc_val = expected_fc.get(species, 0)
+                
+                n_total = df_sp.shape[0]
+                n_sig = df_sp.filter(pl.col('regulation').is_in(['upregulated', 'downregulated'])).shape[0]
+                
+                obs_vals = df_sp['effect_size'].to_numpy()
+                exp_vals = np.full_like(obs_vals, exp_fc_val)
+                
+                bias = np.mean(obs_vals - exp_vals)
+                rmse = np.sqrt(np.mean((obs_vals - exp_vals)**2))
+                mae = np.mean(np.abs(obs_vals - exp_vals))
+                corr = np.corrcoef(obs_vals, exp_vals)[0, 1] if len(obs_vals) > 1 else np.nan
+                
+                summary_stats.append({
+                    'Species': species,
+                    'Expected FC': exp_fc_val,
+                    'N Proteins': n_total,
+                    'N Significant': n_sig,
+                    'Bias': round(bias, 3),
+                    'RMSE': round(rmse, 3),
+                    'MAE': round(mae, 3),
+                    'Correlation': round(corr, 3)
+                })
+        
+        df_summary = pl.DataFrame(summary_stats)
+        st.dataframe(df_summary.to_pandas(), use_container_width=True)
+        
+        # Download benchmark results
+        st.download_button(
+            "📥 Download Benchmark Summary",
+            df_summary.write_csv(),
+            f"benchmark_{treatment}_vs_{control}.csv",
+            "text/csv",
+            use_container_width=True
+        )
+
+else:
+    st.info("Species information not available. Benchmark plots require species labels for validation.")
+
+st.markdown("---")
+st.success("✅ Differential expression analysis complete!")
+
