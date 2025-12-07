@@ -148,7 +148,7 @@ if has_protein and tab_protein:
             pl.len().alias('Total')
         )
         
-        df_table = df_table.join(species_totals, on=species_col).sort('Total', descending=False)
+        df_table = df_table.join(species_totals, on=species_col).sort('Total', descending=True)
         
         st.markdown("**Valid Proteins per Species per Sample:**")
         st.dataframe(df_table.to_pandas(), width='stretch')
