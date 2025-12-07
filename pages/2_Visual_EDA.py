@@ -183,3 +183,79 @@ st.download_button(
     "log2_intensity_statistics.csv",
     "text/csv"
 )
+# ============================================================================
+# 4. CV DISTRIBUTION BY SAMPLE
+# ============================================================================
+
+st.subheader("4️⃣ Coefficient of Variation (CV) by Condition")
+st.info("**CV = (std / mean) × 100** for each protein across replicates. Lower CV = better reproducibility.")
+
+# Calculate CV for each condition
+replicates = st.session_state.replicates
+
+# Group samples by condition (A, B, C, etc.)
+conditions = {}
+for i, col in enumerate(numeric_cols):
+    condition = col[0]  # First letter (A, B, C...)
+    if condition not in conditions:
+        conditions[condition] = []
+    conditions[condition].append(col)
+
+# Calculate CV for each condition
+cv_data = []
+for condition, cols in conditions.items():
+    # Calculate mean and std across replicates for this condition
+    df_cv = df.select([id_col] + cols).with_columns([
+        pl.concat_list(cols).list.mean().alias('mean'),
+        pl.concat_list(cols).list.std().alias('std')
+    ]).with_columns(
+        (pl.col('std') / pl.col('mean') * 100).alias('cv')
+    ).filter(
+        pl.col('cv').is_finite() & (pl.col('cv') > 0)  # Valid CVs only
+    )
+    
+    # Add to long format
+    for row in df_cv.select([id_col, 'cv']).iter_rows(named=True):
+        cv_data.append({
+            'protein_id': row[id_col],
+            'condition': condition,
+            'cv': row['cv']
+        })
+
+df_cv_long = pl.DataFrame(cv_data)
+
+# Violin plot without points
+plot = (ggplot(df_cv_long.to_pandas(), aes(x='condition', y='cv', fill='condition')) +
+ geom_violin(alpha=0.7) +
+ geom_boxplot(width=0.1, fill='white', outlier_alpha=0) +  # No outlier points
+ scale_fill_brewer(type='qual', palette='Set2') +
+ labs(title='Coefficient of Variation Distribution by Condition',
+      x='Condition', y='CV (%)') +
+ theme_minimal() +
+ theme(axis_text_x=element_text(size=12),
+       figure_size=(10, 6),
+       legend_position='none'))
+
+st.pyplot(ggplot.draw(plot))
+
+# Summary statistics
+df_cv_stats = df_cv_long.group_by('condition').agg([
+    pl.col('cv').count().alias('n_proteins'),
+    pl.col('cv').mean().alias('mean_cv'),
+    pl.col('cv').median().alias('median_cv'),
+    pl.col('cv').std().alias('std_cv'),
+    pl.col('cv').quantile(0.25).alias('q25'),
+    pl.col('cv').quantile(0.75).alias('q75')
+]).sort('condition')
+
+st.markdown("**CV Summary Statistics:**")
+st.dataframe(df_cv_stats.to_pandas(), use_container_width=True)
+
+st.download_button(
+    "📥 Download CV Statistics (CSV)",
+    df_cv_stats.write_csv(),
+    "cv_statistics.csv",
+    "text/csv"
+)
+
+st.markdown("---")
