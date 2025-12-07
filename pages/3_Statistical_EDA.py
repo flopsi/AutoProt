@@ -813,9 +813,19 @@ if st.button("🚀 Apply Filters & Transformation", type="primary", use_containe
     
     with st.spinner("Applying filters and transformation..."):
         
+        # Get species column from session state
+        species_col = st.session_state.species_col
+        
         # Get clean numeric columns only (drop CV columns if added)
         final_numeric_cols = [c for c in numeric_cols if c in df_filtered.columns]
-        df_filtered = df_filtered.select([id_col, species_col] + final_numeric_cols)
+        
+        # Build selection list (only include species_col if it exists in df_filtered)
+        select_cols = [id_col]
+        if species_col and species_col in df_filtered.columns:
+            select_cols.append(species_col)
+        select_cols.extend(final_numeric_cols)
+        
+        df_filtered = df_filtered.select(select_cols)
         
         # Apply selected transformation
         df_transformed_final = pl.from_dict(all_transforms[selected_final_transform])
