@@ -382,12 +382,9 @@ def plot_section_5_cv_thresholds(cv_result, data_type, download_key):
     df_cv_plot = pl.DataFrame(cv_result['cv_threshold_data'])
     conditions = cv_result['conditions']
     
-    df_cv_plot = df_cv_plot.with_columns(
-        pl.col('threshold').cast(pl.Categorical(ordering='physical'))
-    )
-    
+    # Remove the deprecated ordering parameter
     df_cv_plot_ordered = df_cv_plot.sort(['condition', 'threshold'], 
-                                         descending=[True, True])
+                                         descending=[False, False])
     
     plot = (ggplot(df_cv_plot_ordered.to_pandas(), aes(x='condition', y='count', fill='threshold')) +
      geom_bar(stat='identity', position='dodge') +
@@ -399,7 +396,7 @@ def plot_section_5_cv_thresholds(cv_result, data_type, download_key):
              'CV < 20%': '#f39c12',
              'CV < 10%': '#2ecc71'
          },
-         breaks=['Total', 'CV < 20%', 'CV < 10%']
+         breaks=['Total', 'CV < 20%', 'CV < 10%']  # This controls the order in legend
      ) +
      labs(title=f'{data_type.title()} Count by CV Quality Threshold',
           x='Condition', y=f'{data_type.title()} Count', fill='Threshold') +
@@ -411,40 +408,6 @@ def plot_section_5_cv_thresholds(cv_result, data_type, download_key):
     st.pyplot(fig)
     plt.close(fig)
     del fig, plot
-    
-    st.markdown(f"**{data_type.title()} Counts by CV Threshold:**")
-    
-    summary_data = []
-    for cond in sorted(conditions.keys()):
-        cond_data = df_cv_plot.filter(pl.col('condition') == cond)
-        total = cond_data.filter(pl.col('threshold') == 'Total')['count'][0]
-        cv_lt_20 = cond_data.filter(pl.col('threshold') == 'CV < 20%')['count'][0]
-        cv_lt_10 = cond_data.filter(pl.col('threshold') == 'CV < 10%')['count'][0]
-        
-        summary_data.append({
-            'Condition': cond,
-            'Total': total,
-            'CV < 20%': cv_lt_20,
-            'CV < 10%': cv_lt_10,
-            '% < 20%': round(cv_lt_20 / total * 100, 1) if total > 0 else 0,
-            '% < 10%': round(cv_lt_10 / total * 100, 1) if total > 0 else 0
-        })
-    
-    df_summary = pl.DataFrame(summary_data)
-    
-    st.dataframe(df_summary.to_pandas(), width='stretch')
-    
-    st.download_button(
-        "📥 Download CV Threshold Summary (CSV)",
-        df_summary.write_csv(),
-        "cv_threshold_summary.csv",
-        "text/csv",
-        key=f"{download_key}_cv_threshold"
-    )
-    
-    del df_cv_plot, df_cv_plot_ordered, df_summary
-    gc.collect()
-
 def plot_section_6_missing_values(df, id_col, numeric_cols, replicates, data_type, download_key):
     """6. Missing Values per Protein/Peptide"""
     st.subheader(f"6️⃣ Missing Values per {data_type.title()} by Condition")
