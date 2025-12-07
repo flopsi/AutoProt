@@ -1,6 +1,6 @@
 """
 pages/5_Differential_Expression.py
-Differential expression analysis using limma-like approach
+Differential expression analysis with integrated benchmark validation
 """
 
 import streamlit as st
@@ -9,6 +9,7 @@ import numpy as np
 from plotnine import *
 from scipy import stats
 from statsmodels.stats.multitest import multipletests
+import pandas as pd
 
 # ============================================================================
 # LOAD DATA
@@ -37,18 +38,72 @@ st.info(f"""
 st.markdown("---")
 
 # ============================================================================
+# 0. SPECIES COMPOSITION (IF AVAILABLE)
+# ============================================================================
+
+if species_col:
+    st.header("0️⃣ Species Composition")
+    
+    # Calculate species composition per condition
+    conditions = {}
+    for col in numeric_cols:
+        condition = col[0]
+        if condition not in conditions:
+            conditions[condition] = []
+        conditions[condition].append(col)
+    
+    composition_data = []
+    
+    for condition, cols in conditions.items():
+        # Count proteins per species in this condition
+        species_counts = df_trans.select([id_col, species_col]).group_by(species_col).agg(
+            pl.count().alias('n_proteins')
+        )
+        
+        total = species_counts['n_proteins'].sum()
+        
+        for row in species_counts.iter_rows(named=True):
+            composition_data.append({
+                'Condition': condition,
+                'Species': row[species_col],
+                'Count': row['n_proteins'],
+                'Percentage': round(row['n_proteins'] / total * 100, 1)
+            })
+    
+    df_composition = pl.DataFrame(composition_data).sort(['Condition', 'Species'])
+    
+    # Display as table
+    st.dataframe(df_composition.to_pandas(), use_container_width=True)
+    
+    # Stacked bar chart
+    plot_composition = (ggplot(df_composition.to_pandas(), 
+                               aes(x='Condition', y='Percentage', fill='Species')) +
+     geom_bar(stat='identity') +
+     geom_text(aes(label='Percentage'), position=position_stack(vjust=0.5),
+               size=8, color='white', fontweight='bold') +
+     labs(title='Species Composition by Condition',
+          x='Condition', y='Percentage (%)', fill='Species') +
+     theme_minimal() +
+     theme(figure_size=(8, 5)))
+    
+    st.pyplot(ggplot.draw(plot_composition))
+    
+    st.markdown("---")
+
+# ============================================================================
 # 1. DEFINE COMPARISON GROUPS
 # ============================================================================
 
 st.header("1️⃣ Define Comparison Groups")
 
-# Group by condition
-conditions = {}
-for col in numeric_cols:
-    condition = col[0]
-    if condition not in conditions:
-        conditions[condition] = []
-    conditions[condition].append(col)
+# Group by condition (reuse if already done)
+if 'conditions' not in locals():
+    conditions = {}
+    for col in numeric_cols:
+        condition = col[0]
+        if condition not in conditions:
+            conditions[condition] = []
+        conditions[condition].append(col)
 
 unique_conds = sorted(conditions.keys())
 
@@ -92,13 +147,13 @@ st.header("2️⃣ Statistical Parameters")
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    fc_threshold = st.number_input(
-        "Log2 FC threshold:",
+    effect_threshold = st.number_input(
+        "Effect size threshold:",
         min_value=0.0,
         max_value=5.0,
         value=1.0,
         step=0.1,
-        help="Fold change cutoff (1.0 = 2-fold)"
+        help="Minimum difference in means (scale depends on transformation)"
     )
 
 with col2:
@@ -120,6 +175,14 @@ with col3:
         value=2,
         help="Minimum non-missing values required"
     )
+
+# Label based on transformation
+if transform_name in ['log2', 'log10', 'ln']:
+    effect_label = "Log Fold Change"
+else:
+    effect_label = "Effect Size (Δ mean)"
+
+st.info(f"**Effect interpretation:** Using {transform_name.upper()}, so effect size = {effect_label}")
 
 st.markdown("---")
 
@@ -154,7 +217,7 @@ def run_limma_analysis(df_dict, control_cols, treatment_cols, min_valid_count, i
         if len(control_vals) < min_valid_count or len(treatment_vals) < min_valid_count:
             results.append({
                 'protein_id': protein_id,
-                'log2fc': np.nan,
+                'effect_size': np.nan,
                 'pvalue': np.nan,
                 'mean_control': np.nan,
                 'mean_treatment': np.nan,
@@ -167,8 +230,8 @@ def run_limma_analysis(df_dict, control_cols, treatment_cols, min_valid_count, i
         mean_ctrl = np.mean(control_vals)
         mean_trt = np.mean(treatment_vals)
         
-        # Log2 fold change
-        log2fc = mean_trt - mean_ctrl
+        # Effect size (difference in means)
+        effect_size = mean_trt - mean_ctrl
         
         # T-test
         try:
@@ -178,7 +241,7 @@ def run_limma_analysis(df_dict, control_cols, treatment_cols, min_valid_count, i
         
         results.append({
             'protein_id': protein_id,
-            'log2fc': log2fc,
+            'effect_size': effect_size,
             'pvalue': pval,
             'mean_control': mean_ctrl,
             'mean_treatment': mean_trt,
@@ -220,9 +283,9 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
         
         # Classify regulation
         results_df = results_df.with_columns([
-            pl.when((pl.col('log2fc') > fc_threshold) & (pl.col('fdr') < pval_threshold))
+            pl.when((pl.col('effect_size') > effect_threshold) & (pl.col('fdr') < pval_threshold))
             .then(pl.lit('upregulated'))
-            .when((pl.col('log2fc') < -fc_threshold) & (pl.col('fdr') < pval_threshold))
+            .when((pl.col('effect_size') < -effect_threshold) & (pl.col('fdr') < pval_threshold))
             .then(pl.lit('downregulated'))
             .when(pl.col('pvalue').is_null())
             .then(pl.lit('not_tested'))
@@ -233,6 +296,7 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
         # Store results
         st.session_state.de_results = results_df
         st.session_state.comparison = f"{treatment} vs {control}"
+        st.session_state.effect_label = effect_label
     
     st.success("✅ Analysis complete!")
     st.rerun()
@@ -246,6 +310,7 @@ if 'de_results' not in st.session_state:
     st.stop()
 
 results_df = st.session_state.de_results
+effect_label = st.session_state.effect_label
 
 st.header("4️⃣ Results Summary")
 
@@ -273,7 +338,7 @@ st.header("5️⃣ Volcano Plot")
 # Prepare data for plotting
 df_volcano = results_df.filter(
     pl.col('pvalue').is_not_null() & 
-    pl.col('log2fc').is_finite() &
+    pl.col('effect_size').is_finite() &
     pl.col('neg_log10_pval').is_finite()
 ).with_columns([
     pl.when(pl.col('regulation') == 'upregulated')
@@ -285,14 +350,14 @@ df_volcano = results_df.filter(
 ])
 
 # Create volcano plot
-plot_volcano = (ggplot(df_volcano.to_pandas(), aes(x='log2fc', y='neg_log10_pval', color='sig_label')) +
+plot_volcano = (ggplot(df_volcano.to_pandas(), aes(x='effect_size', y='neg_log10_pval', color='sig_label')) +
  geom_point(alpha=0.6, size=1.5) +
  geom_hline(yintercept=-np.log10(pval_threshold), linetype='dashed', color='gray') +
- geom_vline(xintercept=fc_threshold, linetype='dashed', color='gray') +
- geom_vline(xintercept=-fc_threshold, linetype='dashed', color='gray') +
+ geom_vline(xintercept=effect_threshold, linetype='dashed', color='gray') +
+ geom_vline(xintercept=-effect_threshold, linetype='dashed', color='gray') +
  scale_color_manual(values={'Up': '#e74c3c', 'Down': '#3498db', 'NS': '#95a5a6'}) +
  labs(title=f'Volcano Plot: {treatment} vs {control}',
-      x='Log2 Fold Change',
+      x=effect_label,
       y='-Log10(P-value)',
       color='Regulation') +
  theme_minimal() +
@@ -321,7 +386,7 @@ with col1:
 with col2:
     sort_by = st.selectbox(
         "Sort by:",
-        options=['fdr', 'pvalue', 'log2fc', 'mean_control', 'mean_treatment'],
+        options=['fdr', 'pvalue', 'effect_size', 'mean_control', 'mean_treatment'],
         index=0
     )
 
@@ -379,11 +444,6 @@ with col3:
     )
 
 st.markdown("---")
-st.success("✅ Differential expression analysis complete!")
-
-# Add this after the "7️⃣ Export Results" section in pages/5_Differential_Expression.py
-
-st.markdown("---")
 
 # ============================================================================
 # 8. BENCHMARK PLOTS (For Spike-in Validation)
@@ -391,95 +451,112 @@ st.markdown("---")
 
 st.header("8️⃣ Benchmark Plots (Spike-in Validation)")
 st.info("**Optional:** For datasets with known mixing ratios, validate quantification accuracy")
-# Replace the "Define Expected Fold Changes" section with this:
 
-# ============================================================================
-# Define spike-in fractions and calculate expected log2 FC
-# ============================================================================
-
-st.subheader("Define Spike-in Fractions")
-st.info("**Enter mixing ratios** for each species in both conditions. Log2 FC will be calculated automatically.")
-
-species_list = df_trans[species_col].unique().to_list()
-
-# Create input columns for fractions
-col_header1, col_header2 = st.columns(2)
-col_header1.markdown(f"**Condition: {control}**")
-col_header2.markdown(f"**Condition: {treatment}**")
-
-fractions_control = {}
-fractions_treatment = {}
-expected_fc = {}
-
-for species in species_list:
-    col1, col2 = st.columns(2)
+if species_col:
     
-    with col1:
-        fractions_control[species] = st.number_input(
-            f"{species} fraction:",
-            min_value=0.0,
-            max_value=100.0,
-            value=33.33 if len(species_list) == 3 else 50.0,
-            step=1.0,
-            key=f"frac_ctrl_{species}",
-            help=f"Percentage of {species} in {control}"
+    if st.checkbox("🔬 Run Benchmark Analysis", value=False):
+        
+        # ============================================================================
+        # Define spike-in fractions and calculate expected log2 FC
+        # ============================================================================
+        
+        st.subheader("Define Spike-in Fractions")
+        st.info("**Enter mixing ratios** for each species in both conditions. Log2 FC will be calculated automatically.")
+        
+        species_list = df_trans[species_col].unique().to_list()
+        
+        # Create input columns for fractions
+        col_header1, col_header2 = st.columns(2)
+        col_header1.markdown(f"**Condition: {control}**")
+        col_header2.markdown(f"**Condition: {treatment}**")
+        
+        fractions_control = {}
+        fractions_treatment = {}
+        expected_fc = {}
+        
+        for species in species_list:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                fractions_control[species] = st.number_input(
+                    f"{species} fraction (%):",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=33.33 if len(species_list) == 3 else 50.0,
+                    step=1.0,
+                    key=f"frac_ctrl_{species}",
+                    help=f"Percentage of {species} in {control}"
+                )
+            
+            with col2:
+                fractions_treatment[species] = st.number_input(
+                    f"{species} fraction (%):",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=33.33 if len(species_list) == 3 else 50.0,
+                    step=1.0,
+                    key=f"frac_trt_{species}",
+                    help=f"Percentage of {species} in {treatment}"
+                )
+        
+        # Calculate log2 fold changes
+        st.markdown("---")
+        st.subheader("Calculated Expected Log2 Fold Changes")
+        
+        expected_fc_data = []
+        
+        for species in species_list:
+            frac_ctrl = fractions_control[species] / 100  # Convert to proportion
+            frac_trt = fractions_treatment[species] / 100
+            
+            # Avoid log2(0)
+            if frac_ctrl > 0 and frac_trt > 0:
+                log2_fc = np.log2(frac_trt / frac_ctrl)
+                expected_fc[species] = log2_fc
+            elif frac_trt > 0:
+                log2_fc = np.inf
+                expected_fc[species] = 5.0  # Cap at high value
+            elif frac_ctrl > 0:
+                log2_fc = -np.inf
+                expected_fc[species] = -5.0  # Cap at low value
+            else:
+                log2_fc = 0.0
+                expected_fc[species] = 0.0
+            
+            expected_fc_data.append({
+                'Species': species,
+                f'{control} (%)': fractions_control[species],
+                f'{treatment} (%)': fractions_treatment[species],
+                'Fold Change': round(frac_trt / frac_ctrl, 3) if frac_ctrl > 0 else np.inf,
+                'Log2 FC': round(log2_fc, 3) if np.isfinite(log2_fc) else log2_fc
+            })
+        
+        df_expected = pl.DataFrame(expected_fc_data)
+        st.dataframe(df_expected.to_pandas(), use_container_width=True)
+        
+        # Validation check
+        total_ctrl = sum(fractions_control.values())
+        total_trt = sum(fractions_treatment.values())
+        
+        if abs(total_ctrl - 100) > 0.1:
+            st.warning(f"⚠️ {control} fractions sum to {total_ctrl:.1f}% (should be 100%)")
+        if abs(total_trt - 100) > 0.1:
+            st.warning(f"⚠️ {treatment} fractions sum to {total_trt:.1f}% (should be 100%)")
+        
+        # Join species info with results
+        df_bench = df_trans.select([id_col, species_col]).join(
+            results_df,
+            left_on=id_col,
+            right_on='protein_id',
+            how='inner'
+        ).with_columns([
+            pl.col(species_col).map_dict(expected_fc).alias('expected_fc')
+        ]).filter(
+            pl.col('effect_size').is_finite() &
+            pl.col('expected_fc').is_not_null()
         )
-    
-    with col2:
-        fractions_treatment[species] = st.number_input(
-            f"{species} fraction:",
-            min_value=0.0,
-            max_value=100.0,
-            value=33.33 if len(species_list) == 3 else 50.0,
-            step=1.0,
-            key=f"frac_trt_{species}",
-            help=f"Percentage of {species} in {treatment}"
-        )
-
-# Calculate log2 fold changes
-st.markdown("---")
-st.subheader("Calculated Expected Log2 Fold Changes")
-
-expected_fc_data = []
-
-for species in species_list:
-    frac_ctrl = fractions_control[species] / 100  # Convert to proportion
-    frac_trt = fractions_treatment[species] / 100
-    
-    # Avoid log2(0)
-    if frac_ctrl > 0 and frac_trt > 0:
-        log2_fc = np.log2(frac_trt / frac_ctrl)
-        expected_fc[species] = log2_fc
-    elif frac_trt > 0:
-        log2_fc = np.inf
-        expected_fc[species] = 5.0  # Cap at high value
-    elif frac_ctrl > 0:
-        log2_fc = -np.inf
-        expected_fc[species] = -5.0  # Cap at low value
-    else:
-        log2_fc = 0.0
-        expected_fc[species] = 0.0
-    
-    expected_fc_data.append({
-        'Species': species,
-        f'{control} (%)': fractions_control[species],
-        f'{treatment} (%)': fractions_treatment[species],
-        'Fold Change': round(frac_trt / frac_ctrl, 3) if frac_ctrl > 0 else np.inf,
-        'Log2 FC': round(log2_fc, 3) if np.isfinite(log2_fc) else log2_fc
-    })
-
-df_expected = pl.DataFrame(expected_fc_data)
-st.dataframe(df_expected.to_pandas(), use_container_width=True)
-
-# Validation check
-total_ctrl = sum(fractions_control.values())
-total_trt = sum(fractions_treatment.values())
-
-if abs(total_ctrl - 100) > 0.1:
-    st.warning(f"⚠️ {control} fractions sum to {total_ctrl:.1f}% (should be 100%)")
-if abs(total_trt - 100) > 0.1:
-    st.warning(f"⚠️ {treatment} fractions sum to {total_trt:.1f}% (should be 100%)")
-
+        
+        st.markdown("---")
         
         # ============================================================================
         # 8.1 SCATTER PLOTS (Observed vs Expected)
@@ -572,10 +649,10 @@ if abs(total_trt - 100) > 0.1:
         st.markdown("---")
         
         # ============================================================================
-        # 8.3 ROC CURVE
+        # 8.3 ROC AND PRECISION-RECALL CURVES
         # ============================================================================
         
-        st.subheader("8.3 ROC Curve (True Positive Detection)")
+        st.subheader("8.3 Classification Performance")
         
         col_roc, col_pr = st.columns(2)
         
@@ -620,10 +697,6 @@ if abs(total_trt - 100) > 0.1:
             st.pyplot(ggplot.draw(plot_roc))
             st.metric("AUC", f"{auc:.3f}", help="Area Under Curve (1.0 = perfect)")
         
-        # ============================================================================
-        # 8.4 PRECISION-RECALL CURVE
-        # ============================================================================
-        
         with col_pr:
             precision_list = []
             recall_list = []
@@ -659,10 +732,10 @@ if abs(total_trt - 100) > 0.1:
         st.markdown("---")
         
         # ============================================================================
-        # 8.5 SUMMARY TABLE
+        # 8.4 SUMMARY TABLE
         # ============================================================================
         
-        st.subheader("8.5 Benchmark Summary Statistics")
+        st.subheader("8.4 Benchmark Summary Statistics")
         
         summary_stats = []
         
@@ -711,4 +784,3 @@ else:
 
 st.markdown("---")
 st.success("✅ Differential expression analysis complete!")
-
