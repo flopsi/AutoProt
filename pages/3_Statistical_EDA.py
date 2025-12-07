@@ -860,7 +860,6 @@ if st.button("🚀 Apply Filters", type="primary", use_container_width=True):
 # ============================================================================
 # DOWNLOAD FILTERED DATA
 # ============================================================================
-
 if 'df_filtered' in st.session_state:
     st.markdown("---")
     st.subheader("📥 Download Filtered Data")
@@ -875,33 +874,6 @@ if 'df_filtered' in st.session_state:
 
 st.markdown("---")
 
-# ============================================================================
-# DOWNLOAD FILTERED DATA
-# ============================================================================
-
-if 'df_filtered' in st.session_state:
-    st.markdown("---")
-    st.subheader("📥 Download Filtered Data")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.download_button(
-            "Download Filtered (Raw)",
-            st.session_state.df_filtered.write_csv(),
-            "filtered_raw.csv",
-            "text/csv"
-        )
-    
-    with col2:
-        st.download_button(
-            "Download Transformed",
-            st.session_state.df_transformed.write_csv(),
-            "filtered_transformed.csv",
-            "text/csv"
-        )
-
-st.markdown("---")
 
 
 # ============================================================================
