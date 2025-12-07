@@ -1,6 +1,7 @@
 """
 helpers/naming.py - COLUMN NAME UTILITIES
 Functions to clean, trim, and standardize column names for display
+UPDATED: Enhanced standardize_condition_names for condition/replicate pattern.
 """
 
 import pandas as pd
@@ -95,7 +96,7 @@ def abbreviate_name(name: str, style: str = 'short') -> str:
 
 def standardize_condition_names(columns: List[str]) -> Dict[str, str]:
     """
-    Create mapping of original → standardized condition names.
+    Create mapping of original → standardized condition names (Condition_R#).
     Handles patterns like: A1, A2, B1, B2 or S1_Cond_A, S2_Cond_A, etc.
     
     Args:
@@ -109,16 +110,26 @@ def standardize_condition_names(columns: List[str]) -> Dict[str, str]:
     for col in columns:
         col_str = str(col).strip()
         
-        # Extract condition letter (A, B, C, etc.)
-        match = re.search(r'([A-Z])\d', col_str)
-        if match:
-            condition = match.group(1)
-            # Try to extract sample number
-            num_match = re.search(r'(\d+)', col_str)
-            sample_num = num_match.group(1) if num_match else '1'
-            mapping[col_str] = f"{condition}{sample_num}"
-        else:
-            mapping[col_str] = trim_name(col_str)
+        # 1. Try to find a simple letter/number pattern (A1, B2, C3)
+        match_simple = re.search(r'([a-zA-Z]+)[_\-\s]*(\d+)', col_str)
+        if match_simple:
+            condition = match_simple.group(1).upper()
+            replicate = match_simple.group(2)
+            mapping[col_str] = f"{condition}_R{replicate}"
+            continue
+
+        # 2. Try to find a replicate/run number at the end (_01.raw, R03)
+        match_end = re.search(r'[_\-\s][rR]?(\d+)', col_str)
+        if match_end:
+            replicate = match_end.group(1).lstrip('0')
+            # Extract everything before the match as the condition name
+            condition_raw = col_str[:match_end.start()].strip('_- ')
+            condition = condition_raw.replace('_', '-').replace('.', '')
+            mapping[col_str] = f"{condition}_R{replicate}"
+            continue
+        
+        # 3. Fallback to truncation (if no clear pattern)
+        mapping[col_str] = trim_name(col_str)
     
     return mapping
 
@@ -161,7 +172,7 @@ def rename_columns_for_display(
     Args:
         df: Input DataFrame
         columns: Columns to rename (typically sample columns)
-        style: 'trim', 'clean', 'smart', or 'short'
+        style: 'trim', 'clean', 'smart' (condition-aware), or 'short'
         
     Returns:
         Tuple of (renamed_df, mapping_dict)
@@ -171,6 +182,7 @@ def rename_columns_for_display(
     elif style == 'clean':
         mapping = {col: clean_name(col) for col in columns}
     elif style == 'smart':
+        # Use the condition-aware standardization
         mapping = standardize_condition_names(columns)
     elif style == 'short':
         mapping = create_short_labels(columns)
