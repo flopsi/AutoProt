@@ -877,7 +877,7 @@ if has_peptide and tab_peptide:
             df_filtered_2 = df_filtered_1
             n_removed_2 = 0
             st.info("⏭️ Filter 2 disabled")
-       # ====================================================================
+        # ====================================================================
         # FILTER 3: MIN PEPTIDES PER PROTEIN
         # ====================================================================
         
@@ -905,7 +905,7 @@ if has_peptide and tab_peptide:
                 disabled=not enable_min_peptides
             )
         
-        # Always define df_filtered_3 and n_proteins_final
+        #Always define df_filtered_3 and n_proteins_final
         if enable_min_peptides:
             # Count peptides per protein
             peptides_per_protein = df_filtered_2.group_by(id_col).agg(
@@ -914,8 +914,7 @@ if has_peptide and tab_peptide:
             
             # Keep proteins with enough peptides
             proteins_to_keep = peptides_per_protein.filter(
-                pl.col('n_peptides') >= min_peptides
-            )[id_col].to_list()
+                pl.col('n_peptides') >= min_peptides)[id_col].to_list()
             
             df_filtered_3 = df_filtered_2.filter(pl.col(id_col).is_in(proteins_to_keep))
             n_removed_3 = df_filtered_2.shape[0] - df_filtered_3.shape[0]
@@ -952,13 +951,13 @@ if has_peptide and tab_peptide:
         pct_peptides_removed = total_removed / df.shape[0] * 100 if df.shape[0] > 0 else 0
         pct_proteins_removed = (n_proteins - n_proteins_final) / n_proteins * 100 if n_proteins > 0 else 0
         
-        st.info(f"""
-        **Removed:**
-        - Peptides: {total_removed:,} ({pct_peptides_removed:.1f}%)
-        - Proteins: {n_proteins - n_proteins_final:,} ({pct_proteins_removed:.1f}%)
-        - Avg peptides/protein: {df_filtered_3.shape[0] / n_proteins_final:.1f} (was {df.shape[0] / n_proteins:.1f})
-        """)
-        
+    st.info(f"""
+    **Removed:**
+    - Peptides: {total_removed:,} ({pct_peptides_removed:.1f}%)
+    - Proteins: {n_proteins - n_proteins_final:,} ({pct_proteins_removed:.1f}%)
+    - Avg peptides/protein: {df_filtered_3.shape[0] / n_proteins_final:.1f} (was {df.shape[0] / n_proteins:.1f})
+    """)
+    
         # ====================================================================
         # SAVE FILTERED DATA
         # ====================================================================
