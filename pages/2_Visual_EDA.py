@@ -877,8 +877,7 @@ if has_peptide and tab_peptide:
             df_filtered_2 = df_filtered_1
             n_removed_2 = 0
             st.info("⏭️ Filter 2 disabled")
-        
-        # ====================================================================
+       # ====================================================================
         # FILTER 3: MIN PEPTIDES PER PROTEIN
         # ====================================================================
         
@@ -906,6 +905,7 @@ if has_peptide and tab_peptide:
                 disabled=not enable_min_peptides
             )
         
+        # Always define df_filtered_3 and n_proteins_final
         if enable_min_peptides:
             # Count peptides per protein
             peptides_per_protein = df_filtered_2.group_by(id_col).agg(
@@ -927,6 +927,7 @@ if has_peptide and tab_peptide:
             n_removed_3 = 0
             n_proteins_final = df_filtered_3[id_col].n_unique()
             st.info(f"⏭️ Filter 3 disabled - {df_filtered_3.shape[0]:,} peptides from {n_proteins_final:,} proteins")
+
         
         # ====================================================================
         # FINAL SUMMARY
