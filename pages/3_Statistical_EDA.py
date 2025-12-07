@@ -24,6 +24,30 @@ numeric_cols = st.session_state.numeric_cols
 id_col = st.session_state.id_col
 replicates = st.session_state.replicates
 
+# Compute log2 if not cached
+@st.cache_data
+def compute_log2_safe(df_dict: dict, cols: list) -> dict:
+    """Cache log2 transformation with missing value handling."""
+    df = pl.from_dict(df_dict)
+    
+    df_log2 = df.with_columns([
+        pl.when(pl.col(c).cast(pl.Utf8).str.to_uppercase() == "NAN")
+        .then(1.0)
+        .when(pl.col(c).is_null())
+        .then(1.0)
+        .when(pl.col(c) == 0.0)
+        .then(1.0)
+        .otherwise(pl.col(c))
+        .clip(lower_bound=1.0)
+        .log(2)
+        .alias(c)
+        for c in cols
+    ])
+    
+    return df_log2.to_dict(as_series=False)
+
+df_log2 = pl.from_dict(compute_log2_safe(df.to_dict(as_series=False), numeric_cols))
+
 # ============================================================================
 # 1. RAW INTENSITY DISTRIBUTIONS WITH KDE (3x2 GRID)
 # ============================================================================
