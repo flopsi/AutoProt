@@ -809,9 +809,13 @@ else:
 # APPLY FILTERS & TRANSFORMATION
 # ============================================================================
 
-if st.button("🚀 Apply Filters & Transformation", type="primary", use_container_width=True):
+# ============================================================================
+# APPLY FILTERS (NO TRANSFORMATION YET)
+# ============================================================================
+
+if st.button("🚀 Apply Filters", type="primary", use_container_width=True):
     
-    with st.spinner("Applying filters and transformation..."):
+    with st.spinner("Applying filters..."):
         
         # Get species column from session state
         species_col = st.session_state.species_col
@@ -819,39 +823,57 @@ if st.button("🚀 Apply Filters & Transformation", type="primary", use_containe
         # Get clean numeric columns only (drop CV columns if added)
         final_numeric_cols = [c for c in numeric_cols if c in df_filtered.columns]
         
-        # Build selection list (only include species_col if it exists in df_filtered)
+        # Build selection list
         select_cols = [id_col]
         if species_col and species_col in df_filtered.columns:
             select_cols.append(species_col)
         select_cols.extend(final_numeric_cols)
         
-        df_filtered = df_filtered.select(select_cols)
+        df_filtered_clean = df_filtered.select(select_cols)
         
-        # Apply selected transformation
-        df_transformed_final = pl.from_dict(all_transforms[selected_final_transform])
-        
-        # Filter to same proteins
-        df_transformed_final = df_transformed_final.filter(
-            pl.col(id_col).is_in(df_filtered[id_col])
-        )
-        
-        # Store in session state
-        st.session_state.df_filtered = df_filtered
-        st.session_state.df_transformed = df_transformed_final
-        st.session_state.transform_applied = TRANSFORM_NAMES[selected_final_transform]
+        # Store in session state (NO TRANSFORMATION)
+        st.session_state.df_filtered = df_filtered_clean
+        st.session_state.numeric_cols_filtered = final_numeric_cols
         st.session_state.filtering_summary = {
             'original': n_original,
             'final': n_final,
             'retention': retention_rate,
-            'transform': TRANSFORM_NAMES[selected_final_transform],
-            'cv_threshold': cv_threshold if cv_filter else None
+            'cv_threshold': cv_threshold if cv_filter else None,
+            'remove_missing': remove_missing
         }
+        
+        # Store recommended transformation
+        if auto_transform:
+            best_transform_row = df_transform_stats.sort('Normality Score').row(0, named=True)
+            st.session_state.recommended_transform = best_transform_row['_key']
+            st.session_state.recommended_transform_name = best_transform_row['Transform']
+        else:
+            st.session_state.recommended_transform = manual_transform
+            st.session_state.recommended_transform_name = TRANSFORM_NAMES[manual_transform]
     
-    st.success("✅ Filters applied and data transformed!")
+    st.success("✅ Filters applied!")
     st.balloons()
     
     # Show what's next
-    st.info("**Next steps:** Proceed to differential expression analysis")
+    st.info("**Next step:** Go to **Quality Overview** page to review filtered data and apply transformation")
+
+# ============================================================================
+# DOWNLOAD FILTERED DATA
+# ============================================================================
+
+if 'df_filtered' in st.session_state:
+    st.markdown("---")
+    st.subheader("📥 Download Filtered Data")
+    
+    st.download_button(
+        "Download Filtered Data (CSV)",
+        st.session_state.df_filtered.write_csv(),
+        "filtered_data.csv",
+        "text/csv",
+        use_container_width=True
+    )
+
+st.markdown("---")
 
 # ============================================================================
 # DOWNLOAD FILTERED DATA
