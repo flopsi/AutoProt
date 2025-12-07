@@ -285,10 +285,10 @@ st.markdown("---")
 # ============================================================================
 
 st.subheader("5️⃣ Protein Count by CV Threshold")
-st.info("**Quality tiers:** CV < 10% (excellent), CV < 20% (good), Total (all valid proteins)")
+st.info("**Quality tiers:** Total (all valid), CV < 20% (good+excellent), CV < 10% (excellent)")
 
 # Calculate CV categories for each condition
-cv_threshold_data = []
+cv_plot_data = []
 
 for condition, cols in conditions.items():
     # Calculate CV for this condition
@@ -303,48 +303,27 @@ for condition, cols in conditions.items():
     
     # Count by threshold
     total = df_cv_cond.shape[0]
+    cv_under_20 = df_cv_cond.filter(pl.col('cv') < 20).shape[0]
     cv_under_10 = df_cv_cond.filter(pl.col('cv') < 10).shape[0]
-    cv_10_to_20 = df_cv_cond.filter((pl.col('cv') >= 10) & (pl.col('cv') < 20)).shape[0]
-    cv_over_20 = df_cv_cond.filter(pl.col('cv') >= 20).shape[0]
     
-    cv_threshold_data.append({
-        'condition': condition,
-        'category': 'CV ≥ 20%',
-        'count': cv_over_20,
-        'order': 1
-    })
-    cv_threshold_data.append({
-        'condition': condition,
-        'category': 'CV 10-20%',
-        'count': cv_10_to_20,
-        'order': 2
-    })
-    cv_threshold_data.append({
-        'condition': condition,
-        'category': 'CV < 10%',
-        'count': cv_under_10,
-        'order': 3
-    })
+    cv_plot_data.append({'condition': condition, 'threshold': 'Total', 'count': total})
+    cv_plot_data.append({'condition': condition, 'threshold': 'CV < 20%', 'count': cv_under_20})
+    cv_plot_data.append({'condition': condition, 'threshold': 'CV < 10%', 'count': cv_under_10})
 
-df_cv_thresh_long = pl.DataFrame(cv_threshold_data).sort(['condition', 'order'])
+df_cv_plot = pl.DataFrame(cv_plot_data)
 
-# Calculate label positions
-df_cv_thresh_long = df_cv_thresh_long.with_columns([
-    (pl.col('count').cum_sum().over('condition') - pl.col('count') / 2).alias('label_pos')
-])
-
-# Stacked bar plot with correct order (bottom to top: red, orange, green)
-plot = (ggplot(df_cv_thresh_long.to_pandas(), aes(x='condition', y='count', fill='category')) +
- geom_bar(stat='identity') +
- geom_text(aes(y='label_pos', label='count'), 
-           size=9, color='white', fontweight='bold') +
+# Grouped bar plot
+plot = (ggplot(df_cv_plot.to_pandas(), aes(x='condition', y='count', fill='threshold')) +
+ geom_bar(stat='identity', position='dodge') +
+ geom_text(aes(label='count'), position=position_dodge(width=0.9),
+           va='bottom', size=9, fontweight='bold') +
  scale_fill_manual(values={
-     'CV ≥ 20%': '#e74c3c',      # Red (bottom)
-     'CV 10-20%': '#f39c12',     # Orange (middle)
-     'CV < 10%': '#2ecc71'       # Green (top)
+     'Total': '#95a5a6',        # Gray
+     'CV < 20%': '#f39c12',     # Orange
+     'CV < 10%': '#2ecc71'      # Green
  }) +
  labs(title='Protein Count by CV Quality Threshold',
-      x='Condition', y='Protein Count', fill='CV Category') +
+      x='Condition', y='Protein Count', fill='Threshold') +
  theme_minimal() +
  theme(axis_text_x=element_text(size=12),
        figure_size=(10, 6)))
@@ -354,20 +333,23 @@ st.pyplot(ggplot.draw(plot))
 # Summary table
 st.markdown("**Protein Counts by CV Threshold:**")
 
-# Pivot back to wide format for summary
-df_summary = pl.DataFrame([
-    {
+summary_data = []
+for cond in sorted(conditions.keys()):
+    cond_data = df_cv_plot.filter(pl.col('condition') == cond)
+    total = cond_data.filter(pl.col('threshold') == 'Total')['count'][0]
+    cv_lt_20 = cond_data.filter(pl.col('threshold') == 'CV < 20%')['count'][0]
+    cv_lt_10 = cond_data.filter(pl.col('threshold') == 'CV < 10%')['count'][0]
+    
+    summary_data.append({
         'Condition': cond,
-        'CV < 10%': df_cv_thresh_long.filter((pl.col('condition') == cond) & (pl.col('category') == 'CV < 10%'))['count'][0],
-        'CV 10-20%': df_cv_thresh_long.filter((pl.col('condition') == cond) & (pl.col('category') == 'CV 10-20%'))['count'][0],
-        'CV ≥ 20%': df_cv_thresh_long.filter((pl.col('condition') == cond) & (pl.col('category') == 'CV ≥ 20%'))['count'][0]
-    }
-    for cond in sorted(conditions.keys())
-]).with_columns([
-    (pl.col('CV < 10%') + pl.col('CV 10-20%') + pl.col('CV ≥ 20%')).alias('Total'),
-    (pl.col('CV < 10%') / (pl.col('CV < 10%') + pl.col('CV 10-20%') + pl.col('CV ≥ 20%')) * 100).alias('% < 10%'),
-    ((pl.col('CV < 10%') + pl.col('CV 10-20%')) / (pl.col('CV < 10%') + pl.col('CV 10-20%') + pl.col('CV ≥ 20%')) * 100).alias('% < 20%')
-])
+        'Total': total,
+        'CV < 20%': cv_lt_20,
+        'CV < 10%': cv_lt_10,
+        '% < 20%': round(cv_lt_20 / total * 100, 1) if total > 0 else 0,
+        '% < 10%': round(cv_lt_10 / total * 100, 1) if total > 0 else 0
+    })
+
+df_summary = pl.DataFrame(summary_data)
 
 st.dataframe(df_summary.to_pandas(), use_container_width=True)
 
@@ -379,3 +361,4 @@ st.download_button(
 )
 
 st.markdown("---")
+
