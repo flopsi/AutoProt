@@ -659,3 +659,77 @@ if species_col:
             st.warning("Insufficient contaminant proteins")
 
 st.markdown("---")
+
+# ============================================================================
+# 6. CONFIRM & PROCEED
+# ============================================================================
+
+st.header("6️⃣ Confirm Data & Proceed")
+
+# Show summary of what will be saved
+if 'df_transformed' in st.session_state:
+    summary = st.session_state.filtering_summary
+    transform_name = st.session_state.transform_applied
+    
+    st.info(f"""
+    **Ready for Differential Expression Analysis:**
+    - **Proteins:** {summary['final']:,} (filtered from {summary['original']:,})
+    - **Transformation:** {transform_name.upper()}
+    - **Samples:** {len(numeric_cols)} across {len(unique_conds)} conditions
+    - **Data Quality:** Filters applied, transformation validated
+    """)
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        if st.button("✅ Confirm & Proceed to Differential Expression", type="primary", use_container_width=True):
+            # Final confirmation - data is ready
+            st.session_state.data_ready = True
+            st.success("✅ Data confirmed and ready for analysis!")
+            st.balloons()
+            
+            # Auto-navigate after short delay
+            import time
+            time.sleep(1.5)
+            st.switch_page("pages/5_Differential_Expression.py")
+    
+    with col2:
+        # Option to go back and re-filter
+        if st.button("← Back to Filtering", use_container_width=True):
+            st.switch_page("pages/3_Statistical_EDA.py")
+
+else:
+    st.warning("⚠️ Please apply transformation first (see section 4 above)")
+
+st.markdown("---")
+
+# ============================================================================
+# DOWNLOAD SECTION (only if transformed)
+# ============================================================================
+
+if 'df_transformed' in st.session_state:
+    st.subheader("📥 Download Processed Data")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.download_button(
+            "Download Filtered (Raw)",
+            st.session_state.df_filtered.write_csv(),
+            "filtered_raw.csv",
+            "text/csv",
+            use_container_width=True
+        )
+    
+    with col2:
+        st.download_button(
+            "Download Transformed",
+            st.session_state.df_transformed.write_csv(),
+            "filtered_transformed.csv",
+            "text/csv",
+            use_container_width=True
+        )
+
+st.markdown("---")
+st.caption("**Next page:** Differential Expression Analysis with statistical tests and volcano plots")
+
