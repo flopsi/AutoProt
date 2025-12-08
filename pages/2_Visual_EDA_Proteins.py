@@ -30,23 +30,6 @@ st.markdown("Exploratory Data Analysis: Distributions, Quality, and Patterns")
 # DATA VALIDATION
 # ============================================================================
 
-if 'data_ready' not in st.session_state or not st.session_state.data_ready:
-    st.error("📥 Please upload protein data first on the **Data Upload** page")
-    st.stop()
-
-if st.session_state.data_type != 'protein':
-    st.error("⚠️ This page is for protein data. Please upload protein data on the **Data Upload** page")
-    st.stop()
-
-# Get data from session state
-df_raw = st.session_state.df_raw
-numeric_cols = st.session_state.numeric_cols
-id_col = st.session_state.id_col
-species_col = st.session_state.species_col
-data_type = 'Protein'
-
-# Convert Pandas DataFrame to Polars DataFrame once
-df_raw_pl = pl.from_pandas(df_raw)
 
 # ============================================================================
 # HELPER FUNCTIONS
