@@ -105,8 +105,9 @@ st.dataframe(df_raw)
 # ============================================================================
 # Select columns
 # ============================================================================
-selected = st.dataframe(
-    df_raw,
+selected = df_raw.copy()
+st.dataframe(
+    selected,
     key = "selected_Data",
     on_select = st.write(st.session_state.selected),
     selection_mode=["multi-column"])
