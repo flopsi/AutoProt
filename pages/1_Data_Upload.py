@@ -107,12 +107,14 @@ st.dataframe(df_raw)
 # Select columns
 # ============================================================================
 
-test = st.dataframe(df_raw,
-    key = "selected_data",
-    on_select ="rerun",
-    selection_mode=["multi-column"])
+event = st.dataframe(
+    df_raw,
+    key="data",
+    on_select="rerun",
+    selection_mode=["multi-row", "multi-column", "multi-cell"],
+)
 
-test.selection
+event.selection
 # ============================================================================
 # FOOTER
 # ============================================================================
