@@ -110,7 +110,7 @@ st.dataframe(df_raw)
 st.dataframe(
     df_raw,
     key = "selected_data",
-    on_select ="rerun",
+    on_select ="ignore",
     selection_mode=["multi-column"])
 
 # ============================================================================
