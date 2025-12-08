@@ -1,333 +1,299 @@
 """
-helpers/io.py - DATA INPUT/OUTPUT UTILITIES
-File loading, validation, and format detection
+helpers/naming.py - COLUMN NAME UTILITIES
+Functions to clean, trim, and standardize column names for display
+UPDATED: Enhanced standardize_condition_names to prioritize replicate detection at the end of the name.
 """
 
 import pandas as pd
-import numpy as np
-from typing import Tuple, List, Optional
-import streamlit as st
+from typing import List, Dict, Tuple
+import re
 
 # ============================================================================
-# FILE LOADING
+# NAME CLEANING
 # ============================================================================
 
-@st.cache_data(ttl=3600)
-def load_csv(file_path: str, **kwargs) -> pd.DataFrame:
-    """Load CSV file with sensible defaults."""
-    return pd.read_csv(file_path, index_col=None, **kwargs)
-
-
-@st.cache_data(ttl=3600)
-def load_excel(file_path: str, sheet_name: int = 0, **kwargs) -> pd.DataFrame:
-    """Load Excel file."""
-    return pd.read_excel(file_path, sheet_name=sheet_name, **kwargs)
-
-# ============================================================================
-# COLUMN DETECTION
-# ============================================================================
-
-"""
-FIXED: helpers/io.py - detect_numeric_columns() with string conversion
-
-The issue: Your CSV has numeric data stored as strings (object dtype)
-like "682.63" instead of 682.63 (float).
-
-The fix: Try to convert columns to numeric, then detect which ones succeeded.
-"""
-
-# ============================================================================
-# NUMERIC COLUMN DETECTION - FIXED
-# ============================================================================
-
-def detect_numeric_columns(df: pd.DataFrame) -> Tuple[List[str], List[str]]:
+def trim_name(name: str, max_length: int = 20) -> str:
     """
-    Detect which columns contain numeric intensity data.
-    
-    ENHANCED: Also detects columns with string-formatted numbers (e.g., "682.63")
-    and auto-converts them to float.
+    Trim column name to reasonable length for plotting.
     
     Args:
-        df: Input DataFrame
+        name: Original name
+        max_length: Maximum length (default 20)
         
     Returns:
-        Tuple of (numeric_cols, categorical_cols)
-        - numeric_cols: Columns that are numeric OR can be converted to numeric
-        - categorical_cols: Columns that are truly non-numeric
+        Trimmed name
     """
+    name = str(name).strip()
     
-    numeric_cols = []
-    categorical_cols = []
+    if len(name) <= max_length:
+        return name
     
-    for col in df.columns:
-        # Check 1: Already numeric (int, float, etc.)
-        if pd.api.types.is_numeric_dtype(df[col]):
-            numeric_cols.append(col)
-            continue
-        
-        # Check 2: Try to convert string to numeric
-        if df[col].dtype == 'object' or df[col].dtype == 'string':
-            try:
-                # Attempt conversion to numeric
-                # errors='coerce' converts non-numeric to NaN
-                converted = pd.to_numeric(df[col], errors='coerce')
-                
-                # Check if MOST values converted successfully
-                # (allow up to 5% NaN from conversion)
-                non_null_original = df[col].notna().sum()
-                non_null_converted = converted.notna().sum()
-                
-                if non_null_converted > 0 and (non_null_converted / non_null_original >= 0.95):
-                    # Successfully converted! Add to numeric list
-                    numeric_cols.append(col)
-                    continue
-            
-            except Exception:
-                pass  # Not convertible, treat as categorical
-        
-        # If we get here, it's categorical
-        categorical_cols.append(col)
+    # Try to trim intelligently
+    if '_' in name:
+        # Abbreviate by taking first letter of each segment
+        parts = name.split('_')
+        if len(parts) > 1:
+            abbreviated = ''.join([p[0] for p in parts if p])
+            if len(abbreviated) <= max_length:
+                return abbreviated
     
-    return numeric_cols, categorical_cols
+    # Fall back to truncation
+    return name[:max_length-1] + '…'
 
 
-def convert_string_numbers_to_float(df: pd.DataFrame, numeric_cols: List[str]) -> pd.DataFrame:
+def clean_name(name: str) -> str:
     """
-    Convert string-formatted numbers to actual floats.
-    
-    This should be called AFTER detect_numeric_columns() identifies the columns.
-    Modifies the DataFrame in-place to convert columns.
+    Clean column name by removing special characters and standardizing.
     
     Args:
-        df: Input DataFrame
-        numeric_cols: List of column names identified as numeric
+        name: Original name
         
     Returns:
-        DataFrame with numeric columns converted to float
+        Cleaned name
     """
+    # Remove leading/trailing whitespace
+    name = str(name).strip()
     
-    df = df.copy()
+    # Replace multiple spaces with single space
+    name = re.sub(r'\s+', ' ', name)
     
-    for col in numeric_cols:
-        if df[col].dtype not in ['float64', 'float32', 'int64', 'int32']:
-            try:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-            except Exception as e:
-                print(f"Warning: Could not convert {col} to numeric: {str(e)}")
+    # Remove special characters except underscore and dash
+    name = re.sub(r'[^a-zA-Z0-9_\-\s]', '', name)
     
-    return df
-
-
-# ============================================================================
-# USAGE IN DATA UPLOAD
-# ============================================================================
-
-"""
-HOW TO USE IN pages/1_Data_Upload.py:
-
-Replace this:
-    numeric_cols, categorical_cols = detect_numeric_columns(df_raw)
-
-With this:
-    numeric_cols, categorical_cols = detect_numeric_columns(df_raw)
+    # Replace spaces with underscores
+    name = name.replace(' ', '_')
     
-    # Convert string numbers to float
-    df_raw = convert_string_numbers_to_float(df_raw, numeric_cols)
-
-Then use numeric_cols as before.
-
-COMPLETE FIX:
-
-# In section "NUMERIC COLUMN DETECTION"
-numeric_cols, categorical_cols = detect_numeric_columns(df_raw)
-
-# IMPORTANT: Convert string numbers to floats
-df_raw = convert_string_numbers_to_float(df_raw, numeric_cols)
-
-# Filter out ID and species columns from numeric candidates
-exclude_cols = {id_col, species_col, sequence_col}
-numeric_cols = [c for c in numeric_cols if c not in exclude_cols and c is not None]
-
-if numeric_cols:
-    st.success(f"✅ Detected {len(numeric_cols)} numeric columns")
-else:
-    st.error("❌ No numeric columns detected after filtering.")
-    st.stop()
-"""
+    return name
 
 
-def detect_sample_columns(columns: List[str]) -> List[str]:
+def abbreviate_name(name: str, style: str = 'short') -> str:
     """
-    Detect which columns are likely sample/condition columns.
-    Heuristic: numeric-sounding names, not ID-like.
+    Create abbreviation from column name.
+    
+    Args:
+        name: Original name
+        style: 'short' (first 3 chars) or 'smart' (first letter per segment)
+        
+    Returns:
+        Abbreviated name
+    """
+    name = str(name).strip()
+    
+    if style == 'smart':
+        # Smart abbreviation: first letter of each segment
+        if '_' in name:
+            parts = name.split('_')
+            return ''.join([p[0].upper() for p in parts if p])
+        elif ' ' in name:
+            parts = name.split()
+            return ''.join([p[0].upper() for p in parts if p])
+        else:
+            return name[:3].upper()
+    
+    else:  # 'short'
+        return name[:3].upper()
+
+
+def standardize_condition_names(columns: List[str]) -> Dict[str, str]:
+    """
+    Create mapping of original → standardized condition names (Condition_R#).
+    PRIORITY FIX: Replicate number detection starts from the end of the name.
     
     Args:
         columns: List of column names
         
     Returns:
-        List of likely sample columns
+        Dict mapping original name → display name
     """
-    id_keywords = ['id', 'name', 'identifier', 'gene', 'protein', 'uniprot', 
-                   'accession', 'description', 'species', 'organism', 'sequence']
+    mapping = {}
     
-    sample_cols = []
     for col in columns:
-        col_lower = str(col).lower()
-        is_id_like = any(keyword in col_lower for keyword in id_keywords)
+        col_str = str(col).strip()
         
-        if not is_id_like:
-            sample_cols.append(col)
+        # 1. Look for a replicate/run number at the very end (e.g., _01.raw, R3, -5, _1)
+        # Pattern looks for: [separator] [R/r/S optional] [one or more digits] [optional ending chars] [END]
+        match_end = re.search(r'[_\-\s][rR]?(\d+)(?:\.[a-zA-Z0-9]+)?$', col_str)
+        
+        if match_end:
+            replicate = match_end.group(1).lstrip('0')
+            
+            # Extract everything before the replicate number/separator as the condition name
+            condition_raw = col_str[:match_end.start(0)].strip('_- ')
+            
+            # Clean up the condition name (remove file extensions, extraneous separators)
+            # Remove any common separators at the end of the condition name
+            condition = re.sub(r'[\._-]+$', '', condition_raw) 
+            
+            # If the condition name is still empty or too generic (e.g., just '_'), use the full raw name
+            if not condition:
+                 mapping[col_str] = trim_name(col_str)
+                 continue
+                 
+            # Use only alphanumeric characters for the condition name and capitalize
+            condition = re.sub(r'[^a-zA-Z0-9]', '', condition).upper()
+            
+            mapping[col_str] = f"{condition}_R{replicate}"
+            continue
+
+        # 2. Fallback to the old simple letter/number pattern (A1, B2)
+        match_simple = re.search(r'([a-zA-Z]+)[_\-\s]*(\d+)', col_str)
+        if match_simple:
+            condition = match_simple.group(1).upper()
+            replicate = match_simple.group(2)
+            mapping[col_str] = f"{condition}_R{replicate}"
+            continue
+
+        # 3. Final Fallback to truncation
+        mapping[col_str] = trim_name(col_str)
     
-    return sample_cols
+    return mapping
+
+
+def create_short_labels(columns: List[str], length: int = 10) -> Dict[str, str]:
+    """
+    Create mapping of original → shortened labels for dense plots.
+    
+    Args:
+        columns: List of column names
+        length: Target length for labels
+        
+    Returns:
+        Dict mapping original name → short label
+    """
+    mapping = {}
+    
+    for col in columns:
+        # Use abbreviation if name is long
+        if len(str(col)) > length:
+            mapping[str(col)] = abbreviate_name(str(col), style='smart')
+        else:
+            mapping[str(col)] = str(col).strip()
+    
+    return mapping
+
 
 # ============================================================================
-# DATA VALIDATION
+# RENAMING DATAFRAMES
 # ============================================================================
 
-def validate_dataframe(
+def rename_columns_for_display(
     df: pd.DataFrame,
-    id_col: str,
-    numeric_cols: List[str],
-    min_rows: int = 1,
-    min_cols: int = 1
-) -> Tuple[bool, str]:
+    columns: List[str],
+    style: str = 'smart'
+) -> Tuple[pd.DataFrame, Dict[str, str]]:
     """
-    Validate DataFrame structure and contents.
+    Rename specified columns for better display in plots.
     
     Args:
-        df: DataFrame to validate
-        id_col: ID column name
-        numeric_cols: Numeric column names
-        min_rows: Minimum required rows
-        min_cols: Minimum required columns
+        df: Input DataFrame
+        columns: Columns to rename (typically sample columns)
+        style: 'trim', 'clean', 'smart' (condition-aware), or 'short'
         
     Returns:
-        Tuple of (is_valid, message)
+        Tuple of (renamed_df, mapping_dict)
     """
-    # Check DataFrame not empty
-    if df.empty:
-        return False, "DataFrame is empty"
+    if style == 'trim':
+        mapping = {col: trim_name(col) for col in columns}
+    elif style == 'clean':
+        mapping = {col: clean_name(col) for col in columns}
+    elif style == 'smart':
+        # Use the condition-aware standardization
+        mapping = standardize_condition_names(columns)
+    elif style == 'short':
+        mapping = create_short_labels(columns)
+    else:
+        mapping = {col: col for col in columns}
     
-    # Check minimum dimensions
-    if len(df) < min_rows:
-        return False, f"DataFrame has {len(df)} rows, need at least {min_rows}"
-    
-    if len(numeric_cols) < min_cols:
-        return False, f"Only {len(numeric_cols)} numeric columns, need at least {min_cols}"
-    
-    # Check ID column exists
-    if id_col not in df.columns:
-        return False, f"ID column '{id_col}' not found"
-    
-    # Check numeric columns exist
-    missing_cols = [col for col in numeric_cols if col not in df.columns]
-    if missing_cols:
-        return False, f"Missing columns: {', '.join(missing_cols)}"
-    
-    # Check numeric columns are actually numeric
-    non_numeric = []
-    for col in numeric_cols:
-        if not pd.api.types.is_numeric_dtype(df[col]):
-            # Try to coerce
-            try:
-                pd.to_numeric(df[col], errors='coerce')
-            except:
-                non_numeric.append(col)
-    
-    if non_numeric:
-        return False, f"Non-numeric columns: {', '.join(non_numeric)}"
-    
-    return True, "Validation passed"
+    df_renamed = df.rename(columns=mapping)
+    return df_renamed, mapping
 
 
-def check_duplicates(df: pd.DataFrame, id_col: str) -> Tuple[int, List]:
+def reverse_name_mapping(mapping: Dict[str, str]) -> Dict[str, str]:
+    """Reverse a name mapping (original → display) to (display → original)."""
+    return {v: k for k, v in mapping.items()}
+
+
+# ============================================================================
+# PLOT-SPECIFIC HELPERS
+# ============================================================================
+
+def get_display_names(columns: List[str], max_chars: int = 15) -> List[str]:
     """
-    Check for duplicate IDs.
+    Get display-friendly names for columns in plots.
     
     Args:
-        df: DataFrame to check
-        id_col: ID column name
+        columns: List of column names
+        max_chars: Maximum characters per name
         
     Returns:
-        Tuple of (n_duplicates, list_of_duplicate_ids)
+        List of display names
     """
-    duplicates = df[df.duplicated(subset=[id_col], keep=False)][id_col].unique().tolist()
-    return len(duplicates), duplicates
+    return [trim_name(str(col), max_length=max_chars) for col in columns]
 
 
-def check_missing_data(
-    df: pd.DataFrame,
-    numeric_cols: List[str]
-) -> dict:
+def get_abbreviated_names(columns: List[str]) -> List[str]:
+    """Get abbreviated names for compact display."""
+    return [abbreviate_name(str(col), style='smart') for col in columns]
+
+
+def create_label_rotation_angle(
+    columns: List[str],
+    max_length: int = 10
+) -> int:
     """
-    Detailed missing data analysis.
+    Determine appropriate label rotation angle based on name lengths.
     
     Args:
-        df: DataFrame to analyze
-        numeric_cols: Numeric columns
+        columns: List of column names
+        max_length: Threshold for rotation
         
     Returns:
-        Dictionary with missing data statistics
+        Rotation angle in degrees (0, 45, or 90)
     """
-    missing_by_row = df[numeric_cols].isna().sum(axis=1)
-    missing_by_col = df[numeric_cols].isna().sum()
+    avg_length = sum(len(str(col)) for col in columns) / len(columns)
+    
+    if avg_length > max_length * 1.5:
+        return 90  # Very long names
+    elif avg_length > max_length:
+        return 45  # Medium length
+    else:
+        return 0   # Short names
+
+
+# ============================================================================
+# VALIDATION & SAFETY
+# ============================================================================
+
+def is_name_too_long(name: str, threshold: int = 20) -> bool:
+    """Check if name exceeds length threshold."""
+    return len(str(name)) > threshold
+
+
+def validate_names(columns: List[str]) -> Dict[str, str]:
+    """
+    Validate column names and suggest improvements.
+    
+    Returns dict with:
+    - 'valid': list of acceptable names
+    - 'too_long': list of names exceeding 20 chars
+    - 'has_special': list of names with special characters
+    """
+    valid = []
+    too_long = []
+    has_special = []
+    
+    for col in columns:
+        col_str = str(col)
+        
+        if len(col_str) > 20:
+            too_long.append(col_str)
+        elif re.search(r'[^a-zA-Z0-9_\-\s]', col_str):
+            has_special.append(col_str)
+        else:
+            valid.append(col_str)
     
     return {
-        'total_cells': len(df) * len(numeric_cols),
-        'missing_cells': df[numeric_cols].isna().sum().sum(),
-        'missing_pct': round(df[numeric_cols].isna().sum().sum() / (len(df) * len(numeric_cols)) * 100, 2),
-        'rows_with_missing': (missing_by_row > 0).sum(),
-        'cols_with_missing': (missing_by_col > 0).sum(),
-        'missing_by_row_max': missing_by_row.max(),
-        'missing_by_col_max': missing_by_col.max(),
+        'valid': valid,
+        'too_long': too_long,
+        'has_special': has_special
     }
-
-# ============================================================================
-# DATA STATISTICS
-# ============================================================================
-
-def get_data_summary(
-    df: pd.DataFrame,
-    numeric_cols: List[str],
-    id_col: str
-) -> dict:
-    """
-    Get comprehensive data summary.
-    
-    Args:
-        df: DataFrame
-        numeric_cols: Numeric columns
-        id_col: ID column
-        
-    Returns:
-        Summary dictionary
-    """
-    return {
-        'n_rows': len(df),
-        'n_samples': len(numeric_cols),
-        'n_features': df.shape[1],
-        'duplicate_ids': check_duplicates(df, id_col)[0],
-        'missing_summary': check_missing_data(df, numeric_cols),
-        'numeric_summary': {
-            'min': df[numeric_cols].min().min(),
-            'max': df[numeric_cols].max().max(),
-            'mean': df[numeric_cols].mean().mean(),
-            'median': df[numeric_cols].median().median(),
-        }
-    }
-
-# ============================================================================
-# DATA EXPORT
-# ============================================================================
-
-def export_to_csv(df: pd.DataFrame, filename: str) -> bytes:
-    """Export DataFrame to CSV bytes."""
-    return df.to_csv(index=False).encode('utf-8')
-
-
-def export_to_excel(df: pd.DataFrame, filename: str) -> bytes:
-    """Export DataFrame to Excel bytes."""
-    import io
-    buffer = io.BytesIO()
-    df.to_excel(buffer, index=False, engine='openpyxl')
-    return buffer.getvalue()
