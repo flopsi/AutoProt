@@ -81,9 +81,6 @@ except Exception as e:
     st.stop()
 
 # ============================================================================
-# SELECT COLUMNS
-# ============================================================================
-# ============================================================================
 # SELECT COLUMNS - STEP 1: METADATA
 # ============================================================================
 
@@ -91,7 +88,7 @@ st.subheader("3️⃣ Select Metadata Columns")
 st.caption("Click headers to select ID, gene names, descriptions, etc.")
 
 event_metadata = st.dataframe(
-    df_raw,
+    df_raw.head(5),
     key="metadata_selector",
     on_select="rerun",
     selection_mode="multi-column",
@@ -114,7 +111,7 @@ st.subheader("4️⃣ Select Numerical Columns")
 st.caption("Click headers to select abundance/intensity columns for analysis")
 
 event_numerical = st.dataframe(
-    df_raw,
+    df_raw.head(5),
     key="numerical_selector",
     on_select="rerun",
     selection_mode="multi-column",
@@ -124,14 +121,14 @@ numerical_cols = event_numerical.selection.columns
 
 if numerical_cols:
     st.session_state.numerical_columns = numerical_cols
-    st.success(f"✅ Selected {len(numerical_cols)} numerical column(s): {', '.join(numerical_cols)}")
+    st.success(f"✅ Selected {len(numerical_cols)} numerical column(s)")
     
-    # Combine selections into working dataframe
+    # Combine selections - use FULL dataframe here
     all_cols = metadata_cols + numerical_cols
     working_df = df_raw.select(all_cols)
     
-    st.subheader("Working DataFrame")
-    st.dataframe(working_df, use_container_width=True)
+    st.subheader(f"Working DataFrame ({len(working_df):,} rows)")
+    st.dataframe(working_df.head(10), use_container_width=True)
     
     # Store by data type
     if st.session_state.data_type == "protein":
@@ -140,6 +137,7 @@ if numerical_cols:
         st.session_state.peptide_data = working_df
 else:
     st.info("👆 Select numerical columns to create working dataframe")
+
 
 # FOOTER
 # ============================================================================
