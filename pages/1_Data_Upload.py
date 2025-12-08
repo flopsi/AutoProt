@@ -11,6 +11,7 @@ import numpy as np
 from pathlib import Path
 from typing import Tuple, Optional
 import gc
+import polars as pl
 
 # Import helpers
 from helpers.io import detect_numeric_columns, convert_string_numbers_to_float
@@ -87,9 +88,9 @@ if uploaded_file is None:
 try:
     with st.spinner(f"Loading {st.session_state.data_type} data..."):
         if uploaded_file.name.endswith('.csv'):
-            df_raw = pd.read_csv(uploaded_file, index_col=None)
+            df_raw = pl.read_csv(uploaded_file, index_col=None)
         else:
-            df_raw = pd.read_excel(uploaded_file, sheet_name=0)
+            df_raw = pl.read_excel(uploaded_file, sheet_name=0)
         
         st.success(f"✅ Loaded {len(df_raw):,} rows × {len(df_raw.columns)} columns")
 except Exception as e:
