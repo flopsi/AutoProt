@@ -246,9 +246,6 @@ st.success(f"✅ Selected {len(numerical_cols)} numerical column(s): {', '.join(
 
 st.markdown("---")
 
-# ============================================================================
-# RENAME NUMERICAL COLUMNS
-# ============================================================================
 
 # ============================================================================
 # RENAME NUMERICAL COLUMNS
@@ -376,7 +373,30 @@ if st.session_state.data_type == 'peptide':
 else:
     sequence_col = None
 
+# Show species preview if selected
+if species_col:
+    st.markdown("---")
+    st.write("**Species Preview:**")
+    
+    df_pandas_temp = df_filtered.to_pandas()
+    species_values = df_pandas_temp[species_col]
+    species_counts = species_values.value_counts()
+    
+    col_preview, col_chart = st.columns([2, 1])
+    
+    with col_preview:
+        preview_df = pd.DataFrame({
+            'Sample': range(1, min(11, len(df_pandas_temp) + 1)),
+            'Species': species_values.head(10).values
+        })
+        st.dataframe(preview_df, use_container_width=True, height=200)
+    
+    with col_chart:
+        st.write("**Distribution:**")
+        st.bar_chart(species_counts)
+
 st.markdown("---")
+
 
 # ============================================================================
 # SPECIES INFERENCE
