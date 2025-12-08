@@ -10,7 +10,7 @@ import numpy as np
 from pathlib import Path
 from typing import Tuple, Optional, List, Dict
 import gc
-from helpers.core import ProteinData, PeptideData
+
 
 # ============================================================================
 # PAGE CONFIG
@@ -25,6 +25,103 @@ st.set_page_config(
 
 st.title("📥 Data Upload")
 st.markdown("Upload protein or peptide abundance data for analysis")
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def longest_common_prefix(strings: list) -> str:
+    """Find longest common prefix from list of strings."""
+    if not strings:
+        return ""
+    s1, s2 = min(strings), max(strings)
+    for i, (c1, c2) in enumerate(zip(s1, s2)):
+        if c1 != c2:
+            return s1[:i]
+    return s1
+
+def generate_default_column_names(n_cols: int, replicates_per_condition: int = 3) -> list:
+    """
+    Generate default names: A1, A2, A3, B1, B2, B3, etc.
+    
+    Args:
+        n_cols: Total number of columns
+        replicates_per_condition: Samples per condition
+    
+    Returns:
+        List of generated names
+    """
+    names = []
+    for i in range(n_cols):
+        condition_idx = i // replicates_per_condition
+        replicate_num = (i % replicates_per_condition) + 1
+        condition_letter = chr(ord('A') + condition_idx)
+        names.append(f"{condition_letter}{replicate_num}")
+    return names
+
+def infer_species_from_protein_name(name: str) -> str:
+    """Extract species from protein name (e.g., 'PROT_HUMAN' → 'HUMAN')."""
+    if pd.isna(name) or name is None:
+        return None
+    s = str(name).upper()
+    
+    # Check common patterns
+    if "_HUMAN" in s:
+        return "HUMAN"
+    if "_MOUSE" in s:
+        return "MOUSE"
+    if "_YEAST" in s:
+        return "YEAST"
+    if "_ECOLI" in s or "_ECOL" in s:
+        return "ECOLI"
+    
+    # Fallback: last token after underscore
+    if "_" in s:
+        tail = s.split("_")[-1]
+        if len(tail) >= 3:
+            return tail
+    
+    return None
+
+def trim_common_prefix_suffix(columns: list) -> dict:
+    """Remove common prefix and suffix from column names."""
+    if len(columns) < 2:
+        return {col: col for col in columns}
+    
+    # Find common prefix
+    prefix = longest_common_prefix(columns)
+    
+    # Find common suffix
+    reversed_cols = [col[::-1] for col in columns]
+    suffix = longest_common_prefix(reversed_cols)[::-1]
+    
+    # Create mapping
+    mapping = {}
+    for col in columns:
+        trimmed = col[len(prefix):] if prefix else col
+        trimmed = trimmed[:-len(suffix)] if suffix else trimmed
+        mapping[col] = trimmed if trimmed else col
+    
+    return mapping
+
+def smart_rename_columns(columns: list, style: str = 'trim') -> dict:
+    """
+    Rename columns with various strategies.
+    
+    Args:
+        columns: List of column names to rename
+        style: 'trim', 'default', or 'custom'
+    
+    Returns:
+        Dictionary mapping original -> new names
+    """
+    if style == 'trim':
+        return trim_common_prefix_suffix(columns)
+    elif style == 'default':
+        new_names = generate_default_column_names(len(columns))
+        return {orig: new for orig, new in zip(columns, new_names)}
+    else:
+        return {col: col for col in columns}
 
 # ============================================================================
 # SESSION STATE INITIALIZATION
@@ -148,26 +245,35 @@ st.markdown("---")
 # RENAME NUMERICAL COLUMNS
 # ============================================================================
 
-st.subheader("3.5️⃣ Rename Numerical Columns (Optional)")
+st.subheader("3.5️⃣ Rename Numerical Columns")
 
-col1, col2 = st.columns([1, 3])
+col1, col2, col3 = st.columns([1, 1, 2])
 
 with col1:
     rename_style = st.selectbox(
-        "Renaming style:",
-        options=['none', 'trim', 'clean', 'smart', 'short'],
-        help="Choose how to clean/shorten column names"
+        "Renaming strategy:",
+        options=['none', 'trim', 'default'],
+        help="none: keep original | trim: remove common prefix/suffix | default: A1, A2, B1, B2..."
     )
 
 with col2:
-    if rename_style != 'none':
-        # Use pandas for rename_columns_for_display helper
-        df_temp_pandas = df_raw.select(numerical_cols).to_pandas()
-        df_preview_renamed, name_mapping = rename_columns_for_display(
-            df_temp_pandas, 
-            list(numerical_cols), 
-            style=rename_style
+    if rename_style == 'default':
+        replicates_per_condition = st.number_input(
+            "Replicates per condition:",
+            min_value=1,
+            max_value=10,
+            value=3,
+            help="How many samples per condition?"
         )
+    else:
+        replicates_per_condition = 3
+
+with col3:
+    if rename_style != 'none':
+        if rename_style == 'default':
+            name_mapping = smart_rename_columns(list(numerical_cols), style='default')
+        else:
+            name_mapping = smart_rename_columns(list(numerical_cols), style='trim')
         
         # Show preview of mapping
         mapping_df = pd.DataFrame({
@@ -178,7 +284,7 @@ with col2:
         
         # Store mapping
         st.session_state.column_mapping = name_mapping
-        st.session_state.reverse_mapping = reverse_name_mapping(name_mapping)
+        st.session_state.reverse_mapping = {v: k for k, v in name_mapping.items()}
         
         # Apply renaming
         numerical_cols_renamed = [name_mapping.get(col, col) for col in numerical_cols]
@@ -187,6 +293,7 @@ with col2:
         numerical_cols_renamed = list(numerical_cols)
         st.session_state.column_mapping = name_mapping
         st.session_state.reverse_mapping = name_mapping
+        st.info("No renaming applied - using original column names")
 
 st.markdown("---")
 
@@ -257,6 +364,55 @@ else:
 st.markdown("---")
 
 # ============================================================================
+# SPECIES INFERENCE
+# ============================================================================
+
+st.subheader("4.5️⃣ Species Inference (Optional)")
+
+col1, col2 = st.columns([1, 3])
+
+with col1:
+    infer_species = st.checkbox(
+        "Infer species from protein names",
+        value=False,
+        help="Extract species from protein IDs (e.g., PROT_HUMAN → HUMAN)"
+    )
+    
+    if infer_species:
+        source_col = st.selectbox(
+            "Infer from column:",
+            options=metadata_cols,
+            help="Column containing protein names with species codes"
+        )
+
+with col2:
+    if infer_species:
+        # Perform inference
+        df_pandas_temp = df_filtered.to_pandas()
+        inferred_species = df_pandas_temp[source_col].apply(infer_species_from_protein_name)
+        
+        # Show preview
+        preview_df = pd.DataFrame({
+            'Protein Name': df_pandas_temp[source_col].head(10),
+            'Inferred Species': inferred_species.head(10)
+        })
+        st.dataframe(preview_df, use_container_width=True, height=250)
+        
+        # Add inferred species column
+        df_filtered = df_filtered.with_columns([
+            pl.Series("Inferred_Species", inferred_species.tolist())
+        ])
+        
+        # Update species_col if not set
+        if species_col is None:
+            species_col = "Inferred_Species"
+            st.success("✓ Added 'Inferred_Species' column")
+        else:
+            st.info(f"✓ Added 'Inferred_Species' column (current species column: {species_col})")
+
+st.markdown("---")
+
+# ============================================================================
 # DATA VALIDATION & PREVIEW
 # ============================================================================
 
@@ -311,7 +467,7 @@ with st.expander("📊 Data Preview", expanded=False):
         col_info = pd.DataFrame({
             'Column': df_filtered.columns,
             'Type': [str(dtype) for dtype in df_filtered.dtypes],
-            'Non-Null': [df_filtered[col].null_count() == 0 for col in df_filtered.columns]
+            'Non-Null': [len(df_filtered) - df_filtered[col].null_count() for col in df_filtered.columns]
         })
         st.dataframe(col_info, use_container_width=True, height=400)
 
@@ -359,6 +515,8 @@ with col2:
     st.write(f"- **Samples:** {len(numerical_cols_final)}")
     st.write(f"- **Total {st.session_state.data_type.title()}s:** {len(df_filtered):,}")
     st.write(f"- **Numeric dtype:** Float64")
+    if infer_species:
+        st.write(f"- **Species inferred:** Yes")
 
 st.markdown("---")
 
@@ -374,7 +532,7 @@ if st.button(
 ):
     with st.spinner(f"Processing {st.session_state.data_type} data..."):
         try:
-            # Create data object (convert to pandas if needed by helpers)
+            # Convert to pandas for data objects
             df_final_pandas = df_filtered.to_pandas()
             
             if st.session_state.data_type == 'protein':
@@ -433,7 +591,7 @@ st.markdown("---")
 col1, col2 = st.columns([1, 1])
 
 with col1:
-    st.caption("💡 **Tip:** First select metadata columns (ID, species, etc.), then numerical abundance columns.")
+    st.caption("💡 **Tip:** Use 'trim' to remove common prefixes/suffixes or 'default' for A1, A2, B1, B2... naming.")
 
 with col2:
-    st.caption("📖 **Note:** NaN, 0, 1.0, and #NUM! values in numerical columns are automatically set to 1.00 (Float64).")
+    st.caption("📖 **Note:** Species can be auto-inferred from protein names (e.g., PROT_HUMAN → HUMAN).")
