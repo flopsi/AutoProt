@@ -7,11 +7,11 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List, Dict
 import gc
 
 # Import helpers
-from helpers.io import validate_dataframe, detect_numeric_columns
+from helpers.io import validate_dataframe, detect_numeric_columns, rename_columns_for_display, reverse_name_mapping
 from helpers.core import ProteinData, PeptideData
 
 # ============================================================================
@@ -42,6 +42,8 @@ init_session_state('protein_data', None)
 init_session_state('peptide_data', None)
 init_session_state('metadata_columns', [])
 init_session_state('numerical_columns', [])
+init_session_state('column_mapping', {})
+init_session_state('reverse_mapping', {})
 
 # ============================================================================
 # FILE UPLOAD
@@ -197,13 +199,19 @@ df_filtered = df_raw[all_cols].copy()
 df_filtered = df_filtered.rename(columns=name_mapping)
 numerical_cols_final = numerical_cols_renamed
 
-# Clean numerical columns: replace NaN, 0, 1.0, and "#NUM!" with 1.00
+# Clean and cast numerical columns to float64
 for col in numerical_cols_final:
+    # Convert to numeric, coercing errors to NaN
     df_filtered[col] = pd.to_numeric(df_filtered[col], errors='coerce')
+    
+    # Replace NaN, 0, and 1.0 with 1.00
     df_filtered[col] = df_filtered[col].replace([0, 1.0], 1.00)
     df_filtered[col] = df_filtered[col].fillna(1.00)
+    
+    # Explicitly cast to float64
+    df_filtered[col] = df_filtered[col].astype(np.float64)
 
-st.info("✓ Cleaned numerical columns: NaN, 0, 1.0, and #NUM! values set to 1.00")
+st.info("✓ Cleaned numerical columns: NaN, 0, 1.0, and #NUM! values set to 1.00 (float64)")
 
 st.markdown("---")
 
@@ -285,6 +293,70 @@ with col4:
         help=f"Processing as {st.session_state.data_type} data"
     )
 
+# Show preview
+with st.expander("📊 Data Preview", expanded=False):
+    preview_rows = st.slider("Preview rows:", 5, min(50, len(df_filtered)), 10)
+    
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.dataframe(df_filtered.iloc[:preview_rows], use_container_width=True, height=400)
+    
+    with col2:
+        st.write("**Column Info:**")
+        col_info = pd.DataFrame({
+            'Column': df_filtered.columns,
+            'Type': df_filtered.dtypes.astype(str),
+            'Non-Null': df_filtered.notna().sum().values
+        })
+        st.dataframe(col_info, use_container_width=True, height=400)
+
+st.markdown("---")
+
+# ============================================================================
+# VALIDATION & CONFIRMATION
+# ============================================================================
+
+st.subheader("6️⃣ Validate & Upload")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.write("**Validation Checks:**")
+    
+    checks = {
+        "✅ Metadata columns selected": len(metadata_cols) > 0,
+        "✅ Numerical columns selected": len(numerical_cols_final) > 0,
+        "✅ ID column configured": id_col is not None,
+        "✅ Data loaded": df_filtered is not None,
+        "✅ Samples available": len(df_filtered) > 0,
+        "✅ Numerical columns are float64": all(df_filtered[col].dtype == np.float64 for col in numerical_cols_final),
+    }
+    
+    if st.session_state.data_type == 'peptide':
+        checks["✅ Sequence column selected"] = sequence_col is not None
+    
+    all_passed = all(checks.values())
+    
+    for check, status in checks.items():
+        if status:
+            st.success(check)
+        else:
+            st.error(check.replace("✅", "❌"))
+
+with col2:
+    st.write("**Summary:**")
+    st.write(f"- **Type:** {st.session_state.data_type.upper()}")
+    st.write(f"- **ID Column:** {id_col}")
+    st.write(f"- **Species Column:** {species_col if species_col else 'None'}")
+    if st.session_state.data_type == 'peptide':
+        st.write(f"- **Sequence Column:** {sequence_col}")
+    st.write(f"- **Metadata Columns:** {len(metadata_cols)}")
+    st.write(f"- **Samples:** {len(numerical_cols_final)}")
+    st.write(f"- **Total {st.session_state.data_type.title()}s:** {len(df_filtered):,}")
+    st.write(f"- **Numeric dtype:** float64")
+
+st.markdown("---")
+
 # ============================================================================
 # UPLOAD BUTTON
 # ============================================================================
@@ -293,45 +365,57 @@ if st.button(
     f"🚀 Upload {st.session_state.data_type.upper()} Data",
     type="primary",
     use_container_width=True,
-    disabled=not all_passed):
-        with st.spinner(f"Processing {st.session_state.data_type} data..."):
-            try:
-                # Create data object
-                if st.session_state.data_type == 'protein':
-                    data_obj = ProteinData(
-                        raw=df_filtered,
-                        numeric_cols=numerical_cols_final,  # Use renamed columns
-                        id_col=id_col,
-                        species_col=species_col,
-                        file_path=str(uploaded_file.name)
-                    )
-                    st.session_state.protein_data = data_obj
-                    
-                    # Store in session for other pages
-                    st.session_state.df_raw = df_filtered
-                    st.session_state.numeric_cols = numerical_cols_final  # Use renamed
-                    st.session_state.id_col = id_col
-                    st.session_state.species_col = species_col
-                    st.session_state.data_ready = True
-                    
-                else:  # peptide
-                    data_obj = PeptideData(
-                        raw=df_filtered,
-                        numeric_cols=numerical_cols_final,  # Use renamed columns
-                        id_col=id_col,
-                        species_col=species_col,
-                        sequence_col=sequence_col,
-                        file_path=str(uploaded_file.name)
-                    )
-                    st.session_state.peptide_data = data_obj
-                    
-                    # Store in session for other pages
-                    st.session_state.df_raw = df_filtered
-                    st.session_state.numeric_cols = numerical_cols_final  # Use renamed
-                    st.session_state.id_col = id_col
-                    st.session_state.species_col = species_col
-                    st.session_state.sequence_col = sequence_col
-            st.session_state.data_ready = True
+    disabled=not all_passed
+):
+    with st.spinner(f"Processing {st.session_state.data_type} data..."):
+        try:
+            # Create data object
+            if st.session_state.data_type == 'protein':
+                data_obj = ProteinData(
+                    raw=df_filtered,
+                    numeric_cols=numerical_cols_final,
+                    id_col=id_col,
+                    species_col=species_col,
+                    file_path=str(uploaded_file.name)
+                )
+                st.session_state.protein_data = data_obj
+                
+                # Store in session for other pages
+                st.session_state.df_raw = df_filtered
+                st.session_state.numeric_cols = numerical_cols_final
+                st.session_state.id_col = id_col
+                st.session_state.species_col = species_col
+                st.session_state.data_ready = True
+                
+            else:  # peptide
+                data_obj = PeptideData(
+                    raw=df_filtered,
+                    numeric_cols=numerical_cols_final,
+                    id_col=id_col,
+                    species_col=species_col,
+                    sequence_col=sequence_col,
+                    file_path=str(uploaded_file.name)
+                )
+                st.session_state.peptide_data = data_obj
+                
+                # Store in session for other pages
+                st.session_state.df_raw = df_filtered
+                st.session_state.numeric_cols = numerical_cols_final
+                st.session_state.id_col = id_col
+                st.session_state.species_col = species_col
+                st.session_state.sequence_col = sequence_col
+                st.session_state.data_ready = True
+            
+            # Cleanup memory
+            gc.collect()
+            
+            st.success(f"✅ {st.session_state.data_type.upper()} data uploaded successfully!")
+            st.info(f"Ready for analysis. Go to **Visual EDA** page to continue.")
+            
+        except Exception as e:
+            st.error(f"❌ Error processing data: {str(e)}")
+
+st.markdown("---")
 
 # ============================================================================
 # FOOTER
@@ -343,4 +427,4 @@ with col1:
     st.caption("💡 **Tip:** First select metadata columns (ID, species, etc.), then numerical abundance columns.")
 
 with col2:
-    st.caption("📖 **Note:** NaN, 0, 1.0, and #NUM! values in numerical columns are automatically set to 1.00.")
+    st.caption("📖 **Note:** NaN, 0, 1.0, and #NUM! values in numerical columns are automatically set to 1.00 (float64).")
