@@ -22,20 +22,6 @@ import polars as pl
 # ============================================================================
 # PAGE CONFIG
 # ============================================================================
-
-st.set_page_config(
-    page_title="Data Upload",
-    page_icon="📥",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-st.title("📥 Data Upload")
-st.markdown("Upload protein or peptide abundance data for analysis")
-
-# ============================================================================
-# SESSION STATE INITIALIZATION
-# ============================================================================
 def init_session_state(key: str, default_value):
     """Initialize session state variable if not already set."""
     if key not in st.session_state:
@@ -47,6 +33,7 @@ init_session_state("protein_data", None)
 init_session_state("peptide_data", None)
 init_session_state("selected_data", None)
 init_session_state("selected_columns", [])  # Track selected columns
+
 # ============================================================================
 # FILE UPLOAD
 # ============================================================================
@@ -78,30 +65,23 @@ if uploaded_file is None:
     st.stop()
 
 # ============================================================================
-# SELECT COLUMNS - STEP 1: METADATA
+# LOAD FILE
 # ============================================================================
 
-st.subheader("3️⃣ Select Metadata Columns")
-st.caption("Click headers to select ID, gene names, descriptions, etc.")
-
-event_metadata = st.dataframe(
-    df_raw,
-    key="metadata_selector",
-    on_select="rerun",
-    selection_mode="multi-column",
-)
-
-metadata_cols = event_metadata.selection.columns
-
-if metadata_cols:
-    st.session_state.metadata_columns = metadata_cols
-    st.success(f"✅ Selected {len(metadata_cols)} metadata column(s): {', '.join(metadata_cols)}")
-else:
-    st.info("👆 Select metadata columns first")
+try:
+    with st.spinner(f"Loading {st.session_state.data_type} data..."):
+        if uploaded_file.name.endswith('.csv'):
+            df_raw = pl.read_csv(uploaded_file, has_header=True, null_values="#NUM!")
+        else:
+            df_raw = pl.read_excel(uploaded_file, sheet_id=0)
+        
+        st.success(f"✅ Loaded {len(df_raw):,} rows × {len(df_raw.columns)} columns")
+except Exception as e:
+    st.error(f"❌ Error loading file: {str(e)}")
     st.stop()
 
 # ============================================================================
-# SELECT COLUMNS - STEP 2: NUMERICAL
+# SELECT COLUMNS
 # ============================================================================
 
 # ============================================================================
@@ -162,8 +142,6 @@ if numerical_cols:
 else:
     st.info("👆 Select numerical columns to create working dataframe")
 
-
-# ============================================================================
 # FOOTER
 # ============================================================================
 
