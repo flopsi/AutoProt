@@ -67,11 +67,8 @@ peptides = st.toggle("Toggle if Peptide Data")
 
 if peptides:
     st.session_state.data_type = "peptide"
-    st.write("Upload your peptide data")
 else:
     st.session_state.data_type = "protein"
-    st.write("Upload your protein data")
-
 
 uploaded_file = st.file_uploader(
     f"Choose a {st.session_state.data_type} data file",
