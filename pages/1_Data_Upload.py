@@ -13,7 +13,7 @@ from typing import Tuple, Optional
 import gc
 
 # Import helpers
-from helpers.io import validate_dataframe, detect_numeric_columns, convert_string_numbers_to_float
+from helpers.io import detect_numeric_columns, convert_string_numbers_to_float
 from helpers.core import ProteinData, PeptideData
 from helpers.naming import rename_columns_for_display 
 from helpers.naming import standardize_condition_names 
