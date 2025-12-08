@@ -96,7 +96,7 @@ except Exception as e:
     st.error(f"❌ Error loading file: {str(e)}")
     st.stop()
 
-
+df_raw.head(10)
 
 # ============================================================================
 # FOOTER
