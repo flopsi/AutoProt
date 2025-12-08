@@ -46,6 +46,7 @@ def init_session_state(key: str, default_value):
 init_session_state("data_type", "protein")
 init_session_state("protein_data", None)
 init_session_state("peptide_data", None)
+init_session_state("selected_data", None)
 
 
 
@@ -74,7 +75,7 @@ else:
 uploaded_file = st.file_uploader(
     f"Choose a {st.session_state.data_type} data file",
     type=["csv", "xlsx", "xls"],
-    key=f"file_upload_{st.session_state.data_type}"
+    key=f"file_upload_{st.session_state.selected_data}"
 )
     
 if uploaded_file is None:
