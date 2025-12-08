@@ -14,10 +14,10 @@ import gc
 import polars as pl
 
 # Import helpers
-from helpers.io import detect_numeric_columns, convert_string_numbers_to_float
-from helpers.core import ProteinData, PeptideData
-from helpers.naming import rename_columns_for_display 
-from helpers.naming import standardize_condition_names 
+#from helpers.io import detect_numeric_columns, convert_string_numbers_to_float
+#from helpers.core import ProteinData, PeptideData
+#from helpers.naming import rename_columns_for_display 
+#from helpers.naming import standardize_condition_names 
 
 # ============================================================================
 # PAGE CONFIG
