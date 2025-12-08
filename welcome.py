@@ -1,5 +1,5 @@
 """
-app.py - MAIN ENTRY POINT
+welcome.py - MAIN ENTRY POINT
 AutoProt Streamlit Application - Proteomics Data Analysis Platform
 Handles session initialization, navigation, and global configuration
 """
