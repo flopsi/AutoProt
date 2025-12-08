@@ -47,26 +47,8 @@ init_session_state("protein_data", None)
 init_session_state("peptide_data", None)
 
 
-# ============================================================================
-# DATA TYPE SELECTION
-# ============================================================================
 
-st.subheader("1️⃣ Select Data Type")
-col1, col2 = st.columns(2)
 
-with col1:
-    if st.button("Protein Data", width="stretch",
-                 key="data_type_protein_button"):
-        st.session_state.data_type = 'protein'
-        st.rerun()
-
-with col2:
-    if st.button("Peptide Data", width="stretch",
-                 key="data_type_peptide_button"):
-        st.session_state.data_type = 'peptide'
-        st.rerun()
-
-st.markdown("---")
 
 # ============================================================================
 # FILE UPLOAD
@@ -86,7 +68,15 @@ uploaded_file = st.file_uploader(
     type=["csv", "xlsx", "xls"],
     key=f"file_upload_{st.session_state.data_type}"
 )
-
+peptides = st.toggle("Peptide Data")
+if peptides:
+    st.session_state.data_type = 'peptide'
+    st.rerun()
+else:
+    st.session_state.data_type = 'protein'
+    st.rerun()
+    
+    
 if uploaded_file is None:
     st.info(f"👆 Upload a {st.session_state.data_type} abundance file to begin analysis")
     st.stop()
