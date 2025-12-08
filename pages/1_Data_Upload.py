@@ -88,7 +88,9 @@ if uploaded_file is None:
 try:
     with st.spinner(f"Loading {st.session_state.data_type} data..."):
         if uploaded_file.name.endswith('.csv'):
-            df_raw = pl.read_csv(uploaded_file, has_header=True)
+            df_raw = pl.read_csv(uploaded_file,
+                                 has_header=True,
+                                 null_value = str("#Num"))
         else:
             df_raw = pl.read_excel(uploaded_file, sheet_id=0)
         
