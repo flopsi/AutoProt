@@ -2,8 +2,7 @@
 pages/1_Data_Upload.py - OPTIMIZED
 Unified data upload interface for proteins and peptides with tab-based selection
 Uses helpers for validation and data loading
-FIXED: Ensures all column names (ID, Species, Sequence, Numeric) are the final, renamed versions
-       when creating both ProteinData and PeptideData objects.
+FIXED: Ensures df_filtered is always defined before section 7️⃣ to prevent NameError.
 """
 
 import streamlit as st
@@ -13,12 +12,12 @@ from pathlib import Path
 from typing import Tuple, Optional
 import gc
 
-
 # Import helpers
 from helpers.io import validate_dataframe, detect_numeric_columns, convert_string_numbers_to_float
 from helpers.core import ProteinData, PeptideData
-from helpers.naming import rename_columns_for_display # Already imported
-from helpers.naming import standardize_condition_names # NEW: Import for initial mapping
+from helpers.naming import rename_columns_for_display 
+from helpers.naming import standardize_condition_names 
+
 # ============================================================================
 # PAGE CONFIG
 # ============================================================================
@@ -37,14 +36,16 @@ st.markdown("Upload protein or peptide abundance data for analysis")
 # SESSION STATE INITIALIZATION
 # ============================================================================
 
-if 'data_type' not in st.session_state:
-       st.session_state.data_type = 'protein'  # 'protein' or 'peptide'
+def init_session_state(key: str, default_value):
+    """Initialize session state variable if not already set."""
+    if key not in st.session_state:
+        st.session_state[key] = default_value
 
-if 'protein_data' not in st.session_state:
-       st.session_state.protein_data = None
+# Ensure core variables are initialized to avoid key errors later
+init_session_state("data_type", "protein")
+init_session_state("protein_data", None)
+init_session_state("peptide_data", None)
 
-if 'peptide_data' not in st.session_state:
-       st.session_state.peptide_data = None
 
 # ============================================================================
 # DATA TYPE SELECTION
@@ -194,6 +195,13 @@ if not selected_numeric:
     st.error("❌ Select at least one numeric column")
     st.stop()
 
+# ============================================================================
+# **FIX: INITIALIZE df_filtered**
+# Ensure df_filtered is defined before conditional logic in section 6
+# ============================================================================
+df_filtered = df_raw.copy()
+# ============================================================================
+
 st.markdown("---")
 
 # ============================================================================
@@ -254,7 +262,55 @@ with st.expander("📊 Data Preview", expanded=False):
 st.markdown("---")
 
 # ============================================================================
-# COLUMN RENAMING & FINAL DROPPING (FIXED WITH MANUAL OVERRIDE)
+# DATA FILTERING OPTIONS
+# ============================================================================
+
+st.subheader("6️⃣ Optional Filtering")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    min_intensity = st.number_input(
+        "Minimum intensity threshold:",
+        min_value=0.0,
+        value=1.0,
+        step=0.1,
+        help="Filter proteins/peptides below this value"
+    )
+
+with col2:
+    max_missing = st.slider(
+        "Maximum missing % per row:",
+        min_value=0,
+        max_value=100,
+        value=100,
+        step=5,
+        help="Remove rows exceeding this missing rate"
+    )
+
+with col3:
+    st.write("")  # Spacing
+    apply_filtering = st.checkbox("Apply filtering", value=False)
+
+if apply_filtering:
+    # Filter by missing rate
+    missing_rates = df_filtered[selected_numeric].isna().sum(axis=1) / len(selected_numeric) * 100
+    df_filtered = df_filtered[missing_rates <= max_missing]
+    
+    # Filter by minimum intensity
+    has_valid = (df_filtered[selected_numeric] >= min_intensity).any(axis=1)
+    df_filtered = df_filtered[has_valid]
+    
+    rows_removed = len(df_raw) - len(df_filtered)
+    st.info(f"✓ Filtering applied: {rows_removed:,} rows removed, {len(df_filtered):,} rows remaining")
+else:
+    # If not applying filtering, df_filtered remains the initialized raw copy.
+    pass 
+
+st.markdown("---")
+
+# ============================================================================
+# COLUMN RENAMING & FINAL DROPPING
 # ============================================================================
 
 st.subheader("7️⃣ Renaming & Final Column Selection")
@@ -262,7 +318,6 @@ st.subheader("7️⃣ Renaming & Final Column Selection")
 st.info("The app automatically suggests **Condition_R#** names for replicates. Review and adjust below.")
 
 # 1. Generate the initial, automatic mapping using 'smart' condition logic
-# Note: We skip the renaming of the DataFrame here, just generate the map
 initial_name_mapping = standardize_condition_names(selected_numeric)
 
 st.write(f"**Auto-suggested Renaming for {len(selected_numeric)} Samples:**")
@@ -304,12 +359,6 @@ final_mapping = {
 # Apply mapping to the DataFrame
 df_filtered = df_filtered.rename(columns=final_mapping)
 
-# Identify which of the ID/Species/Sequence columns were renamed.
-# Since we only provided 'selected_numeric' to the mapping process,
-# ID/Species/Sequence columns will only be renamed if they were also in selected_numeric,
-# which shouldn't happen, but we must account for them if the user manually renames them.
-# The `final_mapping` only contains sample columns, so we rely on the logic below to update.
-
 # Update selected numeric columns list with the new, shorter names
 selected_numeric_renamed = list(final_mapping.values())
 
@@ -317,6 +366,9 @@ selected_numeric_renamed = list(final_mapping.values())
 id_col_renamed = id_col
 species_col_renamed = species_col
 sequence_col_renamed = sequence_col
+
+if selected_numeric_renamed:
+    st.caption(f"**Renamed Columns:** {len(final_mapping)} numeric columns were changed. The first column name is now **'{selected_numeric_renamed[0]}'**.")
 
 # --- Drop Columns ---
 # Determine final columns to keep
@@ -342,6 +394,7 @@ species_col = species_col_renamed
 sequence_col = sequence_col_renamed
 
 st.markdown("---")
+
 # ============================================================================
 # VALIDATION & CONFIRMATION
 # ============================================================================
@@ -361,7 +414,6 @@ with col1:
     }
     
     if st.session_state.data_type == 'peptide':
-        # FIX: Ensure sequence_col is checked against its renamed version
         checks["✅ Sequence column selected"] = sequence_col is not None
     else:
         checks["✅ Species/taxonomy configured"] = True
@@ -403,8 +455,8 @@ if st.button(
                 data_obj = ProteinData(
                     raw=df_filtered,
                     numeric_cols=selected_numeric,
-                    id_col=id_col, # Correctly uses renamed variable
-                    species_col=species_col, # Correctly uses renamed variable
+                    id_col=id_col, 
+                    species_col=species_col, 
                     file_path=str(uploaded_file.name)
                 )
                 st.session_state.protein_data = data_obj
@@ -417,13 +469,12 @@ if st.button(
                 st.session_state.data_ready = True
                 
             else:  # peptide
-                # FIX: Ensure PeptideData constructor uses the final, renamed variables
                 data_obj = PeptideData(
                     raw=df_filtered,
                     numeric_cols=selected_numeric,
-                    id_col=id_col, # Correctly uses renamed variable
-                    species_col=species_col, # Correctly uses renamed variable
-                    sequence_col=sequence_col, # Correctly uses renamed variable
+                    id_col=id_col, 
+                    species_col=species_col, 
+                    sequence_col=sequence_col, 
                     file_path=str(uploaded_file.name)
                 )
                 st.session_state.peptide_data = data_obj
