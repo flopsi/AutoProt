@@ -108,10 +108,9 @@ st.dataframe(df_raw)
 selected = st.dataframe(
     df_raw,
     key = "selected_Data",
-    on_select = "rerun",
+    on_select = st.write(st.session_state.selected),
     selection_mode=["multi-column"])
 
-st.dataframe(selected)
 # ============================================================================
 # FOOTER
 # ============================================================================
