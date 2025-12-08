@@ -238,7 +238,7 @@ init_session_state('metadata_columns', [])
 init_session_state('numerical_columns', [])
 init_session_state('column_mapping', {})
 init_session_state('reverse_mapping', {})
-
+init_session_state('theme', 'light')
 # ============================================================================
 # FILE UPLOAD
 # ============================================================================
