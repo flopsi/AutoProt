@@ -10,7 +10,7 @@ import numpy as np
 from pathlib import Path
 from typing import Tuple, Optional, List, Dict
 import gc
-
+from helpers.core import ProteinData, PeptideData
 
 # ============================================================================
 # PAGE CONFIG
