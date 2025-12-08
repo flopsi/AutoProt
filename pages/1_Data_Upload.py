@@ -13,6 +13,101 @@ import gc
 
 from helpers.core import ProteinData, PeptideData
 
+# Add themes at the top of your file
+from typing import Dict
+
+THEME_LIGHT = {
+    "name": "Light",
+    "bg_primary": "#ffffff",
+    "bg_secondary": "#f8f9fa",
+    "text_primary": "#1a1a1a",
+    "text_secondary": "#54585A",
+    "color_human": "#199d76",      # Green for HUMAN proteins
+    "color_yeast": "#d85f02",      # Orange for YEAST proteins
+    "color_ecoli": "#7570b2",      # Purple for ECOLI proteins
+    "color_up": "#d85f02",         # Orange for upregulated
+    "color_down": "#199d76",       # Green for downregulated
+    "color_ns": "#cccccc",         # Gray for not significant
+    "color_nt": "#999999",         # Dark gray for not tested
+    "grid": "#e0e0e0",
+    "border": "#d0d0d0",
+    "accent": "#199d76",
+    "paper_bg": "rgba(0,0,0,0)",
+}
+
+THEME_DARK = {
+    "name": "Dark",
+    "bg_primary": "#1a1a1a",
+    "bg_secondary": "#2d2d2d",
+    "text_primary": "#ffffff",
+    "text_secondary": "#cccccc",
+    "color_human": "#4ccc9f",
+    "color_yeast": "#ff9933",
+    "color_ecoli": "#9e94d4",
+    "color_up": "#ff9933",
+    "color_down": "#4ccc9f",
+    "color_ns": "#666666",
+    "color_nt": "#444444",
+    "grid": "#404040",
+    "border": "#505050",
+    "accent": "#4ccc9f",
+    "paper_bg": "rgba(10,10,10,0.8)",
+}
+
+THEME_COLORBLIND = {
+    "name": "Colorblind-Friendly",
+    "bg_primary": "#ffffff",
+    "bg_secondary": "#f8f9fa",
+    "text_primary": "#1a1a1a",
+    "text_secondary": "#54585A",
+    "color_human": "#0173b2",      # Blue (deuteranopia-safe)
+    "color_yeast": "#cc78bc",      # Magenta
+    "color_ecoli": "#ca9161",      # Brown
+    "color_up": "#cc78bc",
+    "color_down": "#0173b2",
+    "color_ns": "#cccccc",
+    "color_nt": "#999999",
+    "grid": "#e0e0e0",
+    "border": "#d0d0d0",
+    "accent": "#0173b2",
+    "paper_bg": "rgba(0,0,0,0)",
+}
+
+THEME_JOURNAL = {
+    "name": "Journal (B&W)",
+    "bg_primary": "#ffffff",
+    "bg_secondary": "#f5f5f5",
+    "text_primary": "#000000",
+    "text_secondary": "#333333",
+    "color_human": "#404040",
+    "color_yeast": "#000000",
+    "color_ecoli": "#808080",
+    "color_up": "#000000",
+    "color_down": "#404040",
+    "color_ns": "#c0c0c0",
+    "color_nt": "#e0e0e0",
+    "grid": "#d0d0d0",
+    "border": "#a0a0a0",
+    "accent": "#000000",
+    "paper_bg": "rgba(0,0,0,0)",
+}
+
+THEMES: Dict[str, Dict] = {
+    "light": THEME_LIGHT,
+    "dark": THEME_DARK,
+    "colorblind": THEME_COLORBLIND,
+    "journal": THEME_JOURNAL,
+}
+
+def get_species_colors(species_list: list, theme: str = "light") -> list:
+    """Get colors for species based on theme."""
+    theme_dict = THEMES[theme]
+    color_map = {
+        "HUMAN": theme_dict["color_human"],
+        "YEAST": theme_dict["color_yeast"],
+        "ECOLI": theme_dict["color_ecoli"],
+    }
+    return [color_map.get(sp, theme_dict["text_secondary"]) for sp in species_list]
 
 # ============================================================================
 # PAGE CONFIG
@@ -27,6 +122,25 @@ st.set_page_config(
 
 st.title("📥 Data Upload")
 st.markdown("Upload protein or peptide abundance data for analysis")
+# ============================================================================
+# SESSION STATE - Add theme selection
+# ============================================================================
+
+init_session_state('theme', 'light')
+
+# ============================================================================
+# SIDEBAR - Theme selector
+# ============================================================================
+
+with st.sidebar:
+    st.markdown("### Settings")
+    theme = st.selectbox(
+        "Theme:",
+        options=list(THEMES.keys()),
+        format_func=lambda x: THEMES[x]["name"],
+        key="theme_selector"
+    )
+    st.session_state.theme = theme
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -380,7 +494,11 @@ if species_col:
     
     df_pandas_temp = df_filtered.to_pandas()
     species_values = df_pandas_temp[species_col]
-    species_counts = species_values.value_counts()
+    species_counts = species_values.value_counts().reset_index()
+    species_counts.columns = ['Species', 'Count']
+    
+    # Sort for consistent ordering
+    species_counts = species_counts.sort_values('Species')
     
     col_preview, col_chart = st.columns([2, 1])
     
@@ -393,10 +511,17 @@ if species_col:
     
     with col_chart:
         st.write("**Distribution:**")
-        st.bar_chart(species_counts, color="species")
+        
+        # Get colors for each species
+        colors = get_species_colors(species_counts['Species'].tolist(), theme=st.session_state.theme)
+        
+        # Use st.bar_chart with custom colors
+        st.bar_chart(
+            species_counts.set_index('Species')['Count'],
+            color=colors
+        )
 
 st.markdown("---")
-
 
 # ============================================================================
 # SPECIES INFERENCE
