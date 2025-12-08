@@ -1,9 +1,10 @@
 """
 pages/1_Data_Upload.py - OPTIMIZED
-Unified data upload interface with interactive column selection
+Unified data upload interface with interactive column selection using Polars
 """
 
 import streamlit as st
+import polars as pl
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -82,9 +83,9 @@ if uploaded_file is None:
 try:
     with st.spinner(f"Loading {st.session_state.data_type} data..."):
         if uploaded_file.name.endswith('.csv'):
-            df_raw = pd.read_csv(uploaded_file, index_col=None)
+            df_raw = pl.read_csv(uploaded_file, has_header=True, null_values=["#NUM!"])
         else:
-            df_raw = pd.read_excel(uploaded_file, sheet_name=0)
+            df_raw = pl.read_excel(uploaded_file, sheet_id=0)
         
         st.success(f"✅ Loaded {len(df_raw):,} rows × {len(df_raw.columns)} columns")
 except Exception as e:
@@ -100,8 +101,11 @@ st.markdown("---")
 st.subheader("2️⃣ Select Metadata Columns")
 st.caption("Click column headers to select ID, gene names, descriptions, species, etc.")
 
+# Convert to pandas for display in st.dataframe
+df_preview = df_raw.head(5).to_pandas()
+
 event_metadata = st.dataframe(
-    df_raw.head(5),
+    df_preview,
     key="metadata_selector",
     on_select="rerun",
     selection_mode="multi-column",
@@ -126,7 +130,7 @@ st.subheader("3️⃣ Select Numerical Columns")
 st.caption("Click column headers to select abundance/intensity columns for analysis")
 
 event_numerical = st.dataframe(
-    df_raw.head(5),
+    df_preview,
     key="numerical_selector",
     on_select="rerun",
     selection_mode="multi-column",
@@ -160,8 +164,10 @@ with col1:
 
 with col2:
     if rename_style != 'none':
-        df_preview, name_mapping = rename_columns_for_display(
-            df_raw, 
+        # Use pandas for rename_columns_for_display helper
+        df_temp_pandas = df_raw.select(numerical_cols).to_pandas()
+        df_preview_renamed, name_mapping = rename_columns_for_display(
+            df_temp_pandas, 
             list(numerical_cols), 
             style=rename_style
         )
@@ -193,25 +199,25 @@ st.markdown("---")
 
 # Combine selections
 all_cols = list(metadata_cols) + list(numerical_cols)
-df_filtered = df_raw[all_cols].copy()
+df_filtered = df_raw.select(all_cols)
 
 # Apply column renaming to numerical columns only
-df_filtered = df_filtered.rename(columns=name_mapping)
+df_filtered = df_filtered.rename(name_mapping)
 numerical_cols_final = numerical_cols_renamed
 
-# Clean and cast numerical columns to float64
+# Clean and cast numerical columns to Float64
 for col in numerical_cols_final:
-    # Convert to numeric, coercing errors to NaN
-    df_filtered[col] = pd.to_numeric(df_filtered[col], errors='coerce')
-    
-    # Replace NaN, 0, and 1.0 with 1.00
-    df_filtered[col] = df_filtered[col].replace([0, 1.0], 1.00)
-    df_filtered[col] = df_filtered[col].fillna(1.00)
-    
-    # Explicitly cast to float64
-    df_filtered[col] = df_filtered[col].astype(np.float64)
+    df_filtered = df_filtered.with_columns([
+        # Convert to Float64, handling errors
+        pl.col(col).cast(pl.Float64, strict=False)
+        # Replace 0 and 1.0 with 1.00
+        .replace([0.0, 1.0], 1.00)
+        # Fill nulls with 1.00
+        .fill_null(1.00)
+        .alias(col)
+    ])
 
-st.info("✓ Cleaned numerical columns: NaN, 0, 1.0, and #NUM! values set to 1.00 (float64)")
+st.info("✓ Cleaned numerical columns: NaN, 0, 1.0, and #NUM! values set to 1.00 (Float64)")
 
 st.markdown("---")
 
@@ -277,7 +283,9 @@ with col2:
 
 with col3:
     # Count 1.00 values (cleaned)
-    cleaned_count = (df_filtered[numerical_cols_final] == 1.00).sum().sum()
+    cleaned_count = sum([
+        (df_filtered[col] == 1.00).sum() for col in numerical_cols_final
+    ])
     total_values = len(df_filtered) * len(numerical_cols_final)
     cleaned_pct = (cleaned_count / total_values) * 100
     st.metric(
@@ -299,14 +307,14 @@ with st.expander("📊 Data Preview", expanded=False):
     
     col1, col2 = st.columns([2, 1])
     with col1:
-        st.dataframe(df_filtered.iloc[:preview_rows], use_container_width=True, height=400)
+        st.dataframe(df_filtered.head(preview_rows).to_pandas(), use_container_width=True, height=400)
     
     with col2:
         st.write("**Column Info:**")
         col_info = pd.DataFrame({
             'Column': df_filtered.columns,
-            'Type': df_filtered.dtypes.astype(str),
-            'Non-Null': df_filtered.notna().sum().values
+            'Type': [str(dtype) for dtype in df_filtered.dtypes],
+            'Non-Null': [df_filtered[col].null_count() == 0 for col in df_filtered.columns]
         })
         st.dataframe(col_info, use_container_width=True, height=400)
 
@@ -329,7 +337,7 @@ with col1:
         "✅ ID column configured": id_col is not None,
         "✅ Data loaded": df_filtered is not None,
         "✅ Samples available": len(df_filtered) > 0,
-        "✅ Numerical columns are float64": all(df_filtered[col].dtype == np.float64 for col in numerical_cols_final),
+        "✅ Numerical columns are Float64": all(df_filtered[col].dtype == pl.Float64 for col in numerical_cols_final),
     }
     
     if st.session_state.data_type == 'peptide':
@@ -353,7 +361,7 @@ with col2:
     st.write(f"- **Metadata Columns:** {len(metadata_cols)}")
     st.write(f"- **Samples:** {len(numerical_cols_final)}")
     st.write(f"- **Total {st.session_state.data_type.title()}s:** {len(df_filtered):,}")
-    st.write(f"- **Numeric dtype:** float64")
+    st.write(f"- **Numeric dtype:** Float64")
 
 st.markdown("---")
 
@@ -369,10 +377,12 @@ if st.button(
 ):
     with st.spinner(f"Processing {st.session_state.data_type} data..."):
         try:
-            # Create data object
+            # Create data object (convert to pandas if needed by helpers)
+            df_final_pandas = df_filtered.to_pandas()
+            
             if st.session_state.data_type == 'protein':
                 data_obj = ProteinData(
-                    raw=df_filtered,
+                    raw=df_final_pandas,
                     numeric_cols=numerical_cols_final,
                     id_col=id_col,
                     species_col=species_col,
@@ -380,8 +390,9 @@ if st.button(
                 )
                 st.session_state.protein_data = data_obj
                 
-                # Store in session for other pages
-                st.session_state.df_raw = df_filtered
+                # Store in session for other pages (both formats)
+                st.session_state.df_raw = df_final_pandas
+                st.session_state.df_raw_polars = df_filtered
                 st.session_state.numeric_cols = numerical_cols_final
                 st.session_state.id_col = id_col
                 st.session_state.species_col = species_col
@@ -389,7 +400,7 @@ if st.button(
                 
             else:  # peptide
                 data_obj = PeptideData(
-                    raw=df_filtered,
+                    raw=df_final_pandas,
                     numeric_cols=numerical_cols_final,
                     id_col=id_col,
                     species_col=species_col,
@@ -398,8 +409,9 @@ if st.button(
                 )
                 st.session_state.peptide_data = data_obj
                 
-                # Store in session for other pages
-                st.session_state.df_raw = df_filtered
+                # Store in session for other pages (both formats)
+                st.session_state.df_raw = df_final_pandas
+                st.session_state.df_raw_polars = df_filtered
                 st.session_state.numeric_cols = numerical_cols_final
                 st.session_state.id_col = id_col
                 st.session_state.species_col = species_col
@@ -427,4 +439,4 @@ with col1:
     st.caption("💡 **Tip:** First select metadata columns (ID, species, etc.), then numerical abundance columns.")
 
 with col2:
-    st.caption("📖 **Note:** NaN, 0, 1.0, and #NUM! values in numerical columns are automatically set to 1.00 (float64).")
+    st.caption("📖 **Note:** NaN, 0, 1.0, and #NUM! values in numerical columns are automatically set to 1.00 (Float64).")
