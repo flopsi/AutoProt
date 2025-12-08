@@ -92,8 +92,8 @@ except Exception as e:
 peptides = st.toggle("Peptide Data")
 if peptides:
     st.session_state.data_type = 'peptide'
-    else:
-        st.session_state.data_type = 'protein'
+else:
+    st.session_state.data_type = 'protein'
 
 # ============================================================================
 # FOOTER
