@@ -101,6 +101,16 @@ THEMES: Dict[str, Dict] = {
 
 from helpers.core import ProteinData, PeptideData
 
+def get_species_colors(species_list: list, theme: str = "light") -> list:
+    """Get colors for species based on theme."""
+    theme_dict = THEMES[theme]
+    color_map = {
+        "HUMAN": theme_dict["color_human"],
+        "YEAST": theme_dict["color_yeast"],
+        "ECOLI": theme_dict["color_ecoli"],
+    }
+    return [color_map.get(sp, theme_dict["text_secondary"]) for sp in species_list]
+
 # ============================================================================
 # PAGE CONFIG
 # ============================================================================
