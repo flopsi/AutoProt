@@ -62,6 +62,16 @@ with col1:
 
 with col2:
     st.caption("Supported: .csv, .xlsx, .xls")
+    
+peptides = st.toggle("Toggle if Peptide Data")
+
+if peptides:
+    st.session_state.data_type = "peptide"
+    st.write("Upload your peptide data")
+else:
+    st.session_state.data_type = "protein"
+    st.write("Upload your protein data")
+
 
 uploaded_file = st.file_uploader(
     f"Choose a {st.session_state.data_type} data file",
@@ -89,14 +99,7 @@ except Exception as e:
     st.error(f"❌ Error loading file: {str(e)}")
     st.stop()
 
-peptides = st.toggle("Peptide Data")
-if peptides is None:
-    st.info(f"👆 Upload a {st.session_state.data_type} abundance file to begin analysis")
-    st.stop()
-    elif:
-        st.session_state.data_type = "peptide"
-    elif:
-        st.session_state.data_type = 'protein'
+
 
 # ============================================================================
 # FOOTER
