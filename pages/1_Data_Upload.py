@@ -90,7 +90,7 @@ try:
         if uploaded_file.name.endswith('.csv'):
             df_raw = pl.read_csv(uploaded_file,
                                  has_header=True,
-                                 null_values = ["#Num!","None"]
+                                 null_values = [str"#Num!","None"]
                                 )
         else:
             df_raw = pl.read_excel(uploaded_file, sheet_id=0)
@@ -102,6 +102,16 @@ except Exception as e:
 
 st.dataframe(df_raw)
 
+# ============================================================================
+# Select columns
+# ============================================================================
+selected = st.dataframe
+    df_raw,
+    key = "selected_Data",
+    on_select = "rerun",
+    selection_mode=["multi-column"]
+)
+st.dataframe(selected)
 # ============================================================================
 # FOOTER
 # ============================================================================
