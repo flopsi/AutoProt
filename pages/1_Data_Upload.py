@@ -90,10 +90,13 @@ except Exception as e:
     st.stop()
 
 peptides = st.toggle("Peptide Data")
-if peptides:
-    st.session_state.data_type = 'peptide'
-else:
-    st.session_state.data_type = 'protein'
+if peptides is None:
+    st.info(f"👆 Upload a {st.session_state.data_type} abundance file to begin analysis")
+    st.stop()
+    elif:
+        st.session_state.data_type = "peptide"
+    elif:
+        st.session_state.data_type = 'protein'
 
 # ============================================================================
 # FOOTER
