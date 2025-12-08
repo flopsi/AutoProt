@@ -13,11 +13,12 @@ from pathlib import Path
 from typing import Tuple, Optional
 import gc
 
+
 # Import helpers
 from helpers.io import validate_dataframe, detect_numeric_columns, convert_string_numbers_to_float
 from helpers.core import ProteinData, PeptideData
-from helpers.naming import rename_columns_for_display 
-
+from helpers.naming import rename_columns_for_display # Already imported
+from helpers.naming import standardize_condition_names # NEW: Import for initial mapping
 # ============================================================================
 # PAGE CONFIG
 # ============================================================================
@@ -37,13 +38,13 @@ st.markdown("Upload protein or peptide abundance data for analysis")
 # ============================================================================
 
 if 'data_type' not in st.session_state:
-    st.session_state.data_type = 'protein'  # 'protein' or 'peptide'
+       st.session_state.data_type = 'protein'  # 'protein' or 'peptide'
 
 if 'protein_data' not in st.session_state:
-    st.session_state.protein_data = None
+       st.session_state.protein_data = None
 
 if 'peptide_data' not in st.session_state:
-    st.session_state.peptide_data = None
+       st.session_state.peptide_data = None
 
 # ============================================================================
 # DATA TYPE SELECTION
@@ -253,81 +254,71 @@ with st.expander("📊 Data Preview", expanded=False):
 st.markdown("---")
 
 # ============================================================================
-# DATA FILTERING OPTIONS
-# ============================================================================
-
-st.subheader("6️⃣ Optional Filtering")
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    min_intensity = st.number_input(
-        "Minimum intensity threshold:",
-        min_value=0.0,
-        value=1.0,
-        step=0.1,
-        help="Filter proteins/peptides below this value"
-    )
-
-with col2:
-    max_missing = st.slider(
-        "Maximum missing % per row:",
-        min_value=0,
-        max_value=100,
-        value=100,
-        step=5,
-        help="Remove rows exceeding this missing rate"
-    )
-
-with col3:
-    st.write("")  # Spacing
-    apply_filtering = st.checkbox("Apply filtering", value=False)
-
-if apply_filtering:
-    # Apply filters
-    df_filtered = df_raw.copy()
-    
-    # Filter by missing rate
-    missing_rates = df_filtered[selected_numeric].isna().sum(axis=1) / len(selected_numeric) * 100
-    df_filtered = df_filtered[missing_rates <= max_missing]
-    
-    # Filter by minimum intensity
-    has_valid = (df_filtered[selected_numeric] >= min_intensity).any(axis=1)
-    df_filtered = df_filtered[has_valid]
-    
-    rows_removed = len(df_raw) - len(df_filtered)
-    st.info(f"✓ Filtering applied: {rows_removed:,} rows removed, {len(df_filtered):,} rows remaining")
-else:
-    df_filtered = df_raw.copy()
-
-st.markdown("---")
-
-# ============================================================================
-# COLUMN RENAMING & FINAL DROPPING
+# COLUMN RENAMING & FINAL DROPPING (FIXED WITH MANUAL OVERRIDE)
 # ============================================================================
 
 st.subheader("7️⃣ Renaming & Final Column Selection")
 
-st.info("The app automatically shortens long sample column names for better visualization and drops unused columns.")
+st.info("The app automatically suggests **Condition_R#** names for replicates. Review and adjust below.")
 
-# Rename numeric columns for display and get mapping
-df_filtered, name_mapping = rename_columns_for_display(
-    df=df_filtered,
-    columns=selected_numeric,
-    style='short' # Use 'short' style for abbreviated names
-)
+# 1. Generate the initial, automatic mapping using 'smart' condition logic
+# Note: We skip the renaming of the DataFrame here, just generate the map
+initial_name_mapping = standardize_condition_names(selected_numeric)
+
+st.write(f"**Auto-suggested Renaming for {len(selected_numeric)} Samples:**")
+
+# 2. Manual Override Interface
+manual_mapping = {}
+col_chunks = st.columns(3) # Use columns for a compact layout
+
+with st.expander("📝 Review/Edit Sample Names", expanded=True):
+    # Create the manual input fields
+    for i, (original_col, suggested_name) in enumerate(initial_name_mapping.items()):
+        
+        # Use a consistent key for the text input
+        key_id = f"rename_{original_col}_{i}" 
+
+        # Display input in one of the three columns
+        with col_chunks[i % 3]:
+            # Use text_input to allow manual override
+            new_name = st.text_input(
+                label=f"Original: `{original_col}`",
+                value=suggested_name,
+                key=key_id,
+                help="Edit the new name (Condition_R# format recommended)"
+            )
+            
+            # Store the user's final decision (or the auto-suggested name)
+            manual_mapping[original_col] = new_name.strip()
+
+
+# 3. Apply the final, user-approved mapping to the DataFrame
+
+# Create a clean final mapping for use in the DataFrame operations
+final_mapping = {
+    original_col: manual_name 
+    for original_col, manual_name in manual_mapping.items() 
+    if original_col in df_filtered.columns # Only rename columns that still exist (after filtering/selection)
+}
+
+# Apply mapping to the DataFrame
+df_filtered = df_filtered.rename(columns=final_mapping)
+
+# Identify which of the ID/Species/Sequence columns were renamed.
+# Since we only provided 'selected_numeric' to the mapping process,
+# ID/Species/Sequence columns will only be renamed if they were also in selected_numeric,
+# which shouldn't happen, but we must account for them if the user manually renames them.
+# The `final_mapping` only contains sample columns, so we rely on the logic below to update.
 
 # Update selected numeric columns list with the new, shorter names
-selected_numeric_renamed = list(name_mapping.values())
+selected_numeric_renamed = list(final_mapping.values())
 
-# Update ID/Species/Sequence columns with their renamed counterparts (if applicable)
-id_col_renamed = name_mapping.get(id_col, id_col)
-species_col_renamed = name_mapping.get(species_col, species_col) if species_col else None
-sequence_col_renamed = name_mapping.get(sequence_col, sequence_col) if sequence_col else None
+# Since ID/Species columns were not in the mapping keys, they retain their original name
+id_col_renamed = id_col
+species_col_renamed = species_col
+sequence_col_renamed = sequence_col
 
-if selected_numeric_renamed:
-    st.caption(f"**Renamed Columns:** {len(name_mapping)} numeric columns were checked. The first column name is now **'{selected_numeric_renamed[0]}'**.")
-
+# --- Drop Columns ---
 # Determine final columns to keep
 final_cols = [id_col_renamed] + selected_numeric_renamed
 if species_col_renamed:
@@ -351,7 +342,6 @@ species_col = species_col_renamed
 sequence_col = sequence_col_renamed
 
 st.markdown("---")
-
 # ============================================================================
 # VALIDATION & CONFIRMATION
 # ============================================================================
