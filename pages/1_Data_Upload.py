@@ -110,7 +110,7 @@ st.dataframe(df_raw)
 st.dataframe(
     df_raw,
     key = "selected_data",
-    on_select = st.write(st.session_state.selected_data),
+    on_select =rerun,
     selection_mode=["multi-column"])
 
 # ============================================================================
