@@ -9,7 +9,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List
 import gc
 import polars as pl
 
@@ -90,7 +90,7 @@ try:
         if uploaded_file.name.endswith('.csv'):
             df_raw = pl.read_csv(uploaded_file,
                                  has_header=True,
-                                 null_values = [str"#Num!","None"]
+                                 null_values = List["#Num!","None"]
                                 )
         else:
             df_raw = pl.read_excel(uploaded_file, sheet_id=0)
