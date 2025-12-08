@@ -52,12 +52,15 @@ def generate_default_column_names(n_cols: int, replicates_per_condition: int = 3
         List of generated names
     """
     names = []
+    n_conditions = (n_cols + replicates_per_condition - 1) // replicates_per_condition  # Ceiling division
+    
     for i in range(n_cols):
         condition_idx = i // replicates_per_condition
         replicate_num = (i % replicates_per_condition) + 1
         condition_letter = chr(ord('A') + condition_idx)
         names.append(f"{condition_letter}{replicate_num}")
     return names
+
 
 def infer_species_from_protein_name(name: str) -> str:
     """Extract species from protein name (e.g., 'PROT_HUMAN' → 'HUMAN')."""
@@ -245,6 +248,10 @@ st.markdown("---")
 # RENAME NUMERICAL COLUMNS
 # ============================================================================
 
+# ============================================================================
+# RENAME NUMERICAL COLUMNS
+# ============================================================================
+
 st.subheader("3.5️⃣ Rename Numerical Columns")
 
 col1, col2, col3 = st.columns([1, 1, 2])
@@ -262,16 +269,21 @@ with col2:
             "Replicates per condition:",
             min_value=1,
             max_value=10,
-            value=3,
+            value=2,  # Changed default from 3 to 2
             help="How many samples per condition?"
         )
     else:
-        replicates_per_condition = 3
+        replicates_per_condition = 2
 
 with col3:
     if rename_style != 'none':
         if rename_style == 'default':
-            name_mapping = smart_rename_columns(list(numerical_cols), style='default')
+            # Pass replicates_per_condition to the function
+            new_names = generate_default_column_names(
+                len(numerical_cols), 
+                replicates_per_condition=replicates_per_condition
+            )
+            name_mapping = {orig: new for orig, new in zip(numerical_cols, new_names)}
         else:
             name_mapping = smart_rename_columns(list(numerical_cols), style='trim')
         
@@ -294,6 +306,7 @@ with col3:
         st.session_state.column_mapping = name_mapping
         st.session_state.reverse_mapping = name_mapping
         st.info("No renaming applied - using original column names")
+
 
 st.markdown("---")
 
