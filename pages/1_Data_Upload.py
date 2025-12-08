@@ -1,38 +1,68 @@
 """
 pages/1_Data_Upload.py - OPTIMIZED
-Unified data upload interface for proteins and peptides with tab-based selection
-Uses helpers for validation and data loading
-FIXED: Ensures df_filtered is always defined before section 7️⃣ to prevent NameError.
+Unified data upload interface with interactive column selection
 """
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Tuple, Optional, List
+from typing import Tuple, Optional
 import gc
-import polars as pl
 
 # Import helpers
-#from helpers.io import detect_numeric_columns, convert_string_numbers_to_float
-#from helpers.core import ProteinData, PeptideData
-#from helpers.naming import rename_columns_for_display 
-#from helpers.naming import standardize_condition_names 
+from helpers.io import validate_dataframe, detect_numeric_columns
+from helpers.core import ProteinData, PeptideData
 
 # ============================================================================
 # PAGE CONFIG
 # ============================================================================
+
+st.set_page_config(
+    page_title="Data Upload",
+    page_icon="📥",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+st.title("📥 Data Upload")
+st.markdown("Upload protein or peptide abundance data for analysis")
+
+# ============================================================================
+# SESSION STATE INITIALIZATION
+# ============================================================================
+
 def init_session_state(key: str, default_value):
     """Initialize session state variable if not already set."""
     if key not in st.session_state:
         st.session_state[key] = default_value
 
-# Ensure core variables are initialized
-init_session_state("data_type", "protein")
-init_session_state("protein_data", None)
-init_session_state("peptide_data", None)
-init_session_state("selected_data", None)
-init_session_state("selected_columns", [])  # Track selected columns
+init_session_state('data_type', 'protein')
+init_session_state('protein_data', None)
+init_session_state('peptide_data', None)
+init_session_state('metadata_columns', [])
+init_session_state('numerical_columns', [])
+
+# ============================================================================
+# DATA TYPE SELECTION
+# ============================================================================
+
+st.subheader("1️⃣ Select Data Type")
+col1, col2 = st.columns(2)
+
+with col1:
+    if st.button("🧬 Protein Data", use_container_width=True, 
+                 type="primary" if st.session_state.data_type == 'protein' else "secondary"):
+        st.session_state.data_type = 'protein'
+        st.rerun()
+
+with col2:
+    if st.button("🔬 Peptide Data", use_container_width=True,
+                 type="primary" if st.session_state.data_type == 'peptide' else "secondary"):
+        st.session_state.data_type = 'peptide'
+        st.rerun()
+
+st.markdown("---")
 
 # ============================================================================
 # FILE UPLOAD
@@ -46,20 +76,13 @@ with col1:
 
 with col2:
     st.caption("Supported: .csv, .xlsx, .xls")
-    
-peptides = st.toggle("Toggle if Peptide Data")
-
-if peptides:
-    st.session_state.data_type = "peptide"
-else:
-    st.session_state.data_type = "protein"
 
 uploaded_file = st.file_uploader(
     f"Choose a {st.session_state.data_type} data file",
     type=["csv", "xlsx", "xls"],
-    key=f"file_upload_{st.session_state.selected_data}"
+    key=f"file_upload_{st.session_state.data_type}"
 )
-    
+
 if uploaded_file is None:
     st.info(f"👆 Upload a {st.session_state.data_type} abundance file to begin analysis")
     st.stop()
@@ -71,21 +94,23 @@ if uploaded_file is None:
 try:
     with st.spinner(f"Loading {st.session_state.data_type} data..."):
         if uploaded_file.name.endswith('.csv'):
-            df_raw = pl.read_csv(uploaded_file, has_header=True, null_values="#NUM!")
+            df_raw = pd.read_csv(uploaded_file, index_col=None)
         else:
-            df_raw = pl.read_excel(uploaded_file, sheet_id=0)
+            df_raw = pd.read_excel(uploaded_file, sheet_name=0)
         
         st.success(f"✅ Loaded {len(df_raw):,} rows × {len(df_raw.columns)} columns")
 except Exception as e:
     st.error(f"❌ Error loading file: {str(e)}")
     st.stop()
 
+st.markdown("---")
+
 # ============================================================================
 # SELECT COLUMNS - STEP 1: METADATA
 # ============================================================================
 
 st.subheader("3️⃣ Select Metadata Columns")
-st.caption("Click headers to select ID, gene names, descriptions, etc.")
+st.caption("Click column headers to select ID, gene names, descriptions, species, etc.")
 
 event_metadata = st.dataframe(
     df_raw.head(5),
@@ -100,15 +125,17 @@ if metadata_cols:
     st.session_state.metadata_columns = metadata_cols
     st.success(f"✅ Selected {len(metadata_cols)} metadata column(s): {', '.join(metadata_cols)}")
 else:
-    st.info("👆 Select metadata columns first")
+    st.info("👆 Select metadata columns (ID, species, descriptions, etc.)")
     st.stop()
+
+st.markdown("---")
 
 # ============================================================================
 # SELECT COLUMNS - STEP 2: NUMERICAL
 # ============================================================================
 
 st.subheader("4️⃣ Select Numerical Columns")
-st.caption("Click headers to select abundance/intensity columns for analysis")
+st.caption("Click column headers to select abundance/intensity columns for analysis")
 
 event_numerical = st.dataframe(
     df_raw.head(5),
@@ -119,33 +146,275 @@ event_numerical = st.dataframe(
 
 numerical_cols = event_numerical.selection.columns
 
-if numerical_cols:
-    st.session_state.numerical_columns = numerical_cols
-    st.success(f"✅ Selected {len(numerical_cols)} numerical column(s)")
-    
-    # Combine selections - use FULL dataframe here
-    all_cols = metadata_cols + numerical_cols
-    working_df = df_raw.select(all_cols)
-    
-    st.subheader(f"Working DataFrame ({len(working_df):,} rows)")
-    st.dataframe(working_df.head(10), use_container_width=True)
-    
-    # Store by data type
-    if st.session_state.data_type == "protein":
-        st.session_state.protein_data = working_df
-    else:
-        st.session_state.peptide_data = working_df
+if not numerical_cols:
+    st.info("👆 Select numerical abundance columns")
+    st.stop()
+
+st.session_state.numerical_columns = numerical_cols
+st.success(f"✅ Selected {len(numerical_cols)} numerical column(s): {', '.join(numerical_cols)}")
+
+# Combine selections
+all_cols = list(metadata_cols) + list(numerical_cols)
+df_filtered = df_raw[all_cols].copy()
+
+st.markdown("---")
+
+# ============================================================================
+# COLUMN CONFIGURATION
+# ============================================================================
+
+st.subheader("5️⃣ Configure Key Columns")
+
+col1, col2, col3 = st.columns(3)
+
+# ID Column selection (from metadata)
+with col1:
+    id_col = st.selectbox(
+        "ID Column (required):",
+        options=metadata_cols,
+        key=f"id_col_{st.session_state.data_type}"
+    )
+
+# Species column (from metadata)
+with col2:
+    species_options = [None] + list(metadata_cols)
+    species_col = st.selectbox(
+        "Species Column (optional):",
+        options=species_options,
+        key=f"species_col_{st.session_state.data_type}"
+    )
+
+# Peptide sequence column (only for peptides, from metadata)
+if st.session_state.data_type == 'peptide':
+    with col3:
+        sequence_col = st.selectbox(
+            "Sequence Column:",
+            options=metadata_cols,
+            key="sequence_col"
+        )
 else:
-    st.info("👆 Select numerical columns to create working dataframe")
+    sequence_col = None
 
+st.markdown("---")
 
+# ============================================================================
+# DATA VALIDATION & PREVIEW
+# ============================================================================
+
+st.subheader("6️⃣ Data Preview & Statistics")
+
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    st.metric(
+        "Total Rows",
+        f"{len(df_filtered):,}",
+        help="Number of proteins/peptides"
+    )
+
+with col2:
+    st.metric(
+        "Samples",
+        len(numerical_cols),
+        help="Number of abundance columns"
+    )
+
+with col3:
+    missing_pct = (df_filtered[numerical_cols].isna().sum().sum() / 
+                   (len(df_filtered) * len(numerical_cols)) * 100)
+    st.metric(
+        "Missing %",
+        f"{missing_pct:.1f}%",
+        help="Overall missing value rate"
+    )
+
+with col4:
+    st.metric(
+        "Data Type",
+        st.session_state.data_type.capitalize(),
+        help=f"Processing as {st.session_state.data_type} data"
+    )
+
+# Show preview
+with st.expander("📊 Data Preview", expanded=False):
+    preview_rows = st.slider("Preview rows:", 5, min(50, len(df_filtered)), 10)
+    
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.dataframe(df_filtered.iloc[:preview_rows], use_container_width=True, height=400)
+    
+    with col2:
+        st.write("**Column Info:**")
+        col_info = pd.DataFrame({
+            'Column': df_filtered.columns,
+            'Type': df_filtered.dtypes.astype(str),
+            'Non-Null': df_filtered.notna().sum().values
+        })
+        st.dataframe(col_info, use_container_width=True, height=400)
+
+st.markdown("---")
+
+# ============================================================================
+# DATA FILTERING OPTIONS
+# ============================================================================
+
+st.subheader("7️⃣ Optional Filtering")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    min_intensity = st.number_input(
+        "Minimum intensity threshold:",
+        min_value=0.0,
+        value=1.0,
+        step=0.1,
+        help="Filter proteins/peptides below this value"
+    )
+
+with col2:
+    max_missing = st.slider(
+        "Maximum missing % per row:",
+        min_value=0,
+        max_value=100,
+        value=100,
+        step=5,
+        help="Remove rows exceeding this missing rate"
+    )
+
+with col3:
+    st.write("")  # Spacing
+    apply_filtering = st.checkbox("Apply filtering", value=False)
+
+if apply_filtering:
+    # Apply filters
+    df_final = df_filtered.copy()
+    
+    # Filter by missing rate
+    missing_rates = df_final[numerical_cols].isna().sum(axis=1) / len(numerical_cols) * 100
+    df_final = df_final[missing_rates <= max_missing]
+    
+    # Filter by minimum intensity
+    has_valid = (df_final[numerical_cols] >= min_intensity).any(axis=1)
+    df_final = df_final[has_valid]
+    
+    rows_removed = len(df_filtered) - len(df_final)
+    st.info(f"✓ Filtering applied: {rows_removed:,} rows removed, {len(df_final):,} rows remaining")
+else:
+    df_final = df_filtered.copy()
+
+st.markdown("---")
+
+# ============================================================================
+# VALIDATION & CONFIRMATION
+# ============================================================================
+
+st.subheader("8️⃣ Validate & Upload")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.write("**Validation Checks:**")
+    
+    checks = {
+        "✅ Metadata columns selected": len(metadata_cols) > 0,
+        "✅ Numerical columns selected": len(numerical_cols) > 0,
+        "✅ ID column configured": id_col is not None,
+        "✅ Data loaded": df_final is not None,
+        "✅ Samples available": len(df_final) > 0,
+    }
+    
+    if st.session_state.data_type == 'peptide':
+        checks["✅ Sequence column selected"] = sequence_col is not None
+    
+    all_passed = all(checks.values())
+    
+    for check, status in checks.items():
+        if status:
+            st.success(check)
+        else:
+            st.error(check.replace("✅", "❌"))
+
+with col2:
+    st.write("**Summary:**")
+    st.write(f"- **Type:** {st.session_state.data_type.upper()}")
+    st.write(f"- **ID Column:** {id_col}")
+    st.write(f"- **Species Column:** {species_col if species_col else 'None'}")
+    if st.session_state.data_type == 'peptide':
+        st.write(f"- **Sequence Column:** {sequence_col}")
+    st.write(f"- **Metadata Columns:** {len(metadata_cols)}")
+    st.write(f"- **Samples:** {len(numerical_cols)}")
+    st.write(f"- **Total {st.session_state.data_type.title()}s:** {len(df_final):,}")
+
+st.markdown("---")
+
+# ============================================================================
+# UPLOAD BUTTON
+# ============================================================================
+
+if st.button(
+    f"🚀 Upload {st.session_state.data_type.upper()} Data",
+    type="primary",
+    use_container_width=True,
+    disabled=not all_passed
+):
+    with st.spinner(f"Processing {st.session_state.data_type} data..."):
+        try:
+            # Create data object
+            if st.session_state.data_type == 'protein':
+                data_obj = ProteinData(
+                    raw=df_final,
+                    numeric_cols=list(numerical_cols),
+                    id_col=id_col,
+                    species_col=species_col,
+                    file_path=str(uploaded_file.name)
+                )
+                st.session_state.protein_data = data_obj
+                
+                # Store in session for other pages
+                st.session_state.df_raw = df_final
+                st.session_state.numeric_cols = list(numerical_cols)
+                st.session_state.id_col = id_col
+                st.session_state.species_col = species_col
+                st.session_state.data_ready = True
+                
+            else:  # peptide
+                data_obj = PeptideData(
+                    raw=df_final,
+                    numeric_cols=list(numerical_cols),
+                    id_col=id_col,
+                    species_col=species_col,
+                    sequence_col=sequence_col,
+                    file_path=str(uploaded_file.name)
+                )
+                st.session_state.peptide_data = data_obj
+                
+                # Store in session for other pages
+                st.session_state.df_raw = df_final
+                st.session_state.numeric_cols = list(numerical_cols)
+                st.session_state.id_col = id_col
+                st.session_state.species_col = species_col
+                st.session_state.sequence_col = sequence_col
+                st.session_state.data_ready = True
+            
+            # Cleanup memory
+            gc.collect()
+            
+            st.success(f"✅ {st.session_state.data_type.upper()} data uploaded successfully!")
+            st.info(f"Ready for analysis. Go to **Visual EDA** page to continue.")
+            
+        except Exception as e:
+            st.error(f"❌ Error processing data: {str(e)}")
+
+st.markdown("---")
+
+# ============================================================================
 # FOOTER
 # ============================================================================
 
 col1, col2 = st.columns([1, 1])
 
 with col1:
-    st.caption("💡 **Tip:** Ensure your data has a unique ID column and numeric intensity columns for each sample.")
+    st.caption("💡 **Tip:** First select metadata columns (ID, species, etc.), then numerical abundance columns.")
 
 with col2:
     st.caption("📖 **Format:** CSV or Excel files with proteins/peptides as rows and samples as columns.")
