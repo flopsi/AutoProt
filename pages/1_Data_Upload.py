@@ -99,15 +99,7 @@ THEMES: Dict[str, Dict] = {
     "journal": THEME_JOURNAL,
 }
 
-def get_species_colors(species_list: list, theme: str = "light") -> list:
-    """Get colors for species based on theme."""
-    theme_dict = THEMES[theme]
-    color_map = {
-        "HUMAN": theme_dict["color_human"],
-        "YEAST": theme_dict["color_yeast"],
-        "ECOLI": theme_dict["color_ecoli"],
-    }
-    return [color_map.get(sp, theme_dict["text_secondary"]) for sp in species_list]
+from helpers.core import ProteinData, PeptideData
 
 # ============================================================================
 # PAGE CONFIG
@@ -122,25 +114,6 @@ st.set_page_config(
 
 st.title("📥 Data Upload")
 st.markdown("Upload protein or peptide abundance data for analysis")
-# ============================================================================
-# SESSION STATE - Add theme selection
-# ============================================================================
-
-init_session_state('theme', 'light')
-
-# ============================================================================
-# SIDEBAR - Theme selector
-# ============================================================================
-
-with st.sidebar:
-    st.markdown("### Settings")
-    theme = st.selectbox(
-        "Theme:",
-        options=list(THEMES.keys()),
-        format_func=lambda x: THEMES[x]["name"],
-        key="theme_selector"
-    )
-    st.session_state.theme = theme
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -168,15 +141,12 @@ def generate_default_column_names(n_cols: int, replicates_per_condition: int = 3
         List of generated names
     """
     names = []
-    n_conditions = (n_cols + replicates_per_condition - 1) // replicates_per_condition  # Ceiling division
-    
     for i in range(n_cols):
         condition_idx = i // replicates_per_condition
         replicate_num = (i % replicates_per_condition) + 1
         condition_letter = chr(ord('A') + condition_idx)
         names.append(f"{condition_letter}{replicate_num}")
     return names
-
 
 def infer_species_from_protein_name(name: str) -> str:
     """Extract species from protein name (e.g., 'PROT_HUMAN' → 'HUMAN')."""
