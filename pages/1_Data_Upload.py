@@ -36,22 +36,17 @@ st.markdown("Upload protein or peptide abundance data for analysis")
 # ============================================================================
 # SESSION STATE INITIALIZATION
 # ============================================================================
-
 def init_session_state(key: str, default_value):
     """Initialize session state variable if not already set."""
     if key not in st.session_state:
         st.session_state[key] = default_value
 
-# Ensure core variables are initialized to avoid key errors later
+# Ensure core variables are initialized
 init_session_state("data_type", "protein")
 init_session_state("protein_data", None)
 init_session_state("peptide_data", None)
 init_session_state("selected_data", None)
-
-
-
-
-
+init_session_state("selected_columns", [])  # Track selected columns
 # ============================================================================
 # FILE UPLOAD
 # ============================================================================
@@ -83,38 +78,91 @@ if uploaded_file is None:
     st.stop()
 
 # ============================================================================
-# LOAD FILE
+# SELECT COLUMNS - STEP 1: METADATA
 # ============================================================================
 
-try:
-    with st.spinner(f"Loading {st.session_state.data_type} data..."):
-        if uploaded_file.name.endswith('.csv'):
-            df_raw = pl.read_csv(uploaded_file,
-                                 has_header=True,
-                                 null_values = "#NUM!"
-                                )
-        else:
-            df_raw = pl.read_excel(uploaded_file, sheet_id=0)
-        
-        st.success(f"✅ Loaded {len(df_raw):,} rows × {len(df_raw.columns)} columns")
-except Exception as e:
-    st.error(f"❌ Error loading file: {str(e)}")
-    st.stop()
+st.subheader("3️⃣ Select Metadata Columns")
+st.caption("Click headers to select ID, gene names, descriptions, etc.")
 
-st.dataframe(df_raw)
-
-# ============================================================================
-# Select columns
-# ============================================================================
-
-event = st.dataframe(
+event_metadata = st.dataframe(
     df_raw,
-    key="data",
+    key="metadata_selector",
     on_select="rerun",
-    selection_mode=["multi-row", "multi-column", "multi-cell"],
+    selection_mode="multi-column",
 )
 
-event.selection
+metadata_cols = event_metadata.selection.columns
+
+if metadata_cols:
+    st.session_state.metadata_columns = metadata_cols
+    st.success(f"✅ Selected {len(metadata_cols)} metadata column(s): {', '.join(metadata_cols)}")
+else:
+    st.info("👆 Select metadata columns first")
+    st.stop()
+
+# ============================================================================
+# SELECT COLUMNS - STEP 2: NUMERICAL
+# ============================================================================
+
+# ============================================================================
+# SELECT COLUMNS - STEP 1: METADATA
+# ============================================================================
+
+st.subheader("3️⃣ Select Metadata Columns")
+st.caption("Click headers to select ID, gene names, descriptions, etc.")
+
+event_metadata = st.dataframe(
+    df_raw,
+    key="metadata_selector",
+    on_select="rerun",
+    selection_mode="multi-column",
+)
+
+metadata_cols = event_metadata.selection.columns
+
+if metadata_cols:
+    st.session_state.metadata_columns = metadata_cols
+    st.success(f"✅ Selected {len(metadata_cols)} metadata column(s): {', '.join(metadata_cols)}")
+else:
+    st.info("👆 Select metadata columns first")
+    st.stop()
+
+# ============================================================================
+# SELECT COLUMNS - STEP 2: NUMERICAL
+# ============================================================================
+
+st.subheader("4️⃣ Select Numerical Columns")
+st.caption("Click headers to select abundance/intensity columns for analysis")
+
+event_numerical = st.dataframe(
+    df_raw,
+    key="numerical_selector",
+    on_select="rerun",
+    selection_mode="multi-column",
+)
+
+numerical_cols = event_numerical.selection.columns
+
+if numerical_cols:
+    st.session_state.numerical_columns = numerical_cols
+    st.success(f"✅ Selected {len(numerical_cols)} numerical column(s): {', '.join(numerical_cols)}")
+    
+    # Combine selections into working dataframe
+    all_cols = metadata_cols + numerical_cols
+    working_df = df_raw.select(all_cols)
+    
+    st.subheader("Working DataFrame")
+    st.dataframe(working_df, use_container_width=True)
+    
+    # Store by data type
+    if st.session_state.data_type == "protein":
+        st.session_state.protein_data = working_df
+    else:
+        st.session_state.peptide_data = working_df
+else:
+    st.info("👆 Select numerical columns to create working dataframe")
+
+
 # ============================================================================
 # FOOTER
 # ============================================================================
