@@ -105,7 +105,7 @@ st.dataframe(df_raw)
 # ============================================================================
 # Select columns
 # ============================================================================
-selected = dr_raw.clone()
+selected = df_raw.clone()
 st.dataframe(
     selected,
     key = "selected_Data",
