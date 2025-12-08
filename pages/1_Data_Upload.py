@@ -112,7 +112,7 @@ except Exception as e:
 # ============================================================================
 try:
     # Replace common non-numeric string placeholders with NaN for correct numeric detection
-    df_raw = df_raw.replace(['#NUM!', '#N/A', '#REF!', 'N/A', 'NA', ''].np.nan)
+    df_raw = df_raw.replace(['#NUM!', '#N/A', '#REF!', 'N/A', 'NA', '']).np.nan
     df_raw[np.isna(df_raw)]=1.0
     st.caption("🔍 Applied preliminary data cleanup (replaced common proteomics placeholders like `#NUM!` with 1.0)")
 except Exception as e:
