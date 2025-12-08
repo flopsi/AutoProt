@@ -393,7 +393,7 @@ if species_col:
     
     with col_chart:
         st.write("**Distribution:**")
-        st.bar_chart(species_counts)
+        st.bar_chart(species_counts, color="species")
 
 st.markdown("---")
 
