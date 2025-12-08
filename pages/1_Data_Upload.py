@@ -90,7 +90,7 @@ try:
         if uploaded_file.name.endswith('.csv'):
             df_raw = pl.read_csv(uploaded_file,
                                  has_header=True,
-                                 null_values = List["#Num!","None"]
+                                 null_values = ["#Num!","None"]
                                 )
         else:
             df_raw = pl.read_excel(uploaded_file, sheet_id=0)
