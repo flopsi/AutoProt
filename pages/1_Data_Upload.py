@@ -201,7 +201,7 @@ st.subheader("2️⃣ Select Metadata Columns")
 st.caption("Click column headers to select ID, gene names, descriptions, species, etc.")
 
 # Convert to pandas for display in st.dataframe
-df_preview = df_raw.head(5).to_pandas()
+df_preview = df_raw.head(5)
 
 event_metadata = st.dataframe(
     df_preview,
