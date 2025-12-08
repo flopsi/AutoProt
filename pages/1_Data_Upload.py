@@ -492,14 +492,21 @@ if species_col:
     with col_chart:
         st.write("**Distribution:**")
         
-        # Get colors for each species
-        colors = get_species_colors(species_counts['Species'].tolist(), theme=st.session_state.theme)
+        import altair as alt
         
-        # Use st.bar_chart with custom colors
-        st.bar_chart(
-            species_counts.set_index('Species')['Count'],
-            color=colors
-        )
+        # Create color mapping
+        species_list = species_counts['Species'].tolist()
+        colors = get_species_colors(species_list, theme=st.session_state.theme)
+        color_scale = alt.Scale(domain=species_list, range=colors)
+        
+        # Create Altair bar chart
+        chart = alt.Chart(species_counts).mark_bar().encode(
+            x=alt.X('Species:N', title='Species'),
+            y=alt.Y('Count:Q', title='Count'),
+            color=alt.Color('Species:N', scale=color_scale, legend=None)
+        ).properties(width=300, height=250)
+        
+        st.altair_chart(chart, use_container_width=True)
 
 st.markdown("---")
 
