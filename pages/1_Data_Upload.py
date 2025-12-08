@@ -55,13 +55,13 @@ st.subheader("1️⃣ Select Data Type")
 col1, col2 = st.columns(2)
 
 with col1:
-    if st.button("🧬 Protein Data", use_container_width=True,
+    if st.button("Protein Data", use_container_width=True,
                  key="data_type_protein_button"):
         st.session_state.data_type = 'protein'
         st.rerun()
 
 with col2:
-    if st.button("🔬 Peptide Data", use_container_width=True,
+    if st.button("Peptide Data", use_container_width=True,
                  key="data_type_peptide_button"):
         st.session_state.data_type = 'peptide'
         st.rerun()
@@ -112,8 +112,9 @@ except Exception as e:
 # ============================================================================
 try:
     # Replace common non-numeric string placeholders with NaN for correct numeric detection
-    df_raw = df_raw.replace(['#NUM!', '#N/A', '#REF!', 'N/A', 'NA', ''], np.nan)
-    st.caption("🔍 Applied preliminary data cleanup (replaced common proteomics placeholders like `#NUM!` with NaN)")
+    df_raw = df_raw.replace(['#NUM!', '#N/A', '#REF!', 'N/A', 'NA', ''], np.nan()
+    df_raw[np.isna(df_raw)]=1.0
+    st.caption("🔍 Applied preliminary data cleanup (replaced common proteomics placeholders like `#NUM!` with 1.0)")
 except Exception as e:
     st.warning(f"⚠️ Could not perform data cleanup: {str(e)}")
 
