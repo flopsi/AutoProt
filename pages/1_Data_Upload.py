@@ -44,31 +44,10 @@ init_session_state('metadata_columns', [])
 init_session_state('numerical_columns', [])
 
 # ============================================================================
-# DATA TYPE SELECTION
-# ============================================================================
-
-st.subheader("1️⃣ Select Data Type")
-col1, col2 = st.columns(2)
-
-with col1:
-    if st.button("🧬 Protein Data", use_container_width=True, 
-                 type="primary" if st.session_state.data_type == 'protein' else "secondary"):
-        st.session_state.data_type = 'protein'
-        st.rerun()
-
-with col2:
-    if st.button("🔬 Peptide Data", use_container_width=True,
-                 type="primary" if st.session_state.data_type == 'peptide' else "secondary"):
-        st.session_state.data_type = 'peptide'
-        st.rerun()
-
-st.markdown("---")
-
-# ============================================================================
 # FILE UPLOAD
 # ============================================================================
 
-st.subheader("2️⃣ Upload File")
+st.subheader("1️⃣ Upload File")
 
 col1, col2 = st.columns([2, 1])
 with col1:
@@ -76,6 +55,13 @@ with col1:
 
 with col2:
     st.caption("Supported: .csv, .xlsx, .xls")
+    
+peptides = st.toggle("Toggle if Peptide Data")
+
+if peptides:
+    st.session_state.data_type = "peptide"
+else:
+    st.session_state.data_type = "protein"
 
 uploaded_file = st.file_uploader(
     f"Choose a {st.session_state.data_type} data file",
@@ -109,7 +95,7 @@ st.markdown("---")
 # SELECT COLUMNS - STEP 1: METADATA
 # ============================================================================
 
-st.subheader("3️⃣ Select Metadata Columns")
+st.subheader("2️⃣ Select Metadata Columns")
 st.caption("Click column headers to select ID, gene names, descriptions, species, etc.")
 
 event_metadata = st.dataframe(
@@ -134,7 +120,7 @@ st.markdown("---")
 # SELECT COLUMNS - STEP 2: NUMERICAL
 # ============================================================================
 
-st.subheader("4️⃣ Select Numerical Columns")
+st.subheader("3️⃣ Select Numerical Columns")
 st.caption("Click column headers to select abundance/intensity columns for analysis")
 
 event_numerical = st.dataframe(
@@ -157,13 +143,21 @@ st.success(f"✅ Selected {len(numerical_cols)} numerical column(s): {', '.join(
 all_cols = list(metadata_cols) + list(numerical_cols)
 df_filtered = df_raw[all_cols].copy()
 
+# Clean numerical columns: replace NaN, 0, 1.0, and "#NUM!" with 1.00
+for col in numerical_cols:
+    df_filtered[col] = pd.to_numeric(df_filtered[col], errors='coerce')
+    df_filtered[col] = df_filtered[col].replace([0, 1.0], 1.00)
+    df_filtered[col] = df_filtered[col].fillna(1.00)
+
+st.info("✓ Cleaned numerical columns: NaN, 0, 1.0, and #NUM! values set to 1.00")
+
 st.markdown("---")
 
 # ============================================================================
 # COLUMN CONFIGURATION
 # ============================================================================
 
-st.subheader("5️⃣ Configure Key Columns")
+st.subheader("4️⃣ Configure Key Columns")
 
 col1, col2, col3 = st.columns(3)
 
@@ -201,7 +195,7 @@ st.markdown("---")
 # DATA VALIDATION & PREVIEW
 # ============================================================================
 
-st.subheader("6️⃣ Data Preview & Statistics")
+st.subheader("5️⃣ Data Preview & Statistics")
 
 col1, col2, col3, col4 = st.columns(4)
 
@@ -220,12 +214,14 @@ with col2:
     )
 
 with col3:
-    missing_pct = (df_filtered[numerical_cols].isna().sum().sum() / 
-                   (len(df_filtered) * len(numerical_cols)) * 100)
+    # Count 1.00 values (cleaned)
+    cleaned_count = (df_filtered[numerical_cols] == 1.00).sum().sum()
+    total_values = len(df_filtered) * len(numerical_cols)
+    cleaned_pct = (cleaned_count / total_values) * 100
     st.metric(
-        "Missing %",
-        f"{missing_pct:.1f}%",
-        help="Overall missing value rate"
+        "Cleaned %",
+        f"{cleaned_pct:.1f}%",
+        help="Values set to 1.00 (originally NaN, 0, or 1.0)"
     )
 
 with col4:
@@ -255,60 +251,10 @@ with st.expander("📊 Data Preview", expanded=False):
 st.markdown("---")
 
 # ============================================================================
-# DATA FILTERING OPTIONS
-# ============================================================================
-
-st.subheader("7️⃣ Optional Filtering")
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    min_intensity = st.number_input(
-        "Minimum intensity threshold:",
-        min_value=0.0,
-        value=1.0,
-        step=0.1,
-        help="Filter proteins/peptides below this value"
-    )
-
-with col2:
-    max_missing = st.slider(
-        "Maximum missing % per row:",
-        min_value=0,
-        max_value=100,
-        value=100,
-        step=5,
-        help="Remove rows exceeding this missing rate"
-    )
-
-with col3:
-    st.write("")  # Spacing
-    apply_filtering = st.checkbox("Apply filtering", value=False)
-
-if apply_filtering:
-    # Apply filters
-    df_final = df_filtered.copy()
-    
-    # Filter by missing rate
-    missing_rates = df_final[numerical_cols].isna().sum(axis=1) / len(numerical_cols) * 100
-    df_final = df_final[missing_rates <= max_missing]
-    
-    # Filter by minimum intensity
-    has_valid = (df_final[numerical_cols] >= min_intensity).any(axis=1)
-    df_final = df_final[has_valid]
-    
-    rows_removed = len(df_filtered) - len(df_final)
-    st.info(f"✓ Filtering applied: {rows_removed:,} rows removed, {len(df_final):,} rows remaining")
-else:
-    df_final = df_filtered.copy()
-
-st.markdown("---")
-
-# ============================================================================
 # VALIDATION & CONFIRMATION
 # ============================================================================
 
-st.subheader("8️⃣ Validate & Upload")
+st.subheader("6️⃣ Validate & Upload")
 
 col1, col2 = st.columns(2)
 
@@ -319,8 +265,8 @@ with col1:
         "✅ Metadata columns selected": len(metadata_cols) > 0,
         "✅ Numerical columns selected": len(numerical_cols) > 0,
         "✅ ID column configured": id_col is not None,
-        "✅ Data loaded": df_final is not None,
-        "✅ Samples available": len(df_final) > 0,
+        "✅ Data loaded": df_filtered is not None,
+        "✅ Samples available": len(df_filtered) > 0,
     }
     
     if st.session_state.data_type == 'peptide':
@@ -343,7 +289,7 @@ with col2:
         st.write(f"- **Sequence Column:** {sequence_col}")
     st.write(f"- **Metadata Columns:** {len(metadata_cols)}")
     st.write(f"- **Samples:** {len(numerical_cols)}")
-    st.write(f"- **Total {st.session_state.data_type.title()}s:** {len(df_final):,}")
+    st.write(f"- **Total {st.session_state.data_type.title()}s:** {len(df_filtered):,}")
 
 st.markdown("---")
 
@@ -362,7 +308,7 @@ if st.button(
             # Create data object
             if st.session_state.data_type == 'protein':
                 data_obj = ProteinData(
-                    raw=df_final,
+                    raw=df_filtered,
                     numeric_cols=list(numerical_cols),
                     id_col=id_col,
                     species_col=species_col,
@@ -371,7 +317,7 @@ if st.button(
                 st.session_state.protein_data = data_obj
                 
                 # Store in session for other pages
-                st.session_state.df_raw = df_final
+                st.session_state.df_raw = df_filtered
                 st.session_state.numeric_cols = list(numerical_cols)
                 st.session_state.id_col = id_col
                 st.session_state.species_col = species_col
@@ -379,7 +325,7 @@ if st.button(
                 
             else:  # peptide
                 data_obj = PeptideData(
-                    raw=df_final,
+                    raw=df_filtered,
                     numeric_cols=list(numerical_cols),
                     id_col=id_col,
                     species_col=species_col,
@@ -389,7 +335,7 @@ if st.button(
                 st.session_state.peptide_data = data_obj
                 
                 # Store in session for other pages
-                st.session_state.df_raw = df_final
+                st.session_state.df_raw = df_filtered
                 st.session_state.numeric_cols = list(numerical_cols)
                 st.session_state.id_col = id_col
                 st.session_state.species_col = species_col
@@ -417,4 +363,4 @@ with col1:
     st.caption("💡 **Tip:** First select metadata columns (ID, species, etc.), then numerical abundance columns.")
 
 with col2:
-    st.caption("📖 **Format:** CSV or Excel files with proteins/peptides as rows and samples as columns.")
+    st.caption("📖 **Note:** NaN, 0, 1.0, and #NUM! values in numerical columns are automatically set to 1.00.")
