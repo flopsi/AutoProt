@@ -1,5 +1,5 @@
 """
-pages/1_Data_Upload.py - Data Upload & Configuration (FIXED)
+pages/1_Data_Upload.py - Data Upload & Configuration (FULLY FIXED)
 
 Handles file upload, validation, column detection, and initial configuration
 Integrates with helpers.io, helpers.core, helpers.analysis modules
@@ -7,6 +7,7 @@ Integrates with helpers.io, helpers.core, helpers.analysis modules
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 from pathlib import Path
 import logging
 
@@ -373,15 +374,28 @@ st.markdown("---")
 
 st.header("Step 🔟: Data Summary")
 
-summary = get_data_summary(df_raw, numeric_cols_filtered, id_col)
+# Calculate statistics directly from numeric columns
+# This is more reliable than get_data_summary() which may have key mismatches
+numeric_data = df_raw[numeric_cols_filtered].copy()
 
-# Extract summary statistics with safe defaults
-n_rows = summary.get('n_rows', len(df_raw))
+# Calculate statistics from actual data
+n_rows = len(df_raw)
 n_cols = len(numeric_cols_filtered)
-mean_abundance = summary.get('mean_abundance', 0.0)
-median_abundance = summary.get('median_abundance', 0.0)
-min_value = summary.get('min_value', 0.0)
-max_value = summary.get('max_value', 0.0)
+
+# Get statistics from all numeric values (ignoring NaN)
+all_values = numeric_data.values.flatten()
+all_values_clean = all_values[~pd.isna(all_values)]
+
+if len(all_values_clean) > 0:
+    mean_abundance = float(np.nanmean(all_values_clean))
+    median_abundance = float(np.nanmedian(all_values_clean))
+    min_value = float(np.nanmin(all_values_clean))
+    max_value = float(np.nanmax(all_values_clean))
+else:
+    mean_abundance = 0.0
+    median_abundance = 0.0
+    min_value = 0.0
+    max_value = 0.0
 
 col1, col2, col3 = st.columns(3)
 
@@ -394,10 +408,17 @@ with col2:
     st.metric("Median Abundance", f"{median_abundance:.1f}")
 
 with col3:
-    st.metric("Min Value", f"{min_value:.2e}")
-    st.metric("Max Value", f"{max_value:.2e}")
+    if min_value > 0:
+        st.metric("Min Value", f"{min_value:.2e}")
+    else:
+        st.metric("Min Value", "0.0")
+    
+    if max_value > 0:
+        st.metric("Max Value", f"{max_value:.2e}")
+    else:
+        st.metric("Max Value", "0.0")
 
-# Intensity distribution note
+# Intensity distribution
 with st.expander("Intensity Distribution", expanded=False):
     st.caption("Note: 1.0 values are treated as missing data (preprocessing artifact)")
 
