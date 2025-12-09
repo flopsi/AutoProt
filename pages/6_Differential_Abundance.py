@@ -1,7 +1,12 @@
 """
-pages/6_Differential_Abundance.py - COMPLETE VERSION WITH DIAGNOSTICS
-Limma-style empirical Bayes with composition input, diagnostics, and stable proteome FP control
+pages/6_Differential_Abundance.py
+Limma-style empirical Bayes DA with composition-based spike-in validation.
+- Comparison: A (reference) vs B (treatment)
+- Significance by p/FDR only (no FC cutoff)
+- MA/Volcano colored by species
 """
+
+from __future__ import annotations
 
 import streamlit as st
 import polars as pl
@@ -11,1009 +16,665 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 import sys
 
-# Statistical imports
-from scipy import stats
 from scipy.stats import t as t_dist
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from sklearn.metrics import roc_curve, auc, precision_recall_curve
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-# ============================================================================
-# HELPER FUNCTIONS - LIMMA-STYLE EMPIRICAL BAYES
-# ============================================================================
+# ---------------------------------------------------------------------
+# LIMMA-STYLE HELPERS
+# ---------------------------------------------------------------------
 
-def fit_linear_model(df: pd.DataFrame, 
-                     group1_cols: List[str], 
-                     group2_cols: List[str]) -> pd.DataFrame:
-    """Fit linear models for each protein (gene)."""
-    results = []
-    
-    for protein_id, row in df.iterrows():
-        g1_vals = row[group1_cols].dropna()
-        g2_vals = group2_cols.dropna()
-        
-        if len(g1_vals) < 2 or len(g2_vals) < 2:
-            results.append({
-                'protein_id': protein_id,
-                'log2fc': np.nan,
-                'mean_g1': np.nan,
-                'mean_g2': np.nan,
-                'se': np.nan,
-                'sigma': np.nan,
-                'df': np.nan,
-                'n_g1': len(g1_vals),
-                'n_g2': len(g2_vals)
-            })
+
+def fit_linear_model(
+    df: pd.DataFrame, group1_cols: List[str], group2_cols: List[str]
+) -> pd.DataFrame:
+    """OLS per feature: group1 - group2 on log2 scale."""
+    results: List[dict] = []
+
+    for prot_id, row in df.iterrows():
+        g1 = row[group1_cols].dropna()
+        g2 = row[group2_cols].dropna()
+
+        if len(g1) < 2 or len(g2) < 2:
+            results.append(
+                dict(
+                    protein_id=prot_id,
+                    log2fc=np.nan,
+                    mean_g1=np.nan,
+                    mean_g2=np.nan,
+                    se=np.nan,
+                    sigma=np.nan,
+                    df=np.nan,
+                    n_g1=len(g1),
+                    n_g2=len(g2),
+                )
+            )
             continue
-        
-        mean_g1 = g1_vals.mean()
-        mean_g2 = g2_vals.mean()
-        log2fc = mean_g1 - mean_g2
-        
-        n1, n2 = len(g1_vals), len(g2_vals)
-        var1 = g1_vals.var(ddof=1)
-        var2 = g2_vals.var(ddof=1)
-        
+
+        mean_g1 = g1.mean()
+        mean_g2 = g2.mean()
+        log2fc = mean_g1 - mean_g2  # A vs B
+
+        n1, n2 = len(g1), len(g2)
+        var1 = g1.var(ddof=1)
+        var2 = g2.var(ddof=1)
         pooled_var = ((n1 - 1) * var1 + (n2 - 1) * var2) / (n1 + n2 - 2)
         sigma = np.sqrt(pooled_var)
-        se = sigma * np.sqrt(1/n1 + 1/n2)
-        df = n1 + n2 - 2
-        
-        results.append({
-            'protein_id': protein_id,
-            'log2fc': log2fc,
-            'mean_g1': mean_g1,
-            'mean_g2': mean_g2,
-            'se': se,
-            'sigma': sigma,
-            'df': df,
-            'n_g1': n1,
-            'n_g2': n2
-        })
-    
-    results_df = pd.DataFrame(results)
-    results_df.set_index('protein_id', inplace=True)
-    return results_df
+        se = sigma * np.sqrt(1 / n1 + 1 / n2)
+        df_dof = n1 + n2 - 2
+
+        results.append(
+            dict(
+                protein_id=prot_id,
+                log2fc=log2fc,
+                mean_g1=mean_g1,
+                mean_g2=mean_g2,
+                se=se,
+                sigma=sigma,
+                df=df_dof,
+                n_g1=n1,
+                n_g2=n2,
+            )
+        )
+
+    out = pd.DataFrame(results).set_index("protein_id")
+    return out
 
 
 def empirical_bayes_moderation(fit_df: pd.DataFrame) -> pd.DataFrame:
-    """Apply empirical Bayes moderation to variances (limma-style)."""
+    """Moderate variances (limma-style)."""
     from scipy.special import polygamma
-    
-    valid_df = fit_df.dropna(subset=['sigma', 'df']).copy()
-    
-    if len(valid_df) == 0:
+
+    valid = fit_df.dropna(subset=["sigma", "df"]).copy()
+    if valid.empty:
         return fit_df
-    
-    s2 = valid_df['sigma'] ** 2
-    df_gene = valid_df['df']
-    
+
+    s2 = valid["sigma"] ** 2
+    df_gene = valid["df"]
     log_s2 = np.log(s2)
-    log_s2_mean = log_s2.mean()
-    log_s2_var = log_s2.var()
-    
-    def trigamma_inv(y):
+    m = log_s2.mean()
+    v = log_s2.var()
+
+    def trigamma_inv(y: float) -> float:
         if y < 1e-6:
-            return 1/y
-        else:
-            d = 1/y
-            for _ in range(10):
-                tri = polygamma(1, d/2)
-                tetra = -0.5 * polygamma(2, d/2)
-                d = d - (tri - y) / tetra
-            return d
-    
-    d0 = trigamma_inv(log_s2_var)
-    d0 = max(d0, 1)
-    
-    s0_squared = np.exp(log_s2_mean + polygamma(1, d0/2))
-    
+            return 1 / y
+        d = 1 / y
+        for _ in range(10):
+            tri = polygamma(1, d / 2)
+            tetra = -0.5 * polygamma(2, d / 2)
+            d = d - (tri - y) / tetra
+        return d
+
+    d0 = max(trigamma_inv(v), 1.0)
+    s0_sq = np.exp(m + polygamma(1, d0 / 2))
+
     df_post = d0 + df_gene
-    s2_post = (d0 * s0_squared + df_gene * s2) / df_post
-    
-    valid_df['s2_prior'] = s0_squared
-    valid_df['df_prior'] = d0
-    valid_df['s2_post'] = s2_post
-    valid_df['df_post'] = df_post
-    valid_df['se_post'] = np.sqrt(s2_post) * valid_df['se'] / valid_df['sigma']
-    valid_df['t_stat'] = valid_df['log2fc'] / valid_df['se_post']
-    valid_df['pvalue'] = 2 * (1 - t_dist.cdf(np.abs(valid_df['t_stat']), valid_df['df_post']))
-    
-    result_df = fit_df.copy()
-    for col in ['s2_prior', 'df_prior', 's2_post', 'df_post', 'se_post', 't_stat', 'pvalue']:
-        result_df[col] = valid_df[col]
-    
-    return result_df
+    s2_post = (d0 * s0_sq + df_gene * s2) / df_post
+
+    valid["s2_prior"] = s0_sq
+    valid["df_prior"] = d0
+    valid["s2_post"] = s2_post
+    valid["df_post"] = df_post
+    valid["se_post"] = np.sqrt(s2_post) * valid["se"] / valid["sigma"]
+    valid["t_stat"] = valid["log2fc"] / valid["se_post"]
+    valid["pvalue"] = 2 * (1 - t_dist.cdf(np.abs(valid["t_stat"]), valid["df_post"]))
+
+    out = fit_df.copy()
+    for col in ["s2_prior", "df_prior", "s2_post", "df_post", "se_post", "t_stat", "pvalue"]:
+        out[col] = valid[col]
+    return out
 
 
-def benjamini_hochberg_fdr(pvalues: pd.Series) -> pd.Series:
-    """Calculate FDR using Benjamini-Hochberg procedure."""
-    valid_pvals = pvalues.dropna().sort_values()
-    n = len(valid_pvals)
-    
+def benjamini_hochberg_fdr(pvals: pd.Series) -> pd.Series:
+    """BH FDR."""
+    v = pvals.dropna().sort_values()
+    n = len(v)
     if n == 0:
-        return pd.Series(index=pvalues.index, dtype=float)
-    
+        return pd.Series(index=pvals.index, dtype=float)
+
     ranks = np.arange(1, n + 1)
-    fdr_vals = valid_pvals.values * n / ranks
-    fdr_vals = np.minimum.accumulate(fdr_vals[::-1])[::-1]
-    fdr_vals = np.minimum(fdr_vals, 1.0)
-    
-    fdr_dict = dict(zip(valid_pvals.index, fdr_vals))
-    return pvalues.index.map(fdr_dict)
+    f = v.values * n / ranks
+    f = np.minimum.accumulate(f[::-1])[::-1]
+    f = np.minimum(f, 1.0)
+    mapping = dict(zip(v.index, f))
+    return pvals.index.to_series().map(mapping)
 
 
-def calculate_error_metrics_stable_proteome(results_df: pd.DataFrame,
-                                           theoretical_fc_dict: Dict[str, float],
-                                           species_mapping: Dict,
-                                           stable_proteome_threshold: float = 0.5,
-                                           pval_threshold: float = 0.05) -> Tuple[Dict, pd.DataFrame]:
-    """Calculate confusion matrix and performance metrics using ONLY stable proteome."""
-    results_df = results_df.copy()
-    results_df = results_df[results_df['regulation'] != 'not_tested']
-    
-    if len(results_df) == 0:
+# ---------------------------------------------------------------------
+# ERROR METRICS (VARIABLE + STABLE PROTEOME)
+# ---------------------------------------------------------------------
+
+
+def error_metrics_variable(
+    res: pd.DataFrame,
+    true_fc: Dict[str, float],
+    species_map: Dict[str, str],
+    stable_thr: float = 0.5,
+    p_thr: float = 0.05,
+) -> Tuple[Dict, pd.DataFrame]:
+    """Metrics for variable proteome (|true log2FC| >= stable_thr)."""
+    df = res.copy()
+    df = df[df["regulation"] != "not_tested"]
+
+    df["species_key"] = df.index.map(lambda x: species_map.get(x, "Unknown"))
+    df["true_log2fc"] = df["species_key"].map(lambda s: true_fc.get(s, np.nan))
+    df = df.dropna(subset=["true_log2fc"])
+    if df.empty:
         return {}, pd.DataFrame()
-    
-    results_df['species_key'] = results_df.index.map(lambda x: species_mapping.get(x, 'Unknown'))
-    results_df['true_log2fc'] = results_df['species_key'].map(lambda x: theoretical_fc_dict.get(x, np.nan))
-    
-    valid_results = results_df.dropna(subset=['true_log2fc'])
-    
-    if len(valid_results) == 0:
+
+    df = df[np.abs(df["true_log2fc"]) >= stable_thr].copy()
+    if df.empty:
         return {}, pd.DataFrame()
-    
-    # === FILTER TO STABLE PROTEOME ONLY ===
-    valid_results['is_stable'] = valid_results['true_log2fc'].apply(
-        lambda x: abs(x) < stable_proteome_threshold
+
+    df["true_regulated"] = np.abs(df["true_log2fc"]) >= stable_thr
+    df["observed_regulated"] = df["regulation"].isin(["up", "down"])
+
+    tp = int((df["true_regulated"] & df["observed_regulated"]).sum())
+    fn = int((df["true_regulated"] & ~df["observed_regulated"]).sum())
+    tn = int((~df["true_regulated"] & ~df["observed_regulated"]).sum())
+    fp = int((~df["true_regulated"] & df["observed_regulated"]).sum())
+
+    sens = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    spec = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+    prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+
+    def wilson(successes: int, trials: int, z: float = 1.96) -> Tuple[float, float]:
+        if trials == 0:
+            return (0.0, 0.0)
+        p = successes / trials
+        denom = 1 + z**2 / trials
+        center = (p + z**2 / (2 * trials)) / denom
+        adj = z * np.sqrt(p * (1 - p) / trials + z**2 / (4 * trials**2)) / denom
+        return (max(0, center - adj), min(1, center + adj))
+
+    sens_ci = wilson(tp, tp + fn)
+    spec_ci = wilson(tn, tn + fp)
+
+    overall = dict(
+        Total_Variable=len(df),
+        True_Positives=tp,
+        False_Negatives=fn,
+        True_Negatives=tn,
+        False_Positives=fp,
+        Sensitivity=sens,
+        Sensitivity_CI=sens_ci,
+        Specificity=spec,
+        Specificity_CI=spec_ci,
+        Precision=prec,
     )
-    stable_results = valid_results[valid_results['is_stable']].copy()
-    
-    if len(stable_results) == 0:
-        st.warning(f"⚠️ No proteins in stable proteome range (|log2FC| < {stable_proteome_threshold})")
-        return {}, pd.DataFrame()
-    
-    stable_results['true_not_regulated'] = True
-    stable_results['observed_regulated'] = stable_results['regulation'].isin(['up', 'down'])
-    
-    TN = (~stable_results['observed_regulated']).sum()
-    FP = (stable_results['observed_regulated']).sum()
-    
-    total_stable = len(stable_results)
-    false_positive_rate = FP / total_stable if total_stable > 0 else 0.0
-    true_negative_rate = TN / total_stable if total_stable > 0 else 0.0
-    
-    def wilson_ci(successes, trials, z=1.96):
-        p = successes / trials if trials > 0 else 0
-        denominator = 1 + z**2 / trials if trials > 0 else 1
-        center = (p + z**2 / (2*trials)) / denominator if trials > 0 else 0
-        adjustment = z * np.sqrt(p*(1-p)/trials + z**2/(4*trials**2)) / denominator if trials > 0 else 0
-        return (max(0, center - adjustment), min(1, center + adjustment))
-    
-    fpr_ci = wilson_ci(int(FP), int(total_stable)) if total_stable > 0 else (0, 0)
-    tnr_ci = wilson_ci(int(TN), int(total_stable)) if total_stable > 0 else (0, 0)
-    
-    overall_metrics = {
-        'Dataset': 'Stable Proteome (False Positive Rate)',
-        'Total_Stable_Proteins': total_stable,
-        'True_Negatives': int(TN),
-        'False_Positives': int(FP),
-        'False_Positive_Rate': false_positive_rate,
-        'FPR_CI': fpr_ci,
-        'True_Negative_Rate': true_negative_rate,
-        'TNR_CI': tnr_ci,
-    }
-    
-    species_metrics = []
-    for species in stable_results['species_key'].unique():
-        species_data = stable_results[stable_results['species_key'] == species]
-        
-        n_proteins = len(species_data)
-        n_fp = (species_data['observed_regulated']).sum()
-        n_tn = (~species_data['observed_regulated']).sum()
-        
-        fpr_species = n_fp / n_proteins if n_proteins > 0 else 0
-        
-        species_data_copy = species_data.copy()
-        species_data_copy['abs_error'] = species_data_copy['log2fc'].abs()
-        mae = species_data_copy['abs_error'].mean()
-        
-        species_metrics.append({
-            'Species': species,
-            'N': n_proteins,
-            'True_Negatives': n_tn,
-            'False_Positives': n_fp,
-            'FP_Rate': f"{fpr_species:.1%}",
-            'Mean_Abs_Error': f"{mae:.3f}",
-        })
-    
-    species_df = pd.DataFrame(species_metrics)
-    return overall_metrics, species_df
+
+    rows: List[dict] = []
+    for sp in df["species_key"].unique():
+        sub = df[df["species_key"] == sp].copy()
+        theo = true_fc.get(sp, 0.0)
+        err = sub["log2fc"] - theo
+        n = len(sub)
+        rmse = float(np.sqrt((err**2).mean()))
+        mae = float(err.abs().mean())
+        bias = float(err.mean())
+        rows.append(
+            dict(
+                Species=sp,
+                N=n,
+                Theo_FC=f"{theo:.2f}",
+                RMSE=rmse,
+                MAE=mae,
+                Bias=bias,
+                Detection_Rate=float(sub["observed_regulated"].mean()),
+            )
+        )
+    return overall, pd.DataFrame(rows)
 
 
-def calculate_error_metrics_variable_proteins(results_df: pd.DataFrame,
-                                              theoretical_fc_dict: Dict[str, float],
-                                              species_mapping: Dict,
-                                              stable_proteome_threshold: float = 0.5,
-                                              pval_threshold: float = 0.05) -> Tuple[Dict, pd.DataFrame]:
-    """Calculate performance metrics for variable proteome proteins."""
-    results_df = results_df.copy()
-    results_df = results_df[results_df['regulation'] != 'not_tested']
-    
-    if len(results_df) == 0:
+def error_metrics_stable(
+    res: pd.DataFrame,
+    true_fc: Dict[str, float],
+    species_map: Dict[str, str],
+    stable_thr: float = 0.5,
+) -> Tuple[Dict, pd.DataFrame]:
+    """False positive metrics for stable proteome (|true log2FC| < stable_thr)."""
+    df = res.copy()
+    df = df[df["regulation"] != "not_tested"]
+
+    df["species_key"] = df.index.map(lambda x: species_map.get(x, "Unknown"))
+    df["true_log2fc"] = df["species_key"].map(lambda s: true_fc.get(s, np.nan))
+    df = df.dropna(subset=["true_log2fc"])
+    if df.empty:
         return {}, pd.DataFrame()
-    
-    results_df['species_key'] = results_df.index.map(lambda x: species_mapping.get(x, 'Unknown'))
-    results_df['true_log2fc'] = results_df['species_key'].map(lambda x: theoretical_fc_dict.get(x, np.nan))
-    
-    valid_results = results_df.dropna(subset=['true_log2fc'])
-    
-    if len(valid_results) == 0:
+
+    df = df[np.abs(df["true_log2fc"]) < stable_thr].copy()
+    if df.empty:
         return {}, pd.DataFrame()
-    
-    valid_results['is_variable'] = valid_results['true_log2fc'].apply(
-        lambda x: abs(x) >= stable_proteome_threshold
+
+    df["observed_regulated"] = df["regulation"].isin(["up", "down"])
+    fp = int(df["observed_regulated"].sum())
+    tn = int((~df["observed_regulated"]).sum())
+    total = len(df)
+
+    fpr = fp / total if total > 0 else 0.0
+    tnr = tn / total if total > 0 else 0.0
+
+    def wilson(successes: int, trials: int, z: float = 1.96) -> Tuple[float, float]:
+        if trials == 0:
+            return (0.0, 0.0)
+        p = successes / trials
+        denom = 1 + z**2 / trials
+        center = (p + z**2 / (2 * trials)) / denom
+        adj = z * np.sqrt(p * (1 - p) / trials + z**2 / (4 * trials**2)) / denom
+        return (max(0, center - adj), min(1, center + adj))
+
+    fpr_ci = wilson(fp, total)
+    tnr_ci = wilson(tn, total)
+
+    overall = dict(
+        Total_Stable=total,
+        False_Positives=fp,
+        True_Negatives=tn,
+        False_Positive_Rate=fpr,
+        FPR_CI=fpr_ci,
+        True_Negative_Rate=tnr,
+        TNR_CI=tnr_ci,
     )
-    variable_results = valid_results[valid_results['is_variable']].copy()
-    
-    if len(variable_results) == 0:
-        st.warning(f"⚠️ No proteins in variable proteome range (|log2FC| >= {stable_proteome_threshold})")
-        return {}, pd.DataFrame()
-    
-    variable_results['true_regulated'] = True
-    variable_results['observed_regulated'] = variable_results['regulation'].isin(['up', 'down'])
-    
-    TP = (variable_results['observed_regulated']).sum()
-    FN = (~variable_results['observed_regulated']).sum()
-    
-    sensitivity = TP / (TP + FN) if (TP + FN) > 0 else 0.0
-    
-    def wilson_ci(successes, trials, z=1.96):
-        p = successes / trials if trials > 0 else 0
-        denominator = 1 + z**2 / trials if trials > 0 else 1
-        center = (p + z**2 / (2*trials)) / denominator if trials > 0 else 0
-        adjustment = z * np.sqrt(p*(1-p)/trials + z**2/(4*trials**2)) / denominator if trials > 0 else 0
-        return (max(0, center - adjustment), min(1, center + adjustment))
-    
-    sens_ci = wilson_ci(int(TP), int(TP + FN)) if (TP + FN) > 0 else (0, 0)
-    
-    overall_metrics = {
-        'Dataset': 'Variable Proteome (Sensitivity)',
-        'Total_Variable_Proteins': len(variable_results),
-        'True_Positives': int(TP),
-        'False_Negatives': int(FN),
-        'Sensitivity': sensitivity,
-        'Sensitivity_CI': sens_ci,
-    }
-    
-    species_metrics = []
-    for species in variable_results['species_key'].unique():
-        species_data = variable_results[variable_results['species_key'] == species]
-        theo_fc = theoretical_fc_dict.get(species, 0.0)
-        
-        species_data = species_data.copy()
-        species_data['error'] = species_data['log2fc'] - theo_fc
-        
-        n_proteins = len(species_data)
-        rmse = np.sqrt((species_data['error'] ** 2).mean())
-        mae = species_data['error'].abs().mean()
-        bias = species_data['error'].mean()
-        
-        rmse_ci = (
-            rmse * np.sqrt(1 - 1.96/np.sqrt(n_proteins)),
-            rmse * np.sqrt(1 + 1.96/np.sqrt(n_proteins))
-        ) if n_proteins > 1 else (rmse, rmse)
-        
-        n_detected = (species_data['observed_regulated']).sum()
-        detection_rate = n_detected / n_proteins if n_proteins > 0 else 0
-        
-        species_metrics.append({
-            'Species': species,
-            'N': n_proteins,
-            'Theo_FC': f"{theo_fc:.2f}",
-            'RMSE': rmse,
-            'RMSE_CI_Low': rmse_ci[0],
-            'RMSE_CI_High': rmse_ci[1],
-            'MAE': mae,
-            'Bias': bias,
-            'Detection_Rate': detection_rate,
-        })
-    
-    species_df = pd.DataFrame(species_metrics)
-    return overall_metrics, species_df
+
+    rows: List[dict] = []
+    for sp in df["species_key"].unique():
+        sub = df[df["species_key"] == sp].copy()
+        n = len(sub)
+        fp_s = int(sub["observed_regulated"].sum())
+        tn_s = int((~sub["observed_regulated"]).sum())
+        fpr_s = fp_s / n if n > 0 else 0.0
+        mae = float(np.abs(sub["log2fc"]).mean())
+        rows.append(
+            dict(
+                Species=sp,
+                N=n,
+                False_Positives=fp_s,
+                True_Negatives=tn_s,
+                FP_Rate=fpr_s,
+                Mean_Abs_Error=mae,
+            )
+        )
+    return overall, pd.DataFrame(rows)
 
 
-# ============================================================================
+# ---------------------------------------------------------------------
 # PAGE CONFIG
-# ============================================================================
+# ---------------------------------------------------------------------
 
-st.set_page_config(
-    page_title="Differential Abundance",
-    page_icon="🔬",
-    layout="wide"
+st.set_page_config(page_title="Differential Abundance", page_icon="🔬", layout="wide")
+st.title("🔬 Differential Abundance Analysis")
+st.markdown("Limma empirical Bayes on A vs B with spike-in based validation.")
+st.markdown("---")
+
+# ---------------------------------------------------------------------
+# DATA AVAILABILITY
+# ---------------------------------------------------------------------
+
+if "df_imputed" not in st.session_state or st.session_state.df_imputed is None:
+    st.error("No imputed data found. Please finish the Missing Value Imputation step first.")
+    st.stop()
+
+df_pl: pl.DataFrame = st.session_state.df_imputed
+df = df_pl.to_pandas()  # for limma-style operations
+numeric_cols: List[str] = st.session_state.numeric_cols
+species_col: str = st.session_state.species_col
+sample_to_condition: Dict[str, str] = st.session_state.sample_to_condition
+
+conditions = sorted(set(sample_to_condition.values()))
+cond_samples: Dict[str, List[str]] = {}
+for s, c in sample_to_condition.items():
+    if s in numeric_cols:
+        cond_samples.setdefault(c, []).append(s)
+
+st.info(
+    f"Data: {df.shape[0]:,} proteins × {len(numeric_cols)} samples · "
+    f"Conditions: {', '.join(conditions)}"
 )
 
-st.title("🔬 Differential Abundance Analysis (LIMMA)")
-st.markdown("Empirical Bayes moderated t-statistics with composition-based spike-in validation")
-st.markdown("---")
+# ---------------------------------------------------------------------
+# 1. CHOOSE A VS B
+# ---------------------------------------------------------------------
 
-# ============================================================================
-# CHECK FOR IMPUTED DATA
-# ============================================================================
-
-if 'df_imputed' not in st.session_state or st.session_state.df_imputed is None:
-    st.error("❌ No imputed data. Please complete **🔧 Missing Value Imputation** first")
-    st.stop()
-
-df = st.session_state.df_imputed.copy()
-numeric_cols = st.session_state.numeric_cols
-sample_to_condition = st.session_state.get('sample_to_condition', {})
-species_col = st.session_state.species_col
-
-conditions = sorted(list(set(sample_to_condition.values())))
-condition_samples = {}
-for sample, condition in sample_to_condition.items():
-    if sample in numeric_cols:
-        if condition not in condition_samples:
-            condition_samples[condition] = []
-        condition_samples[condition].append(sample)
-
-st.info(f"📊 **Data**: {len(df):,} proteins × {len(numeric_cols)} samples | **Conditions**: {', '.join(conditions)}")
-
-# ============================================================================
-# 1. EXPERIMENTAL DESIGN
-# ============================================================================
-
-st.subheader("1️⃣ Select Comparison Groups")
+st.subheader("1️⃣ Comparison Setup (A vs B)")
 
 col1, col2 = st.columns(2)
-
 with col1:
-    reference_group = st.selectbox(
-        "Reference Group (A - Control):",
-        options=conditions,
-        index=0,
-        help="Baseline/control condition"
-    )
-
+    ref_cond = st.selectbox("Condition A (reference)", options=conditions, index=0)
 with col2:
-    treatment_group = st.selectbox(
-        "Treatment Group (B):",
-        options=[c for c in conditions if c != reference_group],
-        index=0 if len(conditions) > 1 else None,
-        help="Treatment/experimental condition"
+    treat_cond = st.selectbox(
+        "Condition B (treatment)",
+        options=[c for c in conditions if c != ref_cond],
+        index=0 if len(conditions) > 1 else 0,
     )
 
-if reference_group == treatment_group:
-    st.error("❌ Please select different groups for comparison")
+if ref_cond == treat_cond:
+    st.error("Choose two different conditions.")
     st.stop()
 
-ref_samples = condition_samples[reference_group]
-treat_samples = condition_samples[treatment_group]
+ref_samples = cond_samples[ref_cond]
+treat_samples = cond_samples[treat_cond]
 
-st.markdown(f"""
-**LIMMA Analysis**: `{reference_group}` (A, n={len(ref_samples)}) vs `{treatment_group}` (B, n={len(treat_samples)})
-
-**Log2FC Convention**: 
-- **Positive FC** = higher in **{reference_group}** (A)
-- **Negative FC** = higher in **{treatment_group}** (B)
-""")
-
+st.markdown(
+    f"- Log2FC is **A/B = {ref_cond}/{treat_cond}**\n"
+    "- Positive log2FC → higher in A; negative → higher in B."
+)
 st.markdown("---")
 
-# ============================================================================
-# 2. SPIKE-IN VALIDATION - COMPOSITION-BASED APPROACH
-# ============================================================================
+# ---------------------------------------------------------------------
+# 2. COMPOSITION-BASED EXPECTED FC
+# ---------------------------------------------------------------------
 
-st.subheader("2️⃣ Spike-in Validation (Optional)")
+st.subheader("2️⃣ Spike-in Composition (optional)")
 
-st.markdown("""
-For spike-in studies, specify percentage composition per species per condition.
+use_comp = st.checkbox(
+    "Provide % composition per species per condition to define expected log2FC",
+    value=False,
+)
 
-**Proteome Stratification**:
-- **Stable Proteome**: |log2FC| < 0.5 (used to calculate **False Positive Rate**)
-- **Variable Proteome**: |log2FC| ≥ 0.5 (used to calculate **Sensitivity**)
-""")
+theoretical_fc: Dict[str, float] = {}
+species_values = sorted([s for s in df[species_col].unique() if isinstance(s, str)])
 
-use_composition = st.checkbox("Define spike-in by percentage composition per species per condition")
+if use_comp:
+    st.markdown("Enter percentage composition (will be normalized to 100% within each condition).")
 
-theoretical_fc_dict = {}
-
-if use_composition:
-    species_list = sorted([s for s in df[species_col].unique() if s != 'Unknown'])
-    
-    st.markdown("### 📊 Percentage Composition Input")
-    st.markdown(f"""
-    **Conditions**: {reference_group} (A) | {treatment_group} (B)
-    
-    Enter the percentage (0-100) of each species in each condition.
-    """)
-    
-    tab1, tab2, tab3 = st.tabs(["Preset Scenarios", "Custom Composition", "View Calculated FC"])
-    
-    with tab1:
-        st.markdown("### 🧪 Benchmark Spike-in Scenarios")
-        
-        preset_option = st.radio(
-            "Select Preset Scenario:",
-            options=[
-                "None - Use Custom",
-                "Scenario A: Balanced → Human Heavy",
-                "Scenario B: Balanced → Yeast Heavy",
-                "Scenario C: Balanced → EColi Heavy",
-                "Scenario D: Extreme Flip"
-            ]
-        )
-        
-        composition_ref = {}
-        composition_treat = {}
-        
-        if preset_option == "Scenario A: Balanced → Human Heavy":
-            st.info("""
-            **Reference (A)**: 40% Human, 30% Yeast, 30% EColi
-            **Treatment (B)**: 70% Human, 15% Yeast, 15% EColi
-            
-            Expected: Human ↑, Yeast ↓, EColi ↓
-            """)
-            composition_ref = {'HUMAN': 40, 'YEAST': 30, 'ECOLI': 30}
-            composition_treat = {'HUMAN': 70, 'YEAST': 15, 'ECOLI': 15}
-            
-        elif preset_option == "Scenario B: Balanced → Yeast Heavy":
-            st.info("""
-            **Reference (A)**: 40% Human, 30% Yeast, 30% EColi
-            **Treatment (B)**: 15% Human, 70% Yeast, 15% EColi
-            
-            Expected: Yeast ↑, Human ↓, EColi ↓
-            """)
-            composition_ref = {'HUMAN': 40, 'YEAST': 30, 'ECOLI': 30}
-            composition_treat = {'HUMAN': 15, 'YEAST': 70, 'ECOLI': 15}
-            
-        elif preset_option == "Scenario C: Balanced → EColi Heavy":
-            st.info("""
-            **Reference (A)**: 40% Human, 30% Yeast, 30% EColi
-            **Treatment (B)**: 15% Human, 15% Yeast, 70% EColi
-            
-            Expected: EColi ↑, Human ↓, Yeast ↓
-            """)
-            composition_ref = {'HUMAN': 40, 'YEAST': 30, 'ECOLI': 30}
-            composition_treat = {'HUMAN': 15, 'YEAST': 15, 'ECOLI': 70}
-            
-        elif preset_option == "Scenario D: Extreme Flip":
-            st.info("""
-            **Reference (A)**: 70% Human, 15% Yeast, 15% EColi
-            **Treatment (B)**: 15% Human, 15% Yeast, 70% EColi
-            
-            Expected: Human ↓↓, EColi ↑↑, Yeast ~
-            """)
-            composition_ref = {'HUMAN': 70, 'YEAST': 15, 'ECOLI': 15}
-            composition_treat = {'HUMAN': 15, 'YEAST': 15, 'ECOLI': 70}
-        
-        if composition_ref:
-            st.session_state.composition_ref = composition_ref
-            st.session_state.composition_treat = composition_treat
-    
-    with tab2:
-        st.markdown("### Custom Composition per Species")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown(f"**{reference_group} (Reference A)**")
-            composition_ref = {}
-            for species in species_list:
-                pct = st.number_input(
-                    f"{species} (%):",
-                    value=100/len(species_list),
-                    min_value=0.0,
-                    max_value=100.0,
-                    step=5.0,
-                    key=f"ref_{species}",
-                    help="Percentage composition"
-                )
-                composition_ref[species] = pct
-            
-            total = sum(composition_ref.values())
-            if total > 0:
-                composition_ref = {k: v*100/total for k, v in composition_ref.items()}
-        
-        with col2:
-            st.markdown(f"**{treatment_group} (Treatment B)**")
-            composition_treat = {}
-            for species in species_list:
-                pct = st.number_input(
-                    f"{species} (%):",
-                    value=100/len(species_list),
-                    min_value=0.0,
-                    max_value=100.0,
-                    step=5.0,
-                    key=f"treat_{species}",
-                    help="Percentage composition"
-                )
-                composition_treat[species] = pct
-            
-            total = sum(composition_treat.values())
-            if total > 0:
-                composition_treat = {k: v*100/total for k, v in composition_treat.items()}
-        
-        st.session_state.composition_ref = composition_ref
-        st.session_state.composition_treat = composition_treat
-    
-    # ================================================================
-    # CALCULATE LOG2 FOLD CHANGES FROM COMPOSITION
-    # ================================================================
-    with tab3:
-        st.markdown("### 📈 Calculated Log2 Fold Changes from Composition")
-        
-        comp_ref = st.session_state.get('composition_ref', {})
-        comp_treat = st.session_state.get('composition_treat', {})
-        
-        if comp_ref and comp_treat:
-            fc_data = []
-            theoretical_fc_dict = {}
-            
-            for species in species_list:
-                ref_pct = comp_ref.get(species, 0)
-                treat_pct = comp_treat.get(species, 0)
-                
-                if ref_pct == 0 and treat_pct == 0:
-                    log2fc = 0
-                elif treat_pct == 0:
-                    log2fc = -10
-                elif ref_pct == 0:
-                    log2fc = 10
-                else:
-                    log2fc = np.log2(ref_pct / treat_pct)
-                
-                theoretical_fc_dict[species] = log2fc
-                linear_fc = 2**log2fc if log2fc != 0 else 1.0
-                
-                is_stable = abs(log2fc) < 0.5
-                proteome_type = "Stable" if is_stable else "Variable"
-                
-                fc_data.append({
-                    'Species': species,
-                    f'{reference_group}_%': f"{ref_pct:.1f}",
-                    f'{treatment_group}_%': f"{treat_pct:.1f}",
-                    'Log2FC': f"{log2fc:.3f}",
-                    'Linear_FC': f"{linear_fc:.2f}x",
-                    'Proteome': proteome_type,
-                })
-            
-            fc_df = pd.DataFrame(fc_data)
-            st.dataframe(fc_df, use_container_width=True)
-            
-            st.session_state.theoretical_fc_dict = theoretical_fc_dict
-            
-            # Summary
-            n_stable = sum(1 for fc in theoretical_fc_dict.values() if abs(fc) < 0.5)
-            n_variable = len(theoretical_fc_dict) - n_stable
-            
-            st.markdown(f"""
-            **Proteome Stratification Summary**:
-            - **Stable Proteome**: {n_stable} species with |log2FC| < 0.5
-            - **Variable Proteome**: {n_variable} species with |log2FC| ≥ 0.5
-            """)
-            
-            # Visualization
-            st.markdown("### 📊 Composition by Condition")
-            
-            comp_plot_data = []
-            for species in species_list:
-                comp_plot_data.append({
-                    'Condition': reference_group,
-                    'Species': species,
-                    'Percentage': comp_ref.get(species, 0)
-                })
-                comp_plot_data.append({
-                    'Condition': treatment_group,
-                    'Species': species,
-                    'Percentage': comp_treat.get(species, 0)
-                })
-            
-            comp_plot_df = pd.DataFrame(comp_plot_data)
-            
-            fig_comp = px.bar(
-                comp_plot_df,
-                x='Condition',
-                y='Percentage',
-                color='Species',
-                title='Percentage Composition per Condition',
-                labels={'Percentage': 'Composition (%)'},
-                barmode='stack',
-                height=500
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(f"**{ref_cond} (A)**")
+        comp_a = {}
+        for sp in species_values:
+            val = st.number_input(
+                f"{sp} (%) in {ref_cond}",
+                min_value=0.0,
+                max_value=100.0,
+                value=100.0 / max(len(species_values), 1),
+                step=5.0,
+                key=f"a_{sp}",
             )
-            fig_comp.update_yaxes(range=[0, 100])
-            st.plotly_chart(fig_comp, use_container_width=True)
-        
+            comp_a[sp] = val
+        ta = sum(comp_a.values()) or 1.0
+        comp_a = {k: v * 100 / ta for k, v in comp_a.items()}
+
+    with c2:
+        st.markdown(f"**{treat_cond} (B)**")
+        comp_b = {}
+        for sp in species_values:
+            val = st.number_input(
+                f"{sp} (%) in {treat_cond}",
+                min_value=0.0,
+                max_value=100.0,
+                value=100.0 / max(len(species_values), 1),
+                step=5.0,
+                key=f"b_{sp}",
+            )
+            comp_b[sp] = val
+        tb = sum(comp_b.values()) or 1.0
+        comp_b = {k: v * 100 / tb for k, v in comp_b.items()}
+
+    # log2(A/B) per species
+    rows = []
+    for sp in species_values:
+        pa = comp_a.get(sp, 0.0)
+        pb = comp_b.get(sp, 0.0)
+        if pa == 0 and pb == 0:
+            log2fc = 0.0
+        elif pb == 0:
+            log2fc = 10.0
+        elif pa == 0:
+            log2fc = -10.0
         else:
-            st.info("👆 Enter composition percentages above to calculate expected fold changes")
-
-st.markdown("---")
-
-# ============================================================================
-# 2B. DATA QUALITY CHECK FOR SPIKE-IN DETECTION
-# ============================================================================
-
-if use_composition:
-    st.markdown("### 🔍 Data Quality Diagnostics")
-    
-    species_list = sorted([s for s in df[species_col].unique() if s != 'Unknown'])
-    
-    st.markdown(f"""
-    **Expected Spike-in Signal**:
-    """)
-    
-    theoretical_fc_dict_display = st.session_state.get('theoretical_fc_dict', {})
-    if theoretical_fc_dict_display:
-        for species, fc in theoretical_fc_dict_display.items():
-            st.markdown(f"- **{species}**: log2FC = {fc:.2f}")
-    
-    st.markdown("#### 1️⃣ Mean Intensity by Species and Condition")
-    
-    intensity_check = []
-    for condition in [reference_group, treatment_group]:
-        cond_samples = condition_samples[condition]
-        for species in species_list:
-            species_data = df[df[species_col] == species][cond_samples]
-            mean_intensity = species_data.values.flatten()
-            mean_intensity = mean_intensity[mean_intensity > 0]
-            
-            if len(mean_intensity) > 0:
-                intensity_check.append({
-                    'Condition': condition,
-                    'Species': species,
-                    'N_Proteins': len(df[df[species_col] == species]),
-                    'Mean_Intensity': f"{mean_intensity.mean():.1f}",
-                    'Std_Intensity': f"{mean_intensity.std():.1f}",
-                    'CV_%': f"{(mean_intensity.std() / mean_intensity.mean() * 100):.1f}%" if mean_intensity.mean() > 0 else "N/A"
-                })
-    
-    intensity_df = pd.DataFrame(intensity_check)
-    st.dataframe(intensity_df, use_container_width=True)
-    
-    st.info("""
-    **What to look for**:
-    - Mean intensity should be similar between conditions (spike-in effect is in protein abundance ratios)
-    - CV (Coefficient of Variation) should be <50% for good signal detection
-    - If CV is very high (>100%), sample variance dominates biological signal
-    """)
-    
-    # Box plot of intensities by species and condition
-    st.markdown("#### 2️⃣ Intensity Distribution by Species")
-    
-    intensity_data = []
-    for condition in [reference_group, treatment_group]:
-        cond_samples = condition_samples[condition]
-        for species in species_list:
-            species_data = df[df[species_col] == species][cond_samples]
-            for val in species_data.values.flatten():
-                if val > 0:
-                    intensity_data.append({
-                        'Condition': condition,
-                        'Species': species,
-                        'Log2_Intensity': np.log2(val + 1)
-                    })
-    
-    if intensity_data:
-        intensity_plot_df = pd.DataFrame(intensity_data)
-        
-        fig_box = px.box(
-            intensity_plot_df,
-            x='Species',
-            y='Log2_Intensity',
-            color='Condition',
-            title='Log2 Intensity Distribution by Species and Condition',
-            labels={'Log2_Intensity': 'Log2(Intensity + 1)'},
-            height=500
+            log2fc = float(np.log2(pa / pb))
+        theoretical_fc[sp] = log2fc
+        rows.append(
+            dict(
+                Species=sp,
+                **{f"{ref_cond} (%)": f"{pa:.1f}", f"{treat_cond} (%)": f"{pb:.1f}"},
+                Log2FC=f"{log2fc:.3f}",
+                Linear_FC=f"{2**log2fc:.2f}x",
+            )
         )
-        st.plotly_chart(fig_box, use_container_width=True)
-        
-        st.info("""
-        **Interpretation**:
-        - **Well-separated boxes** → Good spike-in signal (should be easily detectable)
-        - **Heavily overlapping boxes** → Weak signal (may not detect proteins)
-        - **Large box heights** → High within-condition variance (noise)
-        """)
+
+    st.markdown("**Expected log2FC from composition (A/B)**")
+    st.dataframe(pd.DataFrame(rows), use_container_width=True)
+
+    # single combined visualization (remove “useless” right plot)
+    st.markdown("**Composition per condition (stacked) and species-specific expected log2FC**")
+    l, r = st.columns(2)
+    with l:
+        plot_rows = []
+        for sp in species_values:
+            plot_rows.append(dict(Condition=ref_cond, Species=sp, Percentage=comp_a.get(sp, 0.0)))
+            plot_rows.append(dict(Condition=treat_cond, Species=sp, Percentage=comp_b.get(sp, 0.0)))
+        comp_df = pd.DataFrame(plot_rows)
+        figc = px.bar(
+            comp_df,
+            x="Condition",
+            y="Percentage",
+            color="Species",
+            barmode="stack",
+            labels={"Percentage": "Composition (%)"},
+            title="Percentage composition per condition",
+            height=450,
+        )
+        figc.update_yaxes(range=[0, 100])
+        st.plotly_chart(figc, use_container_width=True)
+
+    with r:
+        fc_plot = pd.DataFrame(
+            dict(Species=list(theoretical_fc.keys()), Log2FC=list(theoretical_fc.values()))
+        )
+        figf = px.bar(
+            fc_plot,
+            x="Species",
+            y="Log2FC",
+            color="Species",
+            title=f"Expected log2FC (A/B = {ref_cond}/{treat_cond})",
+            labels={"Log2FC": "Expected log2 fold change"},
+            height=450,
+        )
+        figf.add_hline(y=0.0, line_color="red")
+        st.plotly_chart(figf, use_container_width=True)
 
 st.markdown("---")
 
-# ============================================================================
-# 3. STATISTICAL PARAMETERS
-# ============================================================================
+# ---------------------------------------------------------------------
+# 3. STATISTICAL SETTINGS (NO MIN FC)
+# ---------------------------------------------------------------------
 
-st.subheader("3️⃣ Statistical Parameters")
+st.subheader("3️⃣ Statistical Settings")
 
-col1, col2 = st.columns(2)
-
-with col1:
-    pval_threshold = st.selectbox(
-        "FDR Significance Threshold:",
-        options=[0.001, 0.01, 0.05, 0.10],
+c1, c2 = st.columns(2)
+with c1:
+    p_thr = st.selectbox(
+        "FDR significance threshold",
+        options=[0.001, 0.01, 0.05, 0.1],
         index=2,
-        format_func=lambda x: f"{x*100:.1f}%",
-        help="False Discovery Rate cutoff (Benjamini-Hochberg)"
+        format_func=lambda x: f"{x*100:.1f} %",
     )
-    
-    st.markdown(f"""
-    **Statistical Significance**: FDR < {pval_threshold*100:.1f}%
-    """)
+with c2:
+    use_fdr = st.checkbox("Use FDR correction (BH)", value=True)
 
-with col2:
-    use_fdr = st.checkbox("Use FDR correction", value=True, help="Benjamini-Hochberg")
-    robust_eb = st.checkbox("Robust empirical Bayes", value=False, help="Downweight extreme variances")
-
-st.info("""
-**Note**: No fold change threshold applied. Proteins are called significant based on **p-value only**.
-This maximizes detection of true biological changes while controlling false positives via FDR.
-""")
+stable_thr = 0.5  # fixed: only for stable vs variable classification in metrics
+st.caption(
+    f"Stable proteome is defined as |expected log2FC| < {stable_thr}; only those contribute to false positives."
+)
 
 st.markdown("---")
 
-# ============================================================================
-# 4. RUN ANALYSIS
-# ============================================================================
+# ---------------------------------------------------------------------
+# 4. RUN LIMMA A VS B
+# ---------------------------------------------------------------------
 
-st.subheader("4️⃣ Run LIMMA Analysis")
+st.subheader("4️⃣ Run limma (A vs B)")
 
-if st.button("🚀 Run LIMMA (A vs B)", type="primary"):
-    with st.spinner("Running limma analysis with empirical Bayes moderation..."):
-        
-        # Log2 transform
-        df_log2 = df[numeric_cols].apply(lambda x: np.log2(x + 1) if (x > 0).any() else x)
-        
-        # Fit linear models
-        fit_results = fit_linear_model(df_log2, ref_samples, treat_samples)
-        
-        # Empirical Bayes moderation
-        moderated_results = empirical_bayes_moderation(fit_results)
-        
-        # FDR correction
-        if use_fdr:
-            moderated_results['fdr'] = benjamini_hochberg_fdr(moderated_results['pvalue'])
-            test_col = 'fdr'
+if st.button("Run analysis", type="primary"):
+    with st.spinner("Fitting linear models and empirical Bayes..."):
+        # log2 transform if not already on log scale
+        df_num = df[numeric_cols]
+        if (df_num > 50).any().any():
+            df_log2 = np.log2(df_num + 1.0)
         else:
-            moderated_results['fdr'] = moderated_results['pvalue']
-            test_col = 'pvalue'
-        
-        # Classification (p-value only, no FC threshold)
-        moderated_results['regulation'] = moderated_results.apply(
-            lambda row: ('up' if row['log2fc'] > 0 else 'down') if (row[test_col] < pval_threshold and not pd.isna(row['log2fc'])) else 'not_significant',
-            axis=1
-        )
-        
-        moderated_results['neg_log10_pval'] = -np.log10(moderated_results[test_col].replace(0, 1e-300))
-        moderated_results['species'] = moderated_results.index.map(
-            lambda x: df.loc[x, species_col] if x in df.index else 'Unknown'
-        )
-        
-        st.session_state.dea_results = moderated_results
-        st.session_state.dea_ref_group = reference_group
-        st.session_state.dea_treat_group = treatment_group
-        st.session_state.dea_pval_threshold = pval_threshold
-        st.session_state.dea_stable_threshold = 0.5
-        st.session_state.theoretical_fc_dict = st.session_state.get('theoretical_fc_dict', {})
-        
-        st.success("✅ LIMMA Analysis Complete!")
-        st.info(f"""
-        **Analysis Summary**:
-        - **Method**: LIMMA with empirical Bayes moderated t-statistics
-        - **Comparison**: {reference_group} (A) vs {treatment_group} (B)
-        - **Significance**: FDR < {pval_threshold*100:.1f}%
-        - **Classification**: p-value only (no fold change threshold)
-        """)
+            df_log2 = df_num.copy()
 
-# ============================================================================
-# 5. RESULTS VISUALIZATION
-# ============================================================================
+        fit = fit_linear_model(df_log2, ref_samples, treat_samples)
+        limma_res = empirical_bayes_moderation(fit)
 
-if 'dea_results' in st.session_state:
-    results = st.session_state.dea_results
-    reference_group = st.session_state.dea_ref_group
-    treatment_group = st.session_state.dea_treat_group
-    pval_threshold = st.session_state.dea_pval_threshold
-    stable_proteome_threshold = st.session_state.dea_stable_threshold
-    theoretical_fc_dict = st.session_state.get('theoretical_fc_dict', {})
-    
+        if use_fdr:
+            limma_res["fdr"] = benjamini_hochberg_fdr(limma_res["pvalue"])
+            test_col = "fdr"
+        else:
+            limma_res["fdr"] = limma_res["pvalue"]
+            test_col = "pvalue"
+
+        # significance purely by p/FDR (no FC cutoff)
+        limma_res["regulation"] = limma_res.apply(
+            lambda r: (
+                "up"
+                if (r[test_col] < p_thr and r["log2fc"] > 0)
+                else "down"
+                if (r[test_col] < p_thr and r["log2fc"] < 0)
+                else "not_significant"
+            ),
+            axis=1,
+        )
+
+        limma_res["neg_log10_p"] = -np.log10(limma_res[test_col].replace(0, 1e-300))
+        limma_res["species"] = limma_res.index.to_series().map(df[species_col])
+
+        st.session_state.dea_results = limma_res
+        st.session_state.dea_ref = ref_cond
+        st.session_state.dea_treat = treat_cond
+        st.session_state.dea_p_thr = p_thr
+        st.session_state.dea_theoretical_fc = theoretical_fc
+
+    st.success("Analysis finished.")
+
+# ---------------------------------------------------------------------
+# 5. RESULTS: MA/VOLCANO COLORED BY SPECIES
+# ---------------------------------------------------------------------
+
+if "dea_results" in st.session_state:
+    res = st.session_state.dea_results
+    ref_cond = st.session_state.dea_ref
+    treat_cond = st.session_state.dea_treat
+    p_thr = st.session_state.dea_p_thr
+    theoretical_fc = st.session_state.dea_theoretical_fc
+
     st.markdown("---")
-    st.subheader("5️⃣ Results Summary")
-    
-    n_total = len(results)
-    n_up = (results['regulation'] == 'up').sum()
-    n_down = (results['regulation'] == 'down').sum()
-    n_ns = (results['regulation'] == 'not_significant').sum()
-    n_tested = n_total - (results['regulation'] == 'not_tested').sum()
-    
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total", f"{n_total:,}")
-    col2.metric("Upregulated", f"{n_up:,}", delta=f"{n_up/n_tested*100:.1f}%")
-    col3.metric("Downregulated", f"{n_down:,}", delta=f"{n_down/n_tested*100:.1f}%")
-    col4.metric("Not Significant", f"{n_ns:,}")
-    
-    # ================================================================
-    # VOLCANO PLOT - COLORED BY SPECIES
-    # ================================================================
-    st.markdown("### 🌋 Volcano Plot (Colored by Species)")
-    
-    volcano_df = results[results['regulation'] != 'not_tested'].copy()
-    
-    fig = px.scatter(
-        volcano_df,
-        x='log2fc',
-        y='neg_log10_pval',
-        color='species',
-        hover_data=['regulation'],
-        title=f'Volcano Plot: {reference_group} (A) vs {treatment_group} (B)',
+    st.subheader("5️⃣ Results overview")
+
+    n_total = len(res)
+    n_up = int((res["regulation"] == "up").sum())
+    n_down = int((res["regulation"] == "down").sum())
+    n_sig = n_up + n_down
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Total proteins", f"{n_total:,}")
+    m2.metric("Significant (p/FDR)", f"{n_sig:,}")
+    m3.metric("Up / Down", f"{n_up} / {n_down}")
+
+    # Volcano (colored by species)
+    st.markdown("### Volcano plot (colored by species)")
+    volc = res[res["regulation"] != "not_tested"].copy()
+    fig_v = px.scatter(
+        volc,
+        x="log2fc",
+        y="neg_log10_p",
+        color="species",
+        hover_data=["regulation"],
         labels={
-            'log2fc': f'Log2 Fold Change (A / B)',
-            'neg_log10_pval': '-Log10(FDR)' if use_fdr else '-Log10(p-value)',
-            'species': 'Species'
+            "log2fc": f"log2FC (A/B = {ref_cond}/{treat_cond})",
+            "neg_log10_p": "-log10(FDR)" if use_fdr else "-log10(p)",
         },
-        height=600
+        title="Volcano plot",
+        height=550,
     )
-    
-    fig.add_hline(y=-np.log10(pval_threshold), line_dash="dash", line_color="gray", annotation_text=f"FDR = {pval_threshold}")
-    fig.add_vline(x=0, line_dash="solid", line_color="red", opacity=0.3)
-    
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # ================================================================
-    # MA PLOT - COLORED BY SPECIES
-    # ================================================================
-    st.markdown("### 📈 MA Plot (Colored by Species)")
-    
-    ma_df = results[results['regulation'] != 'not_tested'].copy()
-    ma_df['A'] = (ma_df['mean_g1'] + ma_df['mean_g2']) / 2
-    ma_df['M'] = ma_df['log2fc']
-    
+    fig_v.add_hline(y=-np.log10(p_thr), line_dash="dash", line_color="gray")
+    st.plotly_chart(fig_v, use_container_width=True)
+
+    # MA plot (colored by species)
+    st.markdown("### MA plot (colored by species)")
+    ma = res[res["regulation"] != "not_tested"].copy()
+    ma["A"] = (ma["mean_g1"] + ma["mean_g2"]) / 2
+    ma["M"] = ma["log2fc"]
     fig_ma = px.scatter(
-        ma_df,
-        x='A',
-        y='M',
-        color='species',
-        hover_data=['regulation'],
-        title='MA Plot: Mean vs Log2 Fold Change',
-        labels={
-            'A': 'Mean Log2 Intensity',
-            'M': f'Log2 Fold Change (A / B)',
-            'species': 'Species'
-        },
-        height=600
+        ma,
+        x="A",
+        y="M",
+        color="species",
+        hover_data=["regulation"],
+        labels={"A": "Mean log2 intensity", "M": "log2FC (A/B)"},
+        title="MA plot",
+        height=550,
     )
-    
-    fig_ma.add_hline(y=0, line_dash="solid", line_color="red", opacity=0.3)
-    
+    fig_ma.add_hline(y=0.0, line_color="red")
     st.plotly_chart(fig_ma, use_container_width=True)
-    
-    # ================================================================
-    # RESULTS TABLE
-    # ================================================================
-    st.markdown("### 📋 Top Differentially Abundant Proteins")
-    
-    sig_results = results[results['regulation'].isin(['up', 'down'])].copy()
-    sig_results = sig_results.sort_values('fdr')
-    
-    display_cols = ['log2fc', 'mean_g1', 'mean_g2', 't_stat', 'pvalue', 'fdr', 'regulation', 'species']
-    display_df = sig_results[display_cols].head(50)
-    
-    st.dataframe(display_df.round(4), use_container_width=True)
-    
-    # ================================================================
-    # VALIDATION METRICS
-    # ================================================================
-    if len(theoretical_fc_dict) > 0:
-        st.markdown("---")
-        st.subheader("6️⃣ Spike-in Validation Metrics")
-        
-        species_mapping = dict(zip(results.index, results['species']))
-        
-        # === STABLE PROTEOME: FALSE POSITIVE RATE ===
-        st.markdown("### 📊 Stable Proteome: False Positive Rate Control")
-        st.markdown(f"Proteins with |theoretical log2FC| < {stable_proteome_threshold} (should NOT be called significant)")
-        
-        overall_stable, species_stable = calculate_error_metrics_stable_proteome(
-            results,
-            theoretical_fc_dict,
-            species_mapping,
-            stable_proteome_threshold,
-            pval_threshold
-        )
-        
-        if len(overall_stable) > 0:
-            col1, col2, col3 = st.columns(3)
-            col1.metric(
-                "False Positive Rate",
-                f"{overall_stable['False_Positive_Rate']:.1%}",
-                help=f"CI: {overall_stable['FPR_CI'][0]:.1%}-{overall_stable['FPR_CI'][1]:.1%}"
-            )
-            col2.metric("True Negative Rate", f"{overall_stable['True_Negative_Rate']:.1%}")
-            col3.metric("Stable Proteins Tested", f"{overall_stable['Total_Stable_Proteins']:,}")
-            
-            if len(species_stable) > 0:
-                st.markdown("#### Per-Species FP Rate")
-                st.dataframe(species_stable.round(3), use_container_width=True)
-        
-        # === VARIABLE PROTEOME: SENSITIVITY ===
-        st.markdown("---")
-        st.markdown("### 🎯 Variable Proteome: Sensitivity")
-        st.markdown(f"Proteins with |theoretical log2FC| ≥ {stable_proteome_threshold} (should be detected)")
-        
-        overall_variable, species_variable = calculate_error_metrics_variable_proteins(
-            results,
-            theoretical_fc_dict,
-            species_mapping,
-            stable_proteome_threshold,
-            pval_threshold
-        )
-        
-        if len(overall_variable) > 0:
-            col1, col2, col3 = st.columns(3)
-            
-            col1.metric(
-                "Sensitivity",
-                f"{overall_variable['Sensitivity']:.1%}",
-                help=f"CI: {overall_variable['Sensitivity_CI'][0]:.1%}-{overall_variable['Sensitivity_CI'][1]:.1%}"
-            )
-            col2.metric("True Positives", f"{overall_variable['True_Positives']:,}")
-            col3.metric("False Negatives", f"{overall_variable['False_Negatives']:,}")
-            
-            if len(species_variable) > 0:
-                st.markdown("#### Per-Species Metrics (Variable Proteome)")
-                display_cols = ['Species', 'N', 'Theo_FC', 'RMSE', 'MAE', 'Bias', 'Detection_Rate']
-                st.dataframe(species_variable[[c for c in display_cols if c in species_variable.columns]].round(3), use_container_width=True)
-                
-                # RMSE plot
-                if 'RMSE' in species_variable.columns:
-                    st.markdown("#### RMSE by Species (with 95% CI)")
-                    
-                    fig_rmse = go.Figure()
-                    
-                    for idx, row in species_variable.iterrows():
-                        fig_rmse.add_trace(go.Scatter(
-                            x=[row['Species'], row['Species']],
-                            y=[row['RMSE_CI_Low'], row['RMSE_CI_High']],
-                            mode='lines',
-                            line=dict(color='lightblue', width=2),
-                            hoverinfo='skip',
-                            showlegend=False
-                        ))
-                        
-                        fig_rmse.add_trace(go.Scatter(
-                            x=[row['Species']],
-                            y=[row['RMSE']],
-                            mode='markers',
-                            marker=dict(size=10, color='blue'),
-                            text=f"{row['Species']}<br>RMSE: {row['RMSE']:.3f}",
-                            hovertemplate='%{text}',
-                            showlegend=False
-                        ))
-                    
-                    fig_rmse.update_layout(
-                        title='RMSE with 95% CI (Variable Proteome)',
-                        xaxis_title='Species',
-                        yaxis_title='RMSE',
-                        height=500
-                    )
-                    
-                    st.plotly_chart(fig_rmse, use_container_width=True)
-    
-    # ================================================================
-    # DOWNLOAD
-    # ================================================================
-    st.markdown("---")
-    st.subheader("💾 Export Results")
-    
-    csv = results.to_csv()
-    st.download_button(
-        label="📥 Download Full Results (CSV)",
-        data=csv,
-        file_name=f"dea_{reference_group}_vs_{treatment_group}.csv",
-        mime="text/csv"
-    )
-    
-    st.success(f"✅ Found {n_up + n_down:,} differentially abundant proteins")
 
+    # top table
+    st.markdown("### Top significant proteins")
+    top = res[res["regulation"].isin(["up", "down"])].sort_values("fdr").head(100)
+    st.dataframe(
+        top[["log2fc", "t_stat", "pvalue", "fdr", "regulation", "species"]].round(4),
+        use_container_width=True,
+    )
+
+    # -----------------------------------------------------------------
+    # 6. VALIDATION METRICS (ONLY IF THEORETICAL FC GIVEN)
+    # -----------------------------------------------------------------
+    if theoretical_fc:
+        st.markdown("---")
+        st.subheader("6️⃣ Spike-in based error metrics")
+
+        species_map = dict(zip(res.index.astype(str), res["species"].astype(str)))
+
+        ov_var, sp_var = error_metrics_variable(
+            res, theoretical_fc, species_map, stable_thr=stable_thr, p_thr=p_thr
+        )
+        ov_stab, sp_stab = error_metrics_stable(
+            res, theoretical_fc, species_map, stable_thr=stable_thr
+        )
+
+        if ov_stab:
+            st.markdown("**Stable proteome (false positives)**")
+            c1, c2 = st.columns(2)
+            c1.metric(
+                "False positive rate",
+                f"{ov_stab['False_Positive_Rate']:.1%}",
+                help=f"CI {ov_stab['FPR_CI'][0]:.1%}–{ov_stab['FPR_CI'][1]:.1%}",
+            )
+            c2.metric("Stable proteins used", f"{ov_stab['Total_Stable']:,}")
+            if not sp_stab.empty:
+                st.dataframe(sp_stab, use_container_width=True)
+
+        if ov_var:
+            st.markdown("**Variable proteome (detection performance)**")
+            c1, c2, c3 = st.columns(3)
+            c1.metric(
+                "Sensitivity",
+                f"{ov_var['Sensitivity']:.1%}",
+                help=f"CI {ov_var['Sensitivity_CI'][0]:.1%}–{ov_var['Sensitivity_CI'][1]:.1%}",
+            )
+            c2.metric(
+                "Specificity",
+                f"{ov_var['Specificity']:.1%}",
+                help=f"CI {ov_var['Specificity_CI'][0]:.1%}–{ov_var['Specificity_CI'][1]:.1%}",
+            )
+            c3.metric("Precision", f"{ov_var['Precision']:.1%}")
+            if not sp_var.empty:
+                st.dataframe(sp_var.round(3), use_container_width=True)
+
+    # -----------------------------------------------------------------
+    # 7. EXPORT
+    # -----------------------------------------------------------------
+    st.markdown("---")
+    st.subheader("7️⃣ Export")
+
+    st.download_button(
+        "Download limma results (CSV)",
+        data=res.to_csv().encode("utf-8"),
+        file_name=f"limma_{ref_cond}_vs_{treat_cond}.csv",
+        mime="text/csv",
+    )
 else:
-    st.info("👆 Configure parameters and click 'Run LIMMA (A vs B)' to begin")
+    st.info("Configure settings and run the analysis to see results.")
