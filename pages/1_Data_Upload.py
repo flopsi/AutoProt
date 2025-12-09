@@ -596,8 +596,7 @@ with col2:
     st.write(f"- **Samples:** {len(numerical_cols_final)}")
     st.write(f"- **Total {st.session_state.data_type.title()}s:** {len(df_filtered):,}")
     st.write(f"- **Numeric dtype:** Float64")
-    if infer_species:
-        st.write(f"- **Species inferred:** Yes")
+    st.write(f"- **Species inferred:** Yes")
 
 st.markdown("---")
 
