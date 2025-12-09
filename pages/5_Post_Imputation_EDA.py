@@ -183,6 +183,213 @@ st.dataframe(dist_stats.round(2), use_container_width=True)
 
 st.markdown("---")
 
+
+# Add this section right after the intensity distribution histogram/KDE section
+
+st.markdown("---")
+
+# ============================================================================
+# 2B. NORMALITY TESTS
+# ============================================================================
+
+st.subheader("2B️⃣ Normality Testing")
+
+st.markdown("""
+**Testing for normal distribution** using multiple methods:
+- **Shapiro-Wilk Test**: Most powerful for small-medium samples (n < 5000)
+- **Kolmogorov-Smirnov Test**: General purpose test
+- **Anderson-Darling Test**: More sensitive to tails than K-S
+- **D'Agostino-Pearson Test**: Tests skewness and kurtosis
+
+**Interpretation**: p < 0.05 indicates significant deviation from normality
+""")
+
+# Perform normality tests per condition
+normality_results = []
+
+for condition in conditions:
+    condition_data = intensity_df[intensity_df['Condition'] == condition]['Log2_Intensity'].values
+    
+    if len(condition_data) > 3:  # Need at least 3 samples
+        # Shapiro-Wilk test (limit to 5000 samples for performance)
+        if len(condition_data) <= 5000:
+            shapiro_stat, shapiro_p = stats.shapiro(condition_data)
+        else:
+            # Use random sample of 5000 for large datasets
+            sample_data = np.random.choice(condition_data, 5000, replace=False)
+            shapiro_stat, shapiro_p = stats.shapiro(sample_data)
+        
+        # Kolmogorov-Smirnov test
+        ks_stat, ks_p = stats.kstest(condition_data, 'norm', 
+                                      args=(condition_data.mean(), condition_data.std()))
+        
+        # Anderson-Darling test
+        anderson_result = stats.anderson(condition_data, dist='norm')
+        # Use critical value at 5% significance level (index 2)
+        anderson_critical = anderson_result.critical_values[2]
+        anderson_significant = anderson_result.statistic > anderson_critical
+        
+        # D'Agostino-Pearson test
+        if len(condition_data) >= 8:  # Requires at least 8 samples
+            dagostino_stat, dagostino_p = stats.normaltest(condition_data)
+        else:
+            dagostino_stat, dagostino_p = np.nan, np.nan
+        
+        normality_results.append({
+            'Condition': condition,
+            'n': len(condition_data),
+            'Shapiro-Wilk p': f"{shapiro_p:.4f}",
+            'K-S p': f"{ks_p:.4f}",
+            'Anderson-Darling': '✅ Normal' if not anderson_significant else '❌ Non-normal',
+            'D\'Agostino p': f"{dagostino_p:.4f}" if not np.isnan(dagostino_p) else 'N/A',
+            'Overall': '✅ Normal' if (shapiro_p > 0.05 and ks_p > 0.05) else '❌ Non-normal'
+        })
+
+normality_df = pd.DataFrame(normality_results)
+st.dataframe(normality_df, hide_index=True, use_container_width=True)
+
+# Visual normality assessment: Q-Q plots
+st.markdown("### Q-Q Plots (Quantile-Quantile)")
+st.markdown("**Q-Q plots** show if data follows normal distribution. Points should fall on diagonal line.")
+
+# Create Q-Q plots for each condition
+n_conditions = len(conditions)
+n_cols = min(3, n_conditions)
+n_rows = (n_conditions + n_cols - 1) // n_cols
+
+fig = make_subplots(
+    rows=n_rows,
+    cols=n_cols,
+    subplot_titles=[f'{cond}' for cond in conditions]
+)
+
+for idx, condition in enumerate(conditions):
+    row = idx // n_cols + 1
+    col = idx % n_cols + 1
+    
+    condition_data = intensity_df[intensity_df['Condition'] == condition]['Log2_Intensity'].values
+    
+    # Calculate theoretical quantiles
+    sorted_data = np.sort(condition_data)
+    n = len(sorted_data)
+    theoretical_quantiles = stats.norm.ppf(np.linspace(0.01, 0.99, n))
+    
+    # Add scatter for actual vs theoretical
+    fig.add_trace(
+        go.Scatter(
+            x=theoretical_quantiles,
+            y=sorted_data,
+            mode='markers',
+            marker=dict(size=4, opacity=0.6),
+            name=condition,
+            showlegend=False
+        ),
+        row=row, col=col
+    )
+    
+    # Add reference line (y=x)
+    min_val = min(theoretical_quantiles.min(), sorted_data.min())
+    max_val = max(theoretical_quantiles.max(), sorted_data.max())
+    
+    fig.add_trace(
+        go.Scatter(
+            x=[min_val, max_val],
+            y=[min_val, max_val],
+            mode='lines',
+            line=dict(color='red', dash='dash'),
+            showlegend=False
+        ),
+        row=row, col=col
+    )
+
+fig.update_xaxes(title_text="Theoretical Quantiles")
+fig.update_yaxes(title_text="Sample Quantiles")
+fig.update_layout(
+    title_text="Q-Q Plots by Condition",
+    height=400 * n_rows,
+    showlegend=False
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+# Statistical interpretation
+st.markdown("### 📊 Normality Assessment Summary")
+
+normal_count = sum(1 for r in normality_results if '✅' in r['Overall'])
+total_count = len(normality_results)
+
+if normal_count == total_count:
+    st.success(f"""
+    **Data follows normal distribution** ({normal_count}/{total_count} conditions pass normality tests)
+    
+    ✅ **Recommendation**: Use **parametric tests** for downstream analysis:
+    - t-test or ANOVA for group comparisons
+    - Pearson correlation
+    - Linear regression models
+    """)
+elif normal_count >= total_count * 0.5:
+    st.info(f"""
+    **Mixed normality** ({normal_count}/{total_count} conditions pass normality tests)
+    
+    ⚠️ **Recommendation**: Consider both approaches:
+    - **Parametric tests** with caution (check assumptions)
+    - **Non-parametric alternatives** for robust results (Mann-Whitney U, Kruskal-Wallis)
+    - **Data transformation** (log2 already applied) may improve normality
+    """)
+else:
+    st.warning(f"""
+    **Data deviates from normal distribution** ({normal_count}/{total_count} conditions pass normality tests)
+    
+    ❌ **Recommendation**: Use **non-parametric tests** for downstream analysis:
+    - Mann-Whitney U test or Kruskal-Wallis test for group comparisons
+    - Spearman correlation instead of Pearson
+    - Rank-based methods for differential expression
+    - Consider additional transformations (e.g., rank transformation)
+    """)
+
+# Additional diagnostic: Histogram overlays with normal curve
+st.markdown("### Distribution Overlay with Normal Curve")
+
+fig = go.Figure()
+
+for condition in conditions:
+    condition_data = intensity_df[intensity_df['Condition'] == condition]['Log2_Intensity'].values
+    
+    # Add histogram
+    fig.add_trace(go.Histogram(
+        x=condition_data,
+        name=f'{condition} (observed)',
+        opacity=0.5,
+        nbinsx=50,
+        histnorm='probability density'
+    ))
+    
+    # Fit normal distribution
+    mu, sigma = condition_data.mean(), condition_data.std()
+    x_range = np.linspace(condition_data.min(), condition_data.max(), 200)
+    normal_curve = stats.norm.pdf(x_range, mu, sigma)
+    
+    # Add fitted normal curve
+    fig.add_trace(go.Scatter(
+        x=x_range,
+        y=normal_curve,
+        mode='lines',
+        name=f'{condition} (fitted normal)',
+        line=dict(width=3, dash='dash')
+    ))
+
+fig.update_layout(
+    title='Observed Distribution vs. Fitted Normal Distribution',
+    xaxis_title='Log2(Intensity + 1)',
+    yaxis_title='Density',
+    barmode='overlay',
+    height=600
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+st.markdown("---")
+
 # ============================================================================
 # 3. PCA ANALYSIS - THREE DATASETS
 # ============================================================================
