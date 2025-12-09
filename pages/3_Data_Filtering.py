@@ -267,11 +267,10 @@ if apply_cv and condition_samples:
         valid_samples = [s for s in samples if s in numeric_cols]
         if len(valid_samples) >= 3:  # Need at least 3 replicates for CV
             for idx in range(len(df_cv)):
-                values = pd.to_numeric(
-                    [df_cv.iloc[idx][s] for s in valid_samples],
-                    errors='coerce'
-                )
-                values = values.dropna()
+                # Extract values as pandas Series
+                values = pd.Series([df_cv.iloc[idx][s] for s in valid_samples])
+                # Convert to numeric and drop NaN
+                values = pd.to_numeric(values, errors='coerce').dropna()
                 
                 if len(values) >= 2:
                     mean_val = values.mean()
@@ -303,6 +302,7 @@ if apply_cv and condition_samples:
         st.info("ℹ️ Not enough replicates per condition for CV calculation")
 else:
     st.info("ℹ️ CV filter skipped (need ≥3 replicates per condition)")
+
 
 st.markdown("---")
 
