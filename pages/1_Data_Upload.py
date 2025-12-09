@@ -539,7 +539,7 @@ with col4:
 with st.expander("📊 Data Preview", expanded=False):
     col1, col2 = st.columns([2, 1])
     with col1:
-        st.dataframe(df_filtered.head(preview_rows).to_pandas(), width="content", height=400)
+        st.dataframe(df_filtered.head(10).to_pandas(), width="content", height=400)
     
     with col2:
         st.write("**Column Info:**")
