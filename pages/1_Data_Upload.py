@@ -1,9 +1,11 @@
 """
 pages/1_Data_Upload.py - ENHANCED WITH COLUMN DROPPING & INTELLIGENT RENAMING
+VERSION 3: Fixed species/protein name handling when they're in same column
 
 Advanced data upload with:
 - Smart column selection (keep/drop metadata columns)
 - Intelligent column renaming (trim, extract, auto-generate)
+- Ability to extract species from protein names (e.g., NUD4B_HUMAN -> NUD4B + HUMAN)
 - Variable file format support
 - Species inference from protein names
 - Direct column manipulation
@@ -64,6 +66,22 @@ def infer_species_from_protein_name(name: str) -> str:
             return tail
     
     return None
+
+
+def extract_protein_id_from_name(name: str) -> str:
+    """Extract just the protein ID without species (e.g., 'NUD4B_HUMAN' → 'NUD4B')."""
+    if pd.isna(name) or name is None:
+        return None
+    
+    s = str(name)
+    
+    # If has underscore, return part before last underscore
+    if "_" in s:
+        # Take everything except the last token (which is usually species)
+        parts = s.rsplit("_", 1)
+        return parts[0]
+    
+    return s
 
 
 # ============================================================================
@@ -143,7 +161,7 @@ try:
         logger.info(f"File loaded: {df_raw.shape}")
         
         with st.expander("Preview First 5 Rows", expanded=False):
-            st.dataframe(df_raw.head(5), width="stretch")
+            st.dataframe(df_raw.head(5), use_container_width=True)
 
 except Exception as e:
     st.error(f"❌ Error loading file: {str(e)}")
@@ -352,7 +370,7 @@ with col3:
         st.metric("Mean Abundance", f"{mean_val:.1f}")
 
 with st.expander("View Filtered Data", expanded=False):
-    st.dataframe(df_filtered.head(10), width="stretch")
+    st.dataframe(df_filtered.head(10), use_container_width=True)
 
 st.markdown("---")
 
@@ -367,17 +385,17 @@ col1, col2, col3 = st.columns(3)
 
 with col1:
     id_col = st.selectbox(
-        "ID Column:",
+        "ID Column (Protein/Gene names):",
         options=selected_metadata,
         key="id_col"
     )
 
 with col2:
     species_options = [None] + selected_metadata
-    species_col = st.selectbox(
+    selected_species_col = st.selectbox(
         "Species Column (optional):",
         options=species_options,
-        key="species_col"
+        key="species_col_select"
     )
 
 if data_type == "peptide":
@@ -390,19 +408,24 @@ if data_type == "peptide":
 else:
     sequence_col = None
 
-# Show species inference
+# Show species information AFTER column configuration
 st.subheader("🔬 Species Information")
 
-if species_col:
+if selected_species_col:
     # User provided explicit species column
-    st.info(f"Using species from: **{species_col}**")
+    st.info(f"Using species from: **{selected_species_col}**")
     
-    unique_species = df_filtered[species_col].nunique()
+    # Get non-null values
+    species_values = df_filtered[selected_species_col].dropna()
+    unique_species = species_values.nunique()
+    
     st.metric("Unique Species/Values", unique_species)
     
     with st.expander("View Species Distribution", expanded=False):
-        species_counts = df_filtered[species_col].value_counts()
+        species_counts = species_values.value_counts()
         st.bar_chart(species_counts)
+    
+    species_col = selected_species_col
 else:
     # Infer species from ID column
     st.info(f"Inferring species from ID column: **{id_col}**")
@@ -411,22 +434,54 @@ else:
     
     # Show preview
     preview_df = pd.DataFrame({
-        'Protein ID': df_filtered[id_col].head(10),
+        'Original ID': df_filtered[id_col].head(10),
         'Inferred Species': inferred_species.head(10)
     })
     
-    st.dataframe(preview_df, width="stretch", hide_index=True)
+    st.dataframe(preview_df, use_container_width=True, hide_index=True)
     
     # Show distribution
-    species_counts = inferred_species.value_counts()
-    st.metric("Unique Species Detected", len(species_counts))
+    inferred_non_null = inferred_species.dropna()
+    unique_inferred = inferred_non_null.nunique()
+    
+    st.metric("Unique Species Detected", unique_inferred)
     
     with st.expander("View Species Distribution", expanded=False):
+        species_counts = inferred_non_null.value_counts()
         st.bar_chart(species_counts)
     
     # Add as column
     df_filtered['Inferred_Species'] = inferred_species
     species_col = 'Inferred_Species'
+
+# Extract protein IDs (remove species suffix if present)
+st.subheader("📌 Extract Protein IDs")
+
+st.caption(f"Does your ID column contain species (e.g., NUD4B_HUMAN)? If yes, extract just the protein name.")
+
+extract_protein = st.checkbox(
+    "Extract protein ID (remove species suffix like _HUMAN)",
+    value=False,
+    key="extract_protein_id"
+)
+
+if extract_protein:
+    st.info("Extracting protein IDs without species suffix...")
+    
+    # Extract protein IDs
+    extracted_ids = df_filtered[id_col].apply(extract_protein_id_from_name)
+    
+    # Show preview
+    preview_extract = pd.DataFrame({
+        'Original': df_filtered[id_col].head(10),
+        'Extracted ID': extracted_ids.head(10)
+    })
+    
+    st.dataframe(preview_extract, use_container_width=True, hide_index=True)
+    
+    # Replace in dataframe
+    df_filtered[id_col] = extracted_ids
+    st.success(f"✅ Extracted protein IDs from {id_col}")
 
 st.markdown("---")
 
@@ -494,6 +549,7 @@ with col2:
     - ✓ Renames look good
     - ✓ ID column configured
     - ✓ Species column shows correct values
+    - ✓ Protein IDs extracted (if needed)
     - ✓ No unwanted columns
     """)
 
@@ -503,7 +559,7 @@ confirm = st.checkbox(
 )
 
 if confirm:
-    if st.button("🚀 Upload & Proceed", type="primary", width="stretch"):
+    if st.button("🚀 Upload & Proceed", type="primary", use_container_width=True):
         try:
             with st.spinner("Processing data..."):
                 # Convert 1.0 to NaN (preprocessing artifact)
@@ -564,4 +620,4 @@ else:
     st.caption("👈 Check the confirmation box to proceed")
 
 st.markdown("---")
-st.caption("**💡 Tip:** Use intelligent renaming to standardize column names across different file formats. Species are automatically inferred from protein names using common patterns (e.g., _HUMAN, _MOUSE).")
+st.caption("**💡 Tip:** If your protein column has both ID and species (e.g., NUD4B_HUMAN), use Step 7 to extract just the protein ID and automatically infer the species. This keeps your data clean and separated.")
