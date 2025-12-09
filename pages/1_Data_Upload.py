@@ -1,6 +1,7 @@
 """
 pages/1_Data_Upload.py - PRODUCTION DATA UPLOAD
 Efficient data loading with automatic species detection and caching
+Streamlit 1.47+ with modern API
 """
 
 import streamlit as st
@@ -187,7 +188,7 @@ event_meta = st.dataframe(
     key=f"meta_sel_{st.session_state.data_type}_{st.session_state.file_hash}",
     on_select="rerun", 
     selection_mode="multi-column",
-    use_container_width=True
+    width="stretch"
 )
 
 metadata_cols = event_meta.selection.columns if event_meta.selection.columns else []
@@ -212,7 +213,7 @@ event_num = st.dataframe(
     key=f"num_sel_{st.session_state.data_type}_{st.session_state.file_hash}",
     on_select="rerun", 
     selection_mode="multi-column",
-    use_container_width=True
+    width="stretch"
 )
 
 numerical_cols = event_num.selection.columns if event_num.selection.columns else []
@@ -344,7 +345,7 @@ if all_species:
                 columns=['Species', 'Count']
             ).sort_values('Count', ascending=False)
             
-            st.dataframe(species_df, use_container_width=True, hide_index=True)
+            st.dataframe(species_df, width="stretch", hide_index=True)
     
     # Auto-select best column
     best_col = max(all_species.keys(), key=lambda k: sum(all_species[k].values()))
@@ -406,7 +407,7 @@ st.markdown("---")
 # UPLOAD BUTTON
 # ============================================================================
 
-if st.button("🚀 Upload Data", type="primary", use_container_width=True, disabled=not all_passed):
+if st.button("🚀 Upload Data", type="primary", width="stretch", disabled=not all_passed):
     with st.spinner("Processing..."):
         try:
             df_final = df_filtered.to_pandas()
