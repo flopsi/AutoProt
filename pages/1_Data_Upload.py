@@ -9,6 +9,7 @@ import pandas as pd
 from pathlib import Path
 from typing import Dict
 import sys
+import re
 sys.path.append(str(Path(__file__).parent.parent))
 from helpers.naming import standardize_condition_names
 
@@ -77,9 +78,6 @@ def extract_condition_from_sample(sample_name: str) -> str:
     Handles patterns like: A_R1, Cond_A_R2, CondA_R1, etc.
     """
     sample_name = str(sample_name).strip()
-    
-    # Try to find condition before replicate (R#)
-    import re
     
     # Pattern 1: Something_R# or Something-R#
     match = re.search(r'([a-zA-Z_]+?)[\-_]?[rR](\d+)', sample_name)
@@ -284,14 +282,6 @@ else:  # "none"
 st.session_state.name_mapping = name_mapping
 st.session_state.numerical_cols_renamed = numerical_cols_renamed
 
-# Extract conditions from renamed columns
-conditions_mapping = {}
-for orig_col, renamed_col in name_mapping.items():
-    condition = extract_condition_from_sample(renamed_col)
-    conditions_mapping[renamed_col] = condition
-
-st.session_state.conditions_mapping = conditions_mapping
-
 st.markdown("---")
 
 # ============================================================================
@@ -415,9 +405,6 @@ df_filtered = df_pandas[df_pandas['__SPECIES__'].isin(selected_species)].copy()
 # Rename numerical columns
 df_filtered = df_filtered.rename(columns=name_mapping)
 
-# Add condition column based on RENAMED column names
-df_filtered['__CONDITION__'] = df_filtered.columns[[col in numerical_cols_renamed for col in df_filtered.columns]].map(lambda x: conditions_mapping.get(x, "Unknown"))
-
 st.success(f"✅ {len(df_filtered):,} rows after species filter")
 
 species_counts = df_filtered['__SPECIES__'].value_counts()
@@ -439,11 +426,16 @@ confirm = st.checkbox("✅ I confirm all settings are correct",
 
 if confirm:
     if st.button("🚀 Process Data", type="primary"):
+        # Create sample to condition mapping for EDA
+        sample_to_condition = {
+            renamed: extract_condition_from_sample(renamed) 
+            for renamed in numerical_cols_renamed
+        }
+        
         st.session_state.df_raw = df_filtered
         st.session_state.numeric_cols = numerical_cols_renamed
         st.session_state.species_col = '__SPECIES__'
-        st.session_state.condition_col = '__CONDITION__'
-        st.session_state.conditions_mapping = conditions_mapping
+        st.session_state.sample_to_condition = sample_to_condition
         st.session_state.data_ready = True
         
         st.success("✅ Data uploaded successfully! Proceed to **📊 Visual EDA**")
@@ -470,7 +462,7 @@ def reset_current_page():
         'file_hash', 'metadata_cols', 'numerical_cols', 'selected_species',
         'df_raw', 'numeric_cols', 'id_col', 'species_col', 'data_type',
         'replicates_per_condition', 'data_ready', 'rename_style', 
-        'manual_name_mapping', 'rename_style_index', 'conditions_mapping'
+        'manual_name_mapping', 'rename_style_index', 'sample_to_condition'
     ]
     for key in keys_to_delete:
         if key in st.session_state:
