@@ -415,22 +415,21 @@ st.markdown("---")
 
 st.subheader("5️⃣ Configure Key Columns")
 
-col1, col2, col3 = st.columns(3)
-
 with col1:
     id_col = st.selectbox(
         "ID Column (Protein/Gene names):",
         options=selected_metadata,
-        key="id_col"
+        key="id_col_widget",  # different from st.session_state.id_col
     )
 
 with col2:
     species_col_select = st.selectbox(
         "Species Column (REQUIRED):",
         options=selected_metadata,
-        key="species_col_select",
-        help="Select which column contains species information"
+        key="species_col_widget",  # different from st.session_state.species_col
+        help="Select which column contains species information",
     )
+
 
 if st.session_state.data_type == "peptide":
     with col3:
