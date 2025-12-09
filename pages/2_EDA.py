@@ -1,6 +1,6 @@
 """
 pages/2_Visual_EDA.py - VISUAL EXPLORATORY DATA ANALYSIS
-Violin plots showing raw intensity distribution per sample
+Violin plots showing log2 intensity distribution per sample
 """
 
 import streamlit as st
@@ -23,7 +23,7 @@ st.set_page_config(
 )
 
 st.title("📊 Visual Exploratory Data Analysis")
-st.markdown("Intensity distribution by sample")
+st.markdown("Log2 intensity distribution by sample")
 
 # ============================================================================
 # DATA VALIDATION
@@ -55,6 +55,9 @@ df_long = df_raw.melt(
     value_name='Intensity'
 )
 
+# Log2 transformation
+df_long['Log2_Intensity'] = np.log2(df_long['Intensity'])
+
 # Extract condition from sample name (first letter)
 df_long['Condition'] = df_long['Sample'].str[0]
 
@@ -62,17 +65,17 @@ df_long['Condition'] = df_long['Sample'].str[0]
 # VIOLIN PLOT
 # ============================================================================
 
-st.header("🎻 Intensity Distribution by Sample")
-st.caption("Raw intensity values, colored by condition")
+st.header("🎻 Log2 Intensity Distribution by Sample")
+st.caption("Log2-transformed intensity values, colored by condition")
 
 fig_violin = px.violin(
     df_long,
     x='Sample',
-    y='Intensity',
+    y='Log2_Intensity',
     color='Condition',
-    title='Intensity Distribution by Sample',
+    title='Log2 Intensity Distribution by Sample',
     labels={
-        'Intensity': 'Intensity',
+        'Log2_Intensity': 'Log2(Intensity)',
         'Sample': 'Sample',
         'Condition': 'Condition'
     },
