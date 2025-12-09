@@ -18,7 +18,7 @@ from helpers.core import ProteinData, PeptideData
 # ============================================================================
 
 st.set_page_config(
-    page_title="Data Upload - AutoProt",
+    page_title="Data Upload",
     page_icon="📁",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -124,6 +124,8 @@ def trim_common_prefix_suffix(columns: list) -> dict:
 
 if 'data_type' not in st.session_state:
     st.session_state.data_type = 'protein'
+if 'file_hash' not in st.session_state:
+    st.session_state.file_hash = None
 
 # ============================================================================
 # FILE UPLOAD
@@ -131,7 +133,7 @@ if 'data_type' not in st.session_state:
 
 st.subheader("1️⃣ Upload File")
 
-peptides = st.toggle("Toggle if Peptide Data")
+peptides = st.toggle("Toggle if Peptide Data", key="peptide_toggle")
 st.session_state.data_type = "peptide" if peptides else "protein"
 
 uploaded_file = st.file_uploader(
@@ -147,6 +149,15 @@ if uploaded_file is None:
 # Load with caching
 try:
     file_bytes = uploaded_file.read()
+    current_hash = hash(file_bytes)
+    
+    # Reset selections if new file
+    if st.session_state.file_hash != current_hash:
+        st.session_state.file_hash = current_hash
+        if 'metadata_cols' in st.session_state:
+            del st.session_state.metadata_cols
+        if 'numerical_cols' in st.session_state:
+            del st.session_state.numerical_cols
     
     with st.spinner("Loading..."):
         if uploaded_file.name.endswith('.csv'):
@@ -169,28 +180,54 @@ st.subheader("2️⃣ Select Columns")
 
 df_preview = df_raw.head(5)
 
-# Metadata
+# Metadata columns
 st.markdown("**Metadata** (ID, species, descriptions)")
-event_meta = st.dataframe(df_preview, key="meta_sel", on_select="rerun", selection_mode="multi-column")
-metadata_cols = event_meta.selection.columns
+event_meta = st.dataframe(
+    df_preview, 
+    key=f"meta_sel_{st.session_state.data_type}_{st.session_state.file_hash}",
+    on_select="rerun", 
+    selection_mode="multi-column",
+    use_container_width=True
+)
 
-if not metadata_cols:
-    st.info("👆 Click column headers to select metadata")
-    st.stop()
+metadata_cols = event_meta.selection.columns if event_meta.selection.columns else []
 
-st.success(f"✅ {len(metadata_cols)} metadata columns")
+if metadata_cols:
+    st.session_state.metadata_cols = metadata_cols
+    st.success(f"✅ {len(metadata_cols)} metadata columns")
+else:
+    if 'metadata_cols' in st.session_state and st.session_state.metadata_cols:
+        metadata_cols = st.session_state.metadata_cols
+        st.success(f"✅ {len(metadata_cols)} metadata columns")
+    else:
+        st.info("👆 Click column headers to select metadata")
+        st.stop()
+
 st.markdown("---")
 
-# Numerical
+# Numerical columns
 st.markdown("**Numerical** (abundance/intensity)")
-event_num = st.dataframe(df_preview, key="num_sel", on_select="rerun", selection_mode="multi-column")
-numerical_cols = event_num.selection.columns
+event_num = st.dataframe(
+    df_preview, 
+    key=f"num_sel_{st.session_state.data_type}_{st.session_state.file_hash}",
+    on_select="rerun", 
+    selection_mode="multi-column",
+    use_container_width=True
+)
 
-if not numerical_cols:
-    st.info("👆 Click column headers to select numerical")
-    st.stop()
+numerical_cols = event_num.selection.columns if event_num.selection.columns else []
 
-st.success(f"✅ {len(numerical_cols)} numerical columns")
+if numerical_cols:
+    st.session_state.numerical_cols = numerical_cols
+    st.success(f"✅ {len(numerical_cols)} numerical columns")
+else:
+    if 'numerical_cols' in st.session_state and st.session_state.numerical_cols:
+        numerical_cols = st.session_state.numerical_cols
+        st.success(f"✅ {len(numerical_cols)} numerical columns")
+    else:
+        st.info("👆 Click column headers to select numerical")
+        st.stop()
+
 st.markdown("---")
 
 # ============================================================================
@@ -205,7 +242,8 @@ with col1:
     rename_style = st.selectbox(
         "Strategy:",
         options=["none", "trim", "default"],
-        help="none: keep | trim: remove prefix/suffix | default: A1,A2,B1,B2"
+        help="none: keep | trim: remove prefix/suffix | default: A1,A2,B1,B2",
+        key="rename_style"
     )
 
 with col2:
@@ -214,7 +252,8 @@ with col2:
             "Replicates/condition:",
             min_value=2,
             max_value=10,
-            value=2
+            value=2,
+            key="replicates_input"
         )
     else:
         replicates_per_condition = 2
@@ -242,13 +281,13 @@ st.subheader("4️⃣ Process Data")
 all_cols = list(metadata_cols) + list(numerical_cols)
 df_filtered = df_raw.select(all_cols).rename(name_mapping)
 
-# Clean numerical
+# Clean numerical columns
 for col in numerical_cols_renamed:
     df_filtered = df_filtered.with_columns([
         pl.col(col).cast(pl.Float64, strict=False).fill_null(1.00).alias(col)
     ])
 
-# Summary
+# Summary metrics
 col1, col2, col3 = st.columns(3)
 col1.metric("Rows", f"{len(df_filtered):,}")
 col1.metric("Metadata", len(metadata_cols))
@@ -265,21 +304,20 @@ st.markdown("---")
 
 st.subheader("5️⃣ Configure Columns")
 
-col1, col2 = st.columns([1, 1] if st.session_state.data_type == "protein" else [1, 1])
-
-with col1:
-    id_col = st.selectbox("ID Column:", options=metadata_cols)
-
 if st.session_state.data_type == "peptide":
+    col1, col2 = st.columns(2)
+    with col1:
+        id_col = st.selectbox("ID Column:", options=metadata_cols, key="id_col_select")
     with col2:
-        sequence_col = st.selectbox("Sequence Column:", options=metadata_cols)
+        sequence_col = st.selectbox("Sequence Column:", options=metadata_cols, key="seq_col_select")
 else:
+    id_col = st.selectbox("ID Column:", options=metadata_cols, key="id_col_select")
     sequence_col = None
 
 st.markdown("---")
 
 # ============================================================================
-# SPECIES DETECTION - CLEAN VERSION
+# SPECIES DETECTION
 # ============================================================================
 
 st.subheader("🔬 Species Detection")
@@ -316,13 +354,14 @@ if all_species:
         "Column:",
         options=list(all_species.keys()),
         index=list(all_species.keys()).index(best_col),
-        label_visibility="collapsed"
+        label_visibility="collapsed",
+        key="species_col_select"
     )
     
     st.success(f"✅ Using **{species_col}**")
 else:
     st.warning("⚠️ No species detected")
-    species_col = st.selectbox("Manually select:", options=metadata_cols)
+    species_col = st.selectbox("Manually select:", options=metadata_cols, key="species_col_manual")
 
 st.markdown("---")
 
@@ -364,7 +403,7 @@ with col2:
 st.markdown("---")
 
 # ============================================================================
-# UPLOAD
+# UPLOAD BUTTON
 # ============================================================================
 
 if st.button("🚀 Upload Data", type="primary", use_container_width=True, disabled=not all_passed):
