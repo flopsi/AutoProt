@@ -165,13 +165,13 @@ def infer_species_from_protein_name(name: str) -> str:
     s = str(name).upper()
     
     # Check common patterns
-    if "_HUMAN" in s:
+    if "HUMAN" in s:
         return "HUMAN"
-    if "_MOUSE" in s:
+    if "MOUSE" in s:
         return "MOUSE"
-    if "_YEAST" in s:
+    if "YEAST" in s:
         return "YEAST"
-    if "_ECOLI" in s or "_ECOL" in s:
+    if "ECOLI" in s or "_ECOL" in s:
         return "ECOLI"
     
     # Fallback: last token after underscore
