@@ -1,12 +1,13 @@
 """
 pages/2_Visual_EDA.py - VISUAL EXPLORATORY DATA ANALYSIS
-Violin plots showing log2 intensity distribution per sample
+Violin plots showing log2 intensity distribution per sample with normality testing
 """
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+from scipy import stats
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -23,7 +24,7 @@ st.set_page_config(
 )
 
 st.title("📊 Visual Exploratory Data Analysis")
-st.markdown("Log2 intensity distribution by sample")
+st.markdown("Log2 intensity distribution by sample with normality assessment")
 
 # ============================================================================
 # DATA VALIDATION
@@ -95,24 +96,54 @@ fig_violin.update_layout(
 st.plotly_chart(fig_violin, width="stretch")
 
 # ============================================================================
-# SAMPLE STATISTICS
+# SAMPLE STATISTICS WITH NORMALITY TEST
 # ============================================================================
 
-st.subheader("📈 Sample Statistics")
+st.subheader("📈 Sample Statistics (Log2 Scale)")
 
-stats_df = pd.DataFrame({
-    'Sample': numeric_cols,
-    'Condition': [col[0] for col in numeric_cols],
-    'N': [df_raw[col].notna().sum() for col in numeric_cols],
-    'N (1.00)': [(df_raw[col] == 1.00).sum() for col in numeric_cols],
-    'Mean': [df_raw[col].mean() for col in numeric_cols],
-    'Median': [df_raw[col].median() for col in numeric_cols],
-    'Std': [df_raw[col].std() for col in numeric_cols],
-    'Min': [df_raw[col].min() for col in numeric_cols],
-    'Max': [df_raw[col].max() for col in numeric_cols],
-}).round(2)
+# Calculate statistics for each sample
+stats_list = []
+
+for col in numeric_cols:
+    log2_values = np.log2(df_raw[col].values)
+    
+    # Remove inf/-inf values for normality test
+    valid_log2 = log2_values[np.isfinite(log2_values)]
+    
+    # Shapiro-Wilk test
+    if len(valid_log2) > 3:
+        shapiro_stat, shapiro_p = stats.shapiro(valid_log2)
+    else:
+        shapiro_p = np.nan
+    
+    # Normality classification
+    if pd.isna(shapiro_p):
+        normality = "N/A"
+    elif shapiro_p > 0.98:
+        normality = "Normal"
+    elif shapiro_p > 0.95:
+        normality = "Quasi-Normal"
+    else:
+        normality = "Not Normal"
+    
+    stats_list.append({
+        'Sample': col,
+        'Condition': col[0],
+        'N': df_raw[col].notna().sum(),
+        'N (1.00)': (df_raw[col] == 1.00).sum(),
+        'Mean (Log2)': np.mean(valid_log2),
+        'Median (Log2)': np.median(valid_log2),
+        'Std (Log2)': np.std(valid_log2),
+        'Min (Log2)': np.min(valid_log2),
+        'Max (Log2)': np.max(valid_log2),
+        'Shapiro p-value': shapiro_p,
+        'Normality': normality
+    })
+
+stats_df = pd.DataFrame(stats_list).round(4)
 
 st.dataframe(stats_df, width="stretch", hide_index=True)
 
 st.markdown("---")
+st.caption("💡 **Normality:** Normal (p > 0.98) | Quasi-Normal (p > 0.95) | Not Normal (p ≤ 0.95)")
 st.caption("💡 **Interactive:** Hover for details, click legend to toggle conditions, download as PNG using camera icon")
