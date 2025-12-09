@@ -1,11 +1,11 @@
 """
-pages/1_Data_Upload.py - FINAL VERSION
-Unified data upload with column selection, intelligent renaming, and working species detection
+pages/1_Data_Upload.py - MANDATORY SPECIES COLUMN SELECTION
+Unified data upload with column selection, intelligent renaming, and SAFE species detection
 
 Advanced features:
 - Smart column selection (keep/drop metadata and samples)
 - Intelligent column renaming (trim, extract, auto-generate)
-- Working species inference from protein names
+- MANDATORY species column selection (searches all metadata columns)
 - Polars for efficient data handling
 - Direct column manipulation
 """
@@ -65,11 +65,12 @@ def generate_default_column_names(n_cols: int, replicates_per_condition: int = 2
     return names
 
 
-def infer_species_from_protein_name(name: str) -> str:
-    """Extract species from protein name (e.g., 'PROT_HUMAN' → 'HUMAN')."""
-    if pd.isna(name) or name is None:
+def infer_species_from_text(text: str) -> str:
+    """Extract species from any text string (e.g., 'PROT_HUMAN' → 'HUMAN')."""
+    if pd.isna(text) or text is None:
         return None
-    s = str(name).upper()
+    
+    s = str(text).upper()
     
     # Check common patterns
     if "HUMAN" in s:
@@ -80,6 +81,18 @@ def infer_species_from_protein_name(name: str) -> str:
         return "YEAST"
     if "ECOLI" in s or "_ECOL" in s:
         return "ECOLI"
+    if "DROSOPHILA" in s or "FRUIT" in s:
+        return "DROSOPHILA"
+    if "ARABIDOPSIS" in s:
+        return "ARABIDOPSIS"
+    if "ZEBRAFISH" in s:
+        return "ZEBRAFISH"
+    if "CHICKEN" in s:
+        return "CHICKEN"
+    if "DOG" in s or "CANIS" in s:
+        return "DOG"
+    if "CAT" in s or "FELIS" in s:
+        return "CAT"
     
     # Fallback: last token after underscore
     if "_" in s:
@@ -103,6 +116,20 @@ def extract_protein_id_from_name(name: str) -> str:
         return parts[0]
     
     return s
+
+
+def scan_column_for_species(column_data: pd.Series) -> dict:
+    """Scan a column and detect all unique species found."""
+    species_found = {}
+    
+    for value in column_data.dropna().unique():
+        species = infer_species_from_text(str(value))
+        if species:
+            if species not in species_found:
+                species_found[species] = 0
+            species_found[species] += 1
+    
+    return species_found
 
 
 def trim_common_prefix_suffix(columns: list) -> dict:
@@ -383,7 +410,7 @@ with col3:
 st.markdown("---")
 
 # ============================================================================
-# CONFIGURE KEY COLUMNS & INFER SPECIES
+# CONFIGURE KEY COLUMNS
 # ============================================================================
 
 st.subheader("5️⃣ Configure Key Columns")
@@ -398,11 +425,11 @@ with col1:
     )
 
 with col2:
-    species_options = [None] + selected_metadata
-    selected_species_col = st.selectbox(
-        "Species Column (optional):",
-        options=species_options,
-        key="species_col_select"
+    species_col_select = st.selectbox(
+        "Species Column (REQUIRED):",
+        options=selected_metadata,
+        key="species_col_select",
+        help="Select which column contains species information"
     )
 
 if st.session_state.data_type == "peptide":
@@ -415,56 +442,62 @@ if st.session_state.data_type == "peptide":
 else:
     sequence_col = None
 
-# Convert to pandas for species inference
+st.markdown("---")
+
+# ============================================================================
+# SCAN SPECIES COLUMN
+# ============================================================================
+
+st.subheader("🔬 Species Detection")
+
 df_pandas_temp = df_filtered.to_pandas()
 
-st.subheader("🔬 Species Information")
+st.info(f"Scanning column **{species_col_select}** for species information...")
 
-if selected_species_col:
-    # User provided explicit species column
-    st.info(f"Using species from: **{selected_species_col}**")
+# Scan all values in the selected species column
+species_scan = scan_column_for_species(df_pandas_temp[species_col_select])
+
+if species_scan:
+    st.success(f"✅ Found {len(species_scan)} unique species:")
     
-    species_values = df_pandas_temp[selected_species_col].dropna()
-    unique_species = species_values.nunique()
+    col1, col2 = st.columns([2, 1])
     
-    st.metric("Unique Species/Values", unique_species)
+    with col1:
+        # Show table of species found
+        species_df = pd.DataFrame(
+            list(species_scan.items()),
+            columns=['Species', 'Count']
+        ).sort_values('Count', ascending=False)
+        
+        st.dataframe(species_df, use_container_width=True, hide_index=True)
     
-    with st.expander("View Species Distribution", expanded=False):
-        species_counts = species_values.value_counts()
-        st.bar_chart(species_counts)
+    with col2:
+        # Show distribution chart
+        with st.expander("View Distribution", expanded=True):
+            st.bar_chart(species_df.set_index('Species')['Count'])
     
-    species_col = selected_species_col
-else:
-    # Infer species from ID column
-    st.info(f"Inferring species from ID column: **{id_col}**")
+    # Show sample data with inferred species
+    st.subheader("Sample Data Preview")
     
-    inferred_species = df_pandas_temp[id_col].apply(infer_species_from_protein_name)
-    
-    # Show preview
+    inferred_col = df_pandas_temp[species_col_select].apply(infer_species_from_text)
     preview_df = pd.DataFrame({
-        'Original ID': df_pandas_temp[id_col].head(10),
-        'Inferred Species': inferred_species.head(10)
+        'Row': range(min(10, len(df_pandas_temp))),
+        species_col_select: df_pandas_temp[species_col_select].head(10).values,
+        'Inferred Species': inferred_col.head(10).values
     })
     
     st.dataframe(preview_df, use_container_width=True, hide_index=True)
-    
-    # Show distribution
-    inferred_non_null = inferred_species.dropna()
-    unique_inferred = inferred_non_null.nunique()
-    
-    st.metric("Unique Species Detected", unique_inferred)
-    
-    with st.expander("View Species Distribution", expanded=False):
-        species_counts = inferred_non_null.value_counts()
-        st.bar_chart(species_counts)
-    
-    # Add as column
-    df_filtered = df_filtered.with_columns([
-        pl.Series("Inferred_Species", inferred_species.tolist())
-    ])
-    species_col = 'Inferred_Species'
+else:
+    st.warning(f"⚠️ No species patterns detected in **{species_col_select}**")
+    st.info("Common patterns detected: HUMAN, MOUSE, YEAST, ECOLI, DROSOPHILA, ARABIDOPSIS, ZEBRAFISH, etc.")
+    st.info("Species can also be detected as the last token after underscore (e.g., PROT_HUMAN → HUMAN)")
 
-# Optional: Extract protein IDs from combined ID+species names
+st.markdown("---")
+
+# ============================================================================
+# OPTIONAL: EXTRACT PROTEIN IDS
+# ============================================================================
+
 st.subheader("📌 Extract Protein IDs (Optional)")
 
 st.caption("If your ID column contains both protein name and species (e.g., NUD4B_HUMAN), extract just the ID.")
@@ -510,8 +543,10 @@ with col1:
         "✅ Metadata columns selected": len(selected_metadata) > 0,
         "✅ Numerical columns selected": len(numeric_cols_final) > 0,
         "✅ ID column configured": id_col is not None,
+        "✅ Species column selected": species_col_select is not None,
         "✅ Data loaded": df_filtered is not None,
         "✅ Samples available": len(df_filtered) > 0,
+        "✅ Species detected in column": len(species_scan) > 0,
     }
     
     if st.session_state.data_type == 'peptide':
@@ -529,7 +564,8 @@ with col2:
     st.write("**Summary:**")
     st.write(f"- **Type:** {st.session_state.data_type.upper()}")
     st.write(f"- **ID Column:** {id_col}")
-    st.write(f"- **Species Column:** {species_col if species_col else 'None'}")
+    st.write(f"- **Species Column:** {species_col_select}")
+    st.write(f"- **Species Found:** {len(species_scan)}")
     if st.session_state.data_type == 'peptide':
         st.write(f"- **Sequence Column:** {sequence_col}")
     st.write(f"- **Metadata Columns:** {len(selected_metadata)}")
@@ -557,7 +593,7 @@ if st.button(
                     raw=df_final_pandas,
                     numeric_cols=numeric_cols_final,
                     id_col=id_col,
-                    species_col=species_col,
+                    species_col=species_col_select,
                     file_path=str(uploaded_file.name)
                 )
                 st.session_state.protein_data = data_obj
@@ -566,7 +602,7 @@ if st.button(
                     raw=df_final_pandas,
                     numeric_cols=numeric_cols_final,
                     id_col=id_col,
-                    species_col=species_col,
+                    species_col=species_col_select,
                     sequence_col=sequence_col,
                     file_path=str(uploaded_file.name)
                 )
@@ -577,7 +613,7 @@ if st.button(
             st.session_state.df_raw_polars = df_filtered
             st.session_state.numeric_cols = numeric_cols_final
             st.session_state.id_col = id_col
-            st.session_state.species_col = species_col
+            st.session_state.species_col = species_col_select
             st.session_state.sequence_col = sequence_col if st.session_state.data_type == "peptide" else None
             st.session_state.metadata_columns = selected_metadata
             st.session_state.data_ready = True
@@ -592,4 +628,4 @@ if st.button(
 
 st.markdown("---")
 
-st.caption("**💡 Tip:** Use intelligent renaming to standardize column names. Species are auto-inferred from protein names (e.g., _HUMAN, _MOUSE). Extract protein IDs if your names contain species suffixes.")
+st.caption("**💡 Tip:** Species column is REQUIRED and will be scanned for common species patterns (HUMAN, MOUSE, YEAST, etc.). All metadata columns are searched, not just the ID column. This ensures accuracy and prevents false detection.")
