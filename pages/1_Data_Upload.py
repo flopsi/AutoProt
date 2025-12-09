@@ -468,53 +468,28 @@ else:
     sequence_col = None
 
 
+# Perform inference
+df_pandas_temp = df_filtered.to_pandas()
+inferred_species = df_pandas_temp[source_col].apply(infer_species_from_protein_name)
 
-# ============================================================================
-# SPECIES INFERENCE
-# ============================================================================
+# Show preview
+preview_df = pd.DataFrame({
+    'Protein Name': df_pandas_temp[source_col].head(10),
+    'Inferred Species': inferred_species.head(10)
+})
+st.dataframe(preview_df, use_container_width=True, height=250)
 
-st.subheader("4.5️⃣ Species Inference (Optional)")
+# Add inferred species column
+df_filtered = df_filtered.with_columns([
+    pl.Series("Inferred_Species", inferred_species.tolist())
+])
 
-col1, col2 = st.columns([1, 3])
-
-with col1:
-    infer_species = st.checkbox(
-        "Infer species from protein names",
-        value=False,
-        help="Extract species from protein IDs (e.g., PROT_HUMAN → HUMAN)"
-    )
-    
-    if infer_species:
-        source_col = st.selectbox(
-            "Infer from column:",
-            options=metadata_cols,
-            help="Column containing protein names with species codes"
-        )
-
-with col2:
-    if infer_species:
-        # Perform inference
-        df_pandas_temp = df_filtered.to_pandas()
-        inferred_species = df_pandas_temp[source_col].apply(infer_species_from_protein_name)
-        
-        # Show preview
-        preview_df = pd.DataFrame({
-            'Protein Name': df_pandas_temp[source_col].head(10),
-            'Inferred Species': inferred_species.head(10)
-        })
-        st.dataframe(preview_df, use_container_width=True, height=250)
-        
-        # Add inferred species column
-        df_filtered = df_filtered.with_columns([
-            pl.Series("Inferred_Species", inferred_species.tolist())
-        ])
-        
-        # Update species_col if not set
-        if species_col is None:
-            species_col = "Inferred_Species"
-            st.success("✓ Added 'Inferred_Species' column")
-        else:
-            st.info(f"✓ Added 'Inferred_Species' column (current species column: {species_col})")
+# Update species_col if not set
+if species_col is None:
+    species_col = "Inferred_Species"
+    st.success("✓ Added 'Inferred_Species' column")
+else:
+    st.info(f"✓ Added 'Inferred_Species' column (current species column: {species_col})")
 
 st.markdown("---")
 
