@@ -1,16 +1,17 @@
 """
-pages/2_Visual_EDA.py - OPTIMIZED VISUAL EXPLORATORY DATA ANALYSIS
-Production-ready EDA with plotnine, interactive controls, and comprehensive visualizations
+pages/2_Visual_EDA.py - PRODUCTION-READY VISUAL EXPLORATORY DATA ANALYSIS
+All Plotly visualizations - native Streamlit support, interactive, no rendering errors
 
 Features:
-- Distribution plots (histograms, density, box plots)
-- Species-stratified analysis
+- Distribution plots (histograms, density)
+- Box & violin plots by species
 - Transformation comparison (log2, yeo-johnson, box-cox)
 - Normality assessment (Q-Q plots, Shapiro-Wilk test)
-- PCA and t-SNE with species/condition coloring
-- Heatmaps with hierarchical clustering
+- PCA with variance explained
+- t-SNE dimensionality reduction
+- Hierarchical clustering heatmap
 - Missing data visualization
-- Export-ready publication-quality figures
+- Publication-quality interactive figures
 """
 
 import streamlit as st
@@ -24,7 +25,7 @@ from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 import plotly.graph_objects as go
 import plotly.express as px
-from plotnine import *
+import matplotlib.pyplot as plt
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -91,40 +92,22 @@ with st.sidebar:
     # Color scheme
     color_scheme = st.selectbox(
         "Color scheme:",
-        options=["Viridis", "Plasma", "Inferno", "Turbo", "Set2", "Pastel1"],
-        key="color_scheme"
+        options=["Viridis", "Plasma", "Inferno", "Turbo", "Set2", "Set3"],
+        key="color_scheme",
+        help="Color palette for visualizations"
     )
     
     # Figure size
-    fig_width = st.slider(
-        "Figure width:",
-        min_value=8,
-        max_value=16,
-        value=12,
-        step=1,
-        key="fig_width"
-    )
-    
     fig_height = st.slider(
         "Figure height:",
-        min_value=4,
-        max_value=10,
-        value=6,
-        step=1,
+        min_value=400,
+        max_value=900,
+        value=500,
+        step=50,
         key="fig_height"
     )
     
-    # Transparency
-    alpha = st.slider(
-        "Transparency:",
-        min_value=0.3,
-        max_value=1.0,
-        value=0.7,
-        step=0.1,
-        key="alpha"
-    )
-    
-    # Bins for histograms
+    # Histogram bins
     hist_bins = st.slider(
         "Histogram bins:",
         min_value=20,
@@ -138,7 +121,7 @@ with st.sidebar:
 # DATA PREPARATION
 # ============================================================================
 
-# Long format for plotnine
+# Long format for plotting
 df_long = df_raw.melt(
     id_vars=[id_col, species_col],
     value_vars=numeric_cols,
@@ -147,11 +130,11 @@ df_long = df_raw.melt(
 )
 
 # Log2 transformation
-df_long['Log2_Intensity'] = np.log2(df_long['Intensity'] + 1)  # +1 to avoid log(0)
+df_long['Log2_Intensity'] = np.log2(df_long['Intensity'] + 1)
 
-# Create numeric version of intensity (drop NaN for numeric operations)
+# Create numeric version for transformations
 df_numeric = df_raw[numeric_cols].copy()
-df_numeric = df_numeric.replace(1.0, np.nan)  # Clean placeholder values
+df_numeric = df_numeric.replace(1.0, np.nan)
 
 # ============================================================================
 # SECTION 1: DISTRIBUTION PLOTS
@@ -167,43 +150,34 @@ if plot_section == "Distribution":
         st.subheader("Histogram - All Samples")
         st.caption("Log2-transformed intensity distribution across all samples")
         
-        plot_hist = (
-            ggplot(df_long, aes(x='Log2_Intensity')) +
-            geom_histogram(bins=hist_bins, fill='steelblue', alpha=alpha, color='black', size=0.2) +
-            labs(
-                title='Log2 Intensity Distribution',
-                x='Log2(Intensity + 1)',
-                y='Count'
-            ) +
-            theme_minimal() +
-            theme(
-                figure_size=(fig_width/2 - 0.5, fig_height),
-                axis_text_x=element_text(angle=45, hjust=1)
-            )
+        fig_hist = px.histogram(
+            df_long.dropna(subset=['Log2_Intensity']),
+            x='Log2_Intensity',
+            nbins=hist_bins,
+            color_discrete_sequence=['steelblue'],
+            title='Log2 Intensity Distribution',
+            labels={'Log2_Intensity': 'Log2(Intensity + 1)', 'count': 'Count'},
+            marginal='rug'
         )
-        st.pyplot(plot_hist)
+        fig_hist.update_traces(marker=dict(line=dict(color='black', width=0.5)))
+        fig_hist.update_layout(height=fig_height, showlegend=False)
+        st.plotly_chart(fig_hist, use_container_width=True)
     
     # Density plot by species
     with col2:
         st.subheader("Density - By Species")
         st.caption("Overlay of intensity distributions by species")
         
-        plot_dens = (
-            ggplot(df_long.dropna(subset=['Log2_Intensity']), aes(x='Log2_Intensity', color='factor(' + species_col + ')')) +
-            geom_density(size=1, alpha=0.3) +
-            labs(
-                title='Density by Species',
-                x='Log2(Intensity + 1)',
-                y='Density',
-                color=species_col
-            ) +
-            theme_minimal() +
-            theme(
-                figure_size=(fig_width/2 - 0.5, fig_height),
-                axis_text_x=element_text(angle=45, hjust=1)
-            )
+        fig_dens = px.density_contour(
+            df_long.dropna(subset=['Log2_Intensity']),
+            x='Log2_Intensity',
+            color=species_col,
+            title='Density by Species',
+            marginal_x='histogram',
+            color_discrete_sequence=px.colors.qualitative.Set2
         )
-        st.pyplot(plot_dens)
+        fig_dens.update_layout(height=fig_height)
+        st.plotly_chart(fig_dens, use_container_width=True)
     
     # Statistics by sample
     st.subheader("Sample Statistics")
@@ -233,45 +207,44 @@ elif plot_section == "Box & Violin":
         st.subheader("Box Plot")
         st.caption("Intensity distribution per sample showing quartiles and outliers")
         
-        plot_box = (
-            ggplot(df_long, aes(x='reorder(Sample, Log2_Intensity, na.rm=True)', y='Log2_Intensity', fill='Sample')) +
-            geom_boxplot(alpha=alpha) +
-            coord_flip() +
-            labs(
-                title='Log2 Intensity by Sample',
-                x='Sample',
-                y='Log2(Intensity + 1)'
-            ) +
-            theme_minimal() +
-            theme(
-                figure_size=(fig_width/2 - 0.5, fig_height),
-                legend_position='none'
-            )
+        fig_box = px.box(
+            df_long.dropna(subset=['Log2_Intensity']),
+            y='Sample',
+            x='Log2_Intensity',
+            color='Sample',
+            title='Log2 Intensity by Sample',
+            labels={'Log2_Intensity': 'Log2(Intensity + 1)'},
+            color_discrete_sequence=px.colors.qualitative.Set2
         )
-        st.pyplot(plot_box)
+        fig_box.update_layout(height=fig_height, showlegend=False)
+        st.plotly_chart(fig_box, use_container_width=True)
     
     # Violin plot
     with col2:
         st.subheader("Violin Plot")
-        st.caption("Probability density by sample")
+        st.caption("Probability density by sample and species")
         
-        plot_violin = (
-            ggplot(df_long, aes(x='reorder(Sample, Log2_Intensity, na.rm=True)', y='Log2_Intensity', fill=species_col)) +
-            geom_violin(alpha=alpha) +
-            coord_flip() +
-            labs(
-                title='Distribution by Sample & Species',
-                x='Sample',
-                y='Log2(Intensity + 1)',
-                fill=species_col
-            ) +
-            theme_minimal() +
-            theme(
-                figure_size=(fig_width/2 - 0.5, fig_height),
-                legend_position='right'
-            )
+        fig_violin = px.violin(
+            df_long.dropna(subset=['Log2_Intensity']),
+            y='Sample',
+            x='Log2_Intensity',
+            color=species_col,
+            title='Distribution by Sample & Species',
+            labels={'Log2_Intensity': 'Log2(Intensity + 1)'},
+            box=True,
+            points=False,
+            color_discrete_sequence=px.colors.qualitative.Set2
         )
-        st.pyplot(plot_violin)
+        fig_violin.update_layout(height=fig_height)
+        st.plotly_chart(fig_violin, use_container_width=True)
+    
+    # Summary by species
+    st.subheader("Summary by Species")
+    species_summary = df_long.groupna(subset=['Log2_Intensity']).groupby(species_col)['Log2_Intensity'].agg([
+        'count', 'mean', 'median', 'std', 'min', 'max'
+    ]).round(2).reset_index()
+    species_summary.columns = [species_col, 'Count', 'Mean', 'Median', 'Std', 'Min', 'Max']
+    st.dataframe(species_summary, use_container_width=True, hide_index=True)
 
 # ============================================================================
 # SECTION 3: TRANSFORMATION COMPARISON
@@ -281,7 +254,7 @@ elif plot_section == "Transformations":
     st.header("3️⃣ Transformation Comparison")
     st.caption("Assess normality of different transformations to identify optimal preprocessing")
     
-    # Combine all numeric data for transformation
+    # Combine all numeric data
     sample_data = df_numeric.values.flatten()
     sample_data = sample_data[~np.isnan(sample_data)]
     
@@ -291,27 +264,30 @@ elif plot_section == "Transformations":
         # Original
         with col1:
             _, pval_orig = stats.shapiro(sample_data[:5000] if len(sample_data) > 5000 else sample_data)
-            st.metric("Original", f"p={pval_orig:.2e}", delta="No transform")
+            st.metric("Original", f"p={pval_orig:.2e}", delta="Baseline")
         
         # Log2
         with col2:
             log2_data = np.log2(sample_data + 1)
             _, pval_log2 = stats.shapiro(log2_data[:5000] if len(log2_data) > 5000 else log2_data)
-            st.metric("Log2", f"p={pval_log2:.2e}", delta=f"{'+' if pval_log2 > pval_orig else ''}{(pval_log2-pval_orig):.2e}")
+            improvement = pval_log2 - pval_orig
+            st.metric("Log2", f"p={pval_log2:.2e}", delta=f"{improvement:+.2e}")
         
         # Yeo-Johnson
         with col3:
             pt = PowerTransformer(method='yeo-johnson')
             yj_data = pt.fit_transform(sample_data.reshape(-1, 1)).flatten()
             _, pval_yj = stats.shapiro(yj_data[:5000] if len(yj_data) > 5000 else yj_data)
-            st.metric("Yeo-Johnson", f"p={pval_yj:.2e}", delta=f"{'+' if pval_yj > pval_orig else ''}{(pval_yj-pval_orig):.2e}")
+            improvement = pval_yj - pval_orig
+            st.metric("Yeo-Johnson", f"p={pval_yj:.2e}", delta=f"{improvement:+.2e}")
         
-        # Box-Cox (if all positive)
+        # Box-Cox
         with col4:
             if np.all(sample_data > 0):
                 bc_data, _ = boxcox(sample_data)
                 _, pval_bc = stats.shapiro(bc_data[:5000] if len(bc_data) > 5000 else bc_data)
-                st.metric("Box-Cox", f"p={pval_bc:.2e}", delta=f"{'+' if pval_bc > pval_orig else ''}{(pval_bc-pval_orig):.2e}")
+                improvement = pval_bc - pval_orig
+                st.metric("Box-Cox", f"p={pval_bc:.2e}", delta=f"{improvement:+.2e}")
             else:
                 st.metric("Box-Cox", "N/A", delta="(requires all positive)")
         
@@ -324,27 +300,33 @@ elif plot_section == "Transformations":
             'Yeo-Johnson': pt.fit_transform(sample_data.reshape(-1, 1)).flatten(),
         }
         
-        transform_df = pd.DataFrame({
-            'Value': np.concatenate([v for v in transforms.values()]),
-            'Transform': np.repeat(list(transforms.keys()), len(sample_data))
-        })
+        if np.all(sample_data > 0):
+            bc_data, _ = boxcox(sample_data)
+            transforms['Box-Cox'] = bc_data
         
-        plot_trans = (
-            ggplot(transform_df, aes(x='Value', fill='Transform')) +
-            geom_histogram(bins=hist_bins, alpha=alpha, position='identity') +
-            facet_wrap('~Transform', scales='free_x', ncol=3) +
-            labs(
-                title='Transformation Comparison',
-                x='Value',
-                y='Count'
-            ) +
-            theme_minimal() +
-            theme(
-                figure_size=(fig_width, fig_height),
-                subplots_adjust={'wspace': 0.3}
-            )
+        # Create subplot data
+        transform_dfs = []
+        for name, data in transforms.items():
+            transform_dfs.append(pd.DataFrame({
+                'Value': data,
+                'Transform': name
+            }))
+        
+        transform_combined = pd.concat(transform_dfs, ignore_index=True)
+        
+        fig_trans = px.histogram(
+            transform_combined,
+            x='Value',
+            color='Transform',
+            nbins=hist_bins,
+            title='Transformation Comparison',
+            facet_col='Transform',
+            facet_col_wrap=3,
+            color_discrete_sequence=px.colors.qualitative.Set2,
+            labels={'Value': 'Value', 'count': 'Count'}
         )
-        st.pyplot(plot_trans)
+        fig_trans.update_layout(height=fig_height, showlegend=False)
+        st.plotly_chart(fig_trans, use_container_width=True)
 
 # ============================================================================
 # SECTION 4: Q-Q PLOTS
@@ -367,7 +349,9 @@ elif plot_section == "Q-Q Plots":
         n_cols = min(2, len(selected_samples))
         n_rows = (len(selected_samples) + n_cols - 1) // n_cols
         
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(fig_width, fig_height))
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(12, fig_height/100))
+        
+        # Handle single subplot case
         if n_rows == 1 and n_cols == 1:
             axes = np.array([[axes]])
         elif n_rows == 1 or n_cols == 1:
@@ -402,20 +386,20 @@ elif plot_section == "PCA":
     st.header("5️⃣ Principal Component Analysis (PCA)")
     st.caption("Dimensionality reduction colored by species")
     
-    # Prepare data for PCA
+    # Prepare data
     df_pca = df_raw[numeric_cols].fillna(0)
     scaler = StandardScaler()
     df_scaled = scaler.fit_transform(df_pca)
     
     # Fit PCA
-    pca = PCA(n_components=3)
+    pca = PCA(n_components=min(3, df_scaled.shape[1]))
     pca_result = pca.fit_transform(df_scaled)
     
     # Create PCA dataframe
     pca_df = pd.DataFrame({
         'PC1': pca_result[:, 0],
         'PC2': pca_result[:, 1],
-        'PC3': pca_result[:, 2],
+        'PC3': pca_result[:, 2] if pca_result.shape[1] > 2 else 0,
         species_col: df_raw[species_col]
     })
     
@@ -424,6 +408,7 @@ elif plot_section == "PCA":
     # 2D PCA
     with col1:
         st.subheader("PCA: PC1 vs PC2")
+        
         fig_2d = px.scatter(
             pca_df,
             x='PC1',
@@ -433,28 +418,55 @@ elif plot_section == "PCA":
             labels={
                 'PC1': f'PC1 ({pca.explained_variance_ratio_[0]:.1%})',
                 'PC2': f'PC2 ({pca.explained_variance_ratio_[1]:.1%})'
-            }
+            },
+            color_discrete_sequence=px.colors.qualitative.Set2
         )
+        fig_2d.update_layout(height=fig_height)
         st.plotly_chart(fig_2d, use_container_width=True)
     
     # Scree plot
     with col2:
         st.subheader("Scree Plot")
+        
         var_exp = pca.explained_variance_ratio_
         cumsum_var = np.cumsum(var_exp)
+        pc_names = [f'PC{i+1}' for i in range(len(var_exp))]
         
         fig_scree = go.Figure()
-        fig_scree.add_trace(go.Bar(y=var_exp, name='Variance', marker_color='steelblue'))
-        fig_scree.add_trace(go.Scatter(y=cumsum_var, name='Cumulative', mode='lines+markers', yaxis='y2'))
+        fig_scree.add_trace(go.Bar(
+            x=pc_names,
+            y=var_exp,
+            name='Variance',
+            marker_color='steelblue'
+        ))
+        fig_scree.add_trace(go.Scatter(
+            x=pc_names,
+            y=cumsum_var,
+            name='Cumulative',
+            mode='lines+markers',
+            yaxis='y2',
+            line=dict(color='darkred', width=2)
+        ))
+        
         fig_scree.update_layout(
             title='Explained Variance by PC',
             xaxis_title='Principal Component',
             yaxis_title='Variance Explained',
             yaxis2=dict(title='Cumulative', overlaying='y', side='right'),
             hovermode='x unified',
-            height=450
+            height=fig_height,
+            showlegend=True
         )
         st.plotly_chart(fig_scree, use_container_width=True)
+    
+    # Variance table
+    st.subheader("Variance Explained")
+    var_df = pd.DataFrame({
+        'PC': pc_names,
+        'Variance': (var_exp * 100).round(2),
+        'Cumulative': (cumsum_var * 100).round(2)
+    })
+    st.dataframe(var_df, use_container_width=True, hide_index=True)
 
 # ============================================================================
 # SECTION 6: t-SNE
@@ -469,7 +481,7 @@ elif plot_section == "t-SNE":
         scaler = StandardScaler()
         df_scaled = scaler.fit_transform(df_tsne)
         
-        tsne = TSNE(n_components=2, random_state=42, perplexity=30, n_iter=1000)
+        tsne = TSNE(n_components=2, random_state=42, perplexity=30, n_iter=1000, verbose=0)
         tsne_result = tsne.fit_transform(df_scaled)
         
         tsne_df = pd.DataFrame({
@@ -487,8 +499,11 @@ elif plot_section == "t-SNE":
             labels={
                 't-SNE 1': 't-SNE Dimension 1',
                 't-SNE 2': 't-SNE Dimension 2'
-            }
+            },
+            color_discrete_sequence=px.colors.qualitative.Set2,
+            hover_data={species_col: True}
         )
+        fig_tsne.update_layout(height=fig_height)
         st.plotly_chart(fig_tsne, use_container_width=True)
 
 # ============================================================================
@@ -499,7 +514,7 @@ elif plot_section == "Heatmap":
     st.header("7️⃣ Hierarchical Clustering Heatmap")
     st.caption("Top variable proteins with hierarchical clustering")
     
-    # Select top N proteins by variance
+    # Select top N proteins
     n_proteins = st.slider(
         "Number of proteins to show:",
         min_value=10,
@@ -515,7 +530,9 @@ elif plot_section == "Heatmap":
     df_heatmap = df_raw.loc[top_idx, numeric_cols]
     
     # Z-score normalize
-    df_heatmap_norm = (df_heatmap - df_heatmap.mean(axis=1).values.reshape(-1, 1)) / (df_heatmap.std(axis=1).values.reshape(-1, 1) + 1e-10)
+    means = df_heatmap.mean(axis=1).values.reshape(-1, 1)
+    stds = df_heatmap.std(axis=1).values.reshape(-1, 1)
+    df_heatmap_norm = (df_heatmap - means) / (stds + 1e-10)
     
     # Create heatmap
     fig_heat = px.imshow(
@@ -523,9 +540,14 @@ elif plot_section == "Heatmap":
         color_continuous_scale='RdBu_r',
         title=f'Top {n_proteins} Proteins by Variance (Z-score normalized)',
         labels=dict(x='Sample', y='Protein', color='Z-score'),
-        aspect='auto'
+        aspect='auto',
+        color_continuous_midpoint=0
     )
-    fig_heat.update_layout(height=max(400, n_proteins * 5), width=fig_width * 100)
+    fig_heat.update_layout(
+        height=max(400, n_proteins * 6),
+        xaxis_title='Sample',
+        yaxis_title='Protein'
+    )
     st.plotly_chart(fig_heat, use_container_width=True)
 
 # ============================================================================
@@ -540,6 +562,7 @@ elif plot_section == "Missing Data":
     # Missing data percentage
     with col1:
         st.subheader("Missing Data by Sample")
+        
         missing_pct = (df_raw[numeric_cols].isna().sum() / len(df_raw) * 100).sort_values(ascending=False)
         
         fig_missing = px.bar(
@@ -550,11 +573,13 @@ elif plot_section == "Missing Data":
             color=missing_pct.values,
             color_continuous_scale='Reds'
         )
+        fig_missing.update_layout(height=fig_height, showlegend=False)
         st.plotly_chart(fig_missing, use_container_width=True)
     
     # Valid counts by sample
     with col2:
         st.subheader("Valid Data by Sample")
+        
         valid_counts = df_raw[numeric_cols].notna().sum().sort_values(ascending=False)
         
         fig_valid = px.bar(
@@ -565,6 +590,7 @@ elif plot_section == "Missing Data":
             color=valid_counts.values,
             color_continuous_scale='Greens'
         )
+        fig_valid.update_layout(height=fig_height, showlegend=False)
         st.plotly_chart(fig_valid, use_container_width=True)
     
     # Summary statistics
@@ -579,4 +605,4 @@ elif plot_section == "Missing Data":
     st.dataframe(missing_summary, use_container_width=True, hide_index=True)
 
 st.markdown("---")
-st.caption("💡 **Tip:** Use the sidebar to customize plot appearance. Export high-resolution figures for publications.")
+st.caption("💡 **Tip:** All plots are interactive - hover for details, zoom, pan, and download as PNG. Use sidebar to customize appearance.")
