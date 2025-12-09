@@ -1,6 +1,6 @@
 """
 pages/2_Visual_EDA.py - VISUAL EXPLORATORY DATA ANALYSIS
-Enhanced normality diagnostics: Shapiro, D'Agostino, Skewness, Kurtosis, F-statistic
+Enhanced normality diagnostics: Shapiro W & p, D'Agostino, Skewness, Kurtosis, Levene's F
 """
 
 import streamlit as st
@@ -32,6 +32,7 @@ def normality_diagnostics(values: pd.Series) -> dict:
     
     Returns dict with:
     - n: sample size
+    - shapiro_w: Shapiro-Wilk W statistic
     - shapiro_p: Shapiro-Wilk p-value
     - dagostino_p: D'Agostino K^2 p-value
     - skewness: skewness coefficient
@@ -44,6 +45,7 @@ def normality_diagnostics(values: pd.Series) -> dict:
     if n < 3:
         return {
             "n": n,
+            "shapiro_w": np.nan,
             "shapiro_p": np.nan,
             "dagostino_p": np.nan,
             "skewness": np.nan,
@@ -53,8 +55,9 @@ def normality_diagnostics(values: pd.Series) -> dict:
     
     # Shapiro-Wilk test
     try:
-        _, shapiro_p = stats.shapiro(values)
+        shapiro_w, shapiro_p = stats.shapiro(values)
     except:
+        shapiro_w = np.nan
         shapiro_p = np.nan
     
     # D'Agostino-Pearson K^2 test (requires n >= 8)
@@ -83,6 +86,7 @@ def normality_diagnostics(values: pd.Series) -> dict:
     
     return {
         "n": n,
+        "shapiro_w": shapiro_w,
         "shapiro_p": shapiro_p,
         "dagostino_p": dagostino_p,
         "skewness": skewness,
@@ -164,7 +168,7 @@ fig_violin.update_layout(
 st.plotly_chart(fig_violin, use_container_width=True)
 
 # ============================================================================
-# ENHANCED NORMALITY STATISTICS WITH F-STATISTIC
+# ENHANCED NORMALITY STATISTICS WITH SHAPIRO W AND LEVENE'S F
 # ============================================================================
 
 st.subheader("📈 Sample Statistics with Normality Diagnostics")
@@ -191,7 +195,7 @@ for col in numeric_cols:
     # Extract condition for this sample
     condition = col.split('_')[0] if '_' in col else col[0]
     
-    # Calculate F-statistic for this sample against others in same condition
+    # Calculate Levene's F-statistic for this sample against others in same condition
     f_stat = np.nan
     f_pvalue = np.nan
     
@@ -213,12 +217,13 @@ for col in numeric_cols:
         "n": diag["n"],
         "Mean (Log2)": log2_values.mean(),
         "Std (Log2)": log2_values.std(),
+        "Shapiro W": diag["shapiro_w"],
         "Shapiro p": diag["shapiro_p"],
         "DAgostino p": diag["dagostino_p"],
         "Skewness": diag["skewness"],
         "Kurtosis": diag["kurtosis"],
-        "F-statistic": f_stat,
-        "F p-value": f_pvalue,
+        "Levene F": f_stat,
+        "Levene p": f_pvalue,
         "Normal?": "✓" if diag["is_normal"] else "✗"
     })
 
@@ -228,7 +233,7 @@ st.dataframe(results_df, use_container_width=True, hide_index=True)
 
 # Summary statistics
 normal_count = (results_df['Normal?'] == '✓').sum()
-homogeneous_count = (results_df['F p-value'] > 0.05).sum()
+homogeneous_count = (results_df['Levene p'] > 0.05).sum()
 
 col1, col2 = st.columns(2)
 with col1:
@@ -237,10 +242,10 @@ with col2:
     st.info(f"📊 **Homogeneity:** {homogeneous_count}/{len(results_df)} samples pass variance test (Levene p > 0.05)")
 
 st.markdown("---")
+st.caption("💡 **Shapiro W:** Test statistic for normality (closer to 1 = more normal)")
 st.caption("💡 **Normality Tests:** Shapiro-Wilk (all n), D'Agostino-Pearson (n≥8) | **Thresholds:** p > 0.05 = normal")
-st.caption("💡 **F-statistic:** Levene's test for equal variances within condition | p > 0.05 = homogeneous variance")
-st.caption("💡 **Skewness:** 0 = symmetric, >0 = right-skewed, <0 = left-skewed")
-st.caption("💡 **Kurtosis:** 0 = normal, >0 = heavy-tailed, <0 = light-tailed")
+st.caption("💡 **Levene F:** Test statistic for equal variances within condition | p > 0.05 = homogeneous variance")
+st.caption("💡 **Skewness:** 0 = symmetric, >0 = right-skewed, <0 = left-skewed | **Kurtosis:** 0 = normal, >0 = heavy-tailed, <0 = light-tailed")
 
 st.markdown("---")
 st.markdown("---")
