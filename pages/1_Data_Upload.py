@@ -367,47 +367,27 @@ else:
 st.markdown("---")
 
 # ============================================================================
-# VALIDATION
+# CONFIRMATION & UPLOAD
 # ============================================================================
 
-st.subheader("6️⃣ Validate & Upload")
+st.subheader("6️⃣ Confirm & Upload")
 
-col1, col2 = st.columns(2)
-
-with col1:
-    st.write("**Checks:**")
-    checks = {
-        "Metadata selected": len(metadata_cols) > 0,
-        "Numerical selected": len(numerical_cols_renamed) > 0,
-        "ID configured": id_col is not None,
-        "Species detected": species_col is not None,
-        "Min 2 replicates": replicates_per_condition >= 2,
-    }
-    
-    if st.session_state.data_type == 'peptide':
-        checks["Sequence selected"] = sequence_col is not None
-    
-    all_passed = all(checks.values())
-    
-    for check, status in checks.items():
-        st.success(f"✅ {check}") if status else st.error(f"❌ {check}")
-
-with col2:
-    st.write("**Summary:**")
-    st.write(f"- Type: **{st.session_state.data_type.upper()}**")
-    st.write(f"- ID: **{id_col}**")
-    st.write(f"- Species: **{species_col}**")
-    if st.session_state.data_type == 'peptide':
-        st.write(f"- Sequence: **{sequence_col}**")
-    st.write(f"- Proteins: **{len(df_filtered):,}**")
+st.write("**Configuration Summary:**")
+st.write(f"- **Type:** {st.session_state.data_type.upper()}")
+st.write(f"- **Rows:** {len(df_filtered):,}")
+st.write(f"- **ID Column:** {id_col}")
+st.write(f"- **Species Column:** {species_col}")
+if st.session_state.data_type == 'peptide':
+    st.write(f"- **Sequence Column:** {sequence_col}")
+st.write(f"- **Samples:** {len(numerical_cols_renamed)}")
+st.write(f"- **Conditions:** {len(numerical_cols_renamed) // replicates_per_condition}")
+st.write(f"- **Replicates/Condition:** {replicates_per_condition}")
 
 st.markdown("---")
 
-# ============================================================================
-# UPLOAD BUTTON
-# ============================================================================
+confirm = st.checkbox("✅ I confirm the configuration is correct", key="confirm_upload")
 
-if st.button("🚀 Upload Data", type="primary", width="stretch", disabled=not all_passed):
+if st.button("🚀 Upload Data", type="primary", width="stretch", disabled=not confirm):
     with st.spinner("Processing..."):
         try:
             df_final = df_filtered.to_pandas()
