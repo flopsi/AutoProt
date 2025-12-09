@@ -451,30 +451,27 @@ st.subheader("🔬 Species Detection")
 
 df_pandas_temp = df_filtered.to_pandas()
 
-st.info(f"Scanning column **{species_col_select}** for species information...")
+# Scan ALL metadata columns for species
+all_species_found = {}
+for col in selected_metadata:
+    species_in_col = scan_column_for_species(df_pandas_temp[col])
+    if species_in_col:
+        all_species_found[col] = species_in_col
 
-# Scan all values in the selected species column
-species_scan = scan_column_for_species(df_pandas_temp[species_col_select])
-
-if species_scan:
-    st.success(f"✅ Found {len(species_scan)} unique species:")
+if all_species_found:
+    st.success(f"✅ Found species in {len(all_species_found)} column(s)")
     
-    col1, col2 = st.columns([2, 1])
+    # Show which column has species
+    for col_name, species_dict in all_species_found.items():
+        with st.expander(f"{col_name}: {sum(species_dict.values())} entries"):
+            st.write(species_dict)
     
-    with col1:
-        # Show table of species found
-        species_df = pd.DataFrame(
-            list(species_scan.items()),
-            columns=['Species', 'Count']
-        ).sort_values('Count', ascending=False)
-        
-        st.dataframe(species_df, width="stretch", hide_index=True)
-    
-    with col2:
-        # Show distribution chart
-        with st.expander("View Distribution", expanded=True):
-            st.bar_chart(species_df.set_index('Species')['Count'])
-    
+    # Auto-select the column with most species
+    best_col = max(all_species_found.keys(), key=lambda k: sum(all_species_found[k].values()))
+    species_col_select = st.selectbox("Species column:", options=list(all_species_found.keys()), index=list(all_species_found.keys()).index(best_col))
+else:
+    st.warning("No species found in any metadata column")
+    species_col_select = st.selectbox("Manually select:", options=selected_metadata)
     # Show sample data with inferred species
     st.subheader("Sample Data Preview")
     
