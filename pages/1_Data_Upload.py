@@ -1,5 +1,5 @@
 """
-pages/1_Data_Upload.py - Data Upload & Configuration
+pages/1_Data_Upload.py - Data Upload & Configuration (FIXED)
 
 Handles file upload, validation, column detection, and initial configuration
 Integrates with helpers.io, helpers.core, helpers.analysis modules
@@ -7,10 +7,8 @@ Integrates with helpers.io, helpers.core, helpers.analysis modules
 
 import streamlit as st
 import pandas as pd
-import polars as pl
 from pathlib import Path
 import logging
-from typing import Tuple, Optional
 
 # Import helper modules
 from helpers.io import (
@@ -337,8 +335,7 @@ else:
 # Check missing data
 missing_data = check_missing_data(df_raw, numeric_cols_filtered)
 
-# Extract values from missing_data dictionary
-# check_missing_data returns: {'total_missing': int, 'missing_percent': float, 'complete_rows': int, 'by_column': dict}
+# Extract values from missing_data dictionary with safe defaults
 total_missing = missing_data.get('total_missing', 0)
 missing_percent = missing_data.get('missing_percent', 0.0)
 complete_rows = missing_data.get('complete_rows', 0)
@@ -378,29 +375,30 @@ st.header("Step 🔟: Data Summary")
 
 summary = get_data_summary(df_raw, numeric_cols_filtered, id_col)
 
+# Extract summary statistics with safe defaults
+n_rows = summary.get('n_rows', len(df_raw))
+n_cols = len(numeric_cols_filtered)
+mean_abundance = summary.get('mean_abundance', 0.0)
+median_abundance = summary.get('median_abundance', 0.0)
+min_value = summary.get('min_value', 0.0)
+max_value = summary.get('max_value', 0.0)
+
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.metric("Proteins/Peptides", f"{summary['n_rows']:,}")
-    st.metric("Samples", summary['n_numeric_cols'])
+    st.metric("Proteins/Peptides", f"{n_rows:,}")
+    st.metric("Samples", n_cols)
 
 with col2:
-    st.metric("Mean Abundance", f"{summary['mean_abundance']:.1f}")
-    st.metric("Median Abundance", f"{summary['median_abundance']:.1f}")
+    st.metric("Mean Abundance", f"{mean_abundance:.1f}")
+    st.metric("Median Abundance", f"{median_abundance:.1f}")
 
 with col3:
-    st.metric("Min Value", f"{summary['min_value']:.2e}")
-    st.metric("Max Value", f"{summary['max_value']:.2e}")
+    st.metric("Min Value", f"{min_value:.2e}")
+    st.metric("Max Value", f"{max_value:.2e}")
 
-# Intensity distribution
+# Intensity distribution note
 with st.expander("Intensity Distribution", expanded=False):
-    intensity_cols = [
-        f"0-{10**1:.0f}",
-        f"{10**1:.0f}-{10**2:.0f}",
-        f"{10**2:.0f}-{10**3:.0f}",
-        f"{10**3:.0f}-{10**4:.0f}",
-        f"{10**4:.0f}+"
-    ]
     st.caption("Note: 1.0 values are treated as missing data (preprocessing artifact)")
 
 st.markdown("---")
