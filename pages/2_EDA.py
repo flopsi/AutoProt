@@ -1,6 +1,6 @@
 """
 pages/2_Visual_EDA.py - VISUAL EXPLORATORY DATA ANALYSIS
-Enhanced normality diagnostics: Shapiro W & p, D'Agostino, Skewness, Kurtosis, Levene's F
+Enhanced normality diagnostics with auto-generated comments
 """
 
 import streamlit as st
@@ -9,6 +9,11 @@ import numpy as np
 import plotly.express as px
 from scipy import stats
 import warnings
+import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).parent.parent))
+from helpers.diagnostics import generate_full_comment, generate_condition_summary
 
 warnings.filterwarnings('ignore')
 
@@ -171,7 +176,7 @@ st.plotly_chart(fig_violin, use_container_width=True)
 # ENHANCED NORMALITY STATISTICS WITH SHAPIRO W AND LEVENE'S F
 # ============================================================================
 
-st.subheader("📈 Sample Statistics with Normality Diagnostics")
+st.subheader("📈 Sample Statistics with Normality Diagnostics & Comments")
 
 # Prepare data for F-test by condition
 log2_df = df_raw[numeric_cols].apply(lambda x: np.log2(x))
@@ -180,7 +185,6 @@ log2_df = log2_df.replace([np.inf, -np.inf], np.nan)
 # Group samples by condition for F-test
 condition_groups = {}
 for col in numeric_cols:
-    # Extract condition (e.g., "A" from "A_R1")
     condition = col.split('_')[0] if '_' in col else col[0]
     if condition not in condition_groups:
         condition_groups[condition] = []
@@ -195,21 +199,22 @@ for col in numeric_cols:
     # Extract condition for this sample
     condition = col.split('_')[0] if '_' in col else col[0]
     
-    # Calculate Levene's F-statistic for this sample against others in same condition
+    # Calculate Levene's F-statistic
     f_stat = np.nan
     f_pvalue = np.nan
     
     if condition in condition_groups and len(condition_groups[condition]) > 1:
-        # Get all samples in this condition
         condition_samples = condition_groups[condition]
         if len(condition_samples) >= 2:
-            # Perform Levene's test for homogeneity of variance
             condition_data = [log2_df[s].dropna() for s in condition_samples]
             try:
                 f_stat, f_pvalue = stats.levene(*condition_data)
             except:
                 f_stat = np.nan
                 f_pvalue = np.nan
+    
+    # Add diagnostic info
+    diag['levene_p'] = f_pvalue
     
     results.append({
         "Sample": col,
@@ -224,14 +229,84 @@ for col in numeric_cols:
         "Kurtosis": diag["kurtosis"],
         "Levene F": f_stat,
         "Levene p": f_pvalue,
-        "Normal?": "✓" if diag["is_normal"] else "✗"
+        "Normal?": "✓" if diag["is_normal"] else "✗",
+        "_diag_dict": diag  # Store for comment generation
     })
 
 results_df = pd.DataFrame(results).round(4)
 
-st.dataframe(results_df, use_container_width=True, hide_index=True)
+# Display main table
+display_df = results_df.drop('_diag_dict', axis=1)
+st.dataframe(display_df, use_container_width=True, hide_index=True)
 
-# Summary statistics
+# ============================================================================
+# AUTO-GENERATED COMMENTS
+# ============================================================================
+
+st.subheader("💡 Intelligent Statistical Comments")
+
+# Create tabs for sample comments
+tab1, tab2 = st.tabs(["Per-Sample Analysis", "Condition Summary"])
+
+with tab1:
+    st.markdown("**Individual sample diagnostics and recommendations:**")
+    
+    for idx, row in results_df.iterrows():
+        with st.expander(f"🔍 {row['Sample']} (Condition: {row['Condition']})"):
+            diag_dict = row['_diag_dict']
+            comments = generate_full_comment(diag_dict, sample_size=int(row['n']))
+            
+            # Display comments
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**📊 Diagnostic:**")
+                st.write(comments['diagnostic'])
+                
+                st.markdown("**📈 Distribution:**")
+                st.write(comments['distribution'])
+            
+            with col2:
+                st.markdown("**⚖️ Variance:**")
+                st.write(comments['variance'])
+            
+            st.markdown("**✅ Recommendations:**")
+            for rec in comments['recommendations']:
+                st.write(rec)
+
+with tab2:
+    st.markdown("**Condition-level summary and quality assessment:**")
+    
+    conditions = results_df['Condition'].unique()
+    
+    for condition in sorted(conditions):
+        cond_df = results_df[results_df['Condition'] == condition]
+        summary = generate_condition_summary(cond_df)
+        
+        with st.expander(f"🏷️ Condition: {condition}"):
+            # Overall assessment
+            status_emoji = "✓" if "READY" in summary['recommendation'] else "⚠️" if "MIXED" in summary['recommendation'] else "❌"
+            st.markdown(f"### {status_emoji} {summary['recommendation']}")
+            
+            # Summary stats
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Normal Samples", f"{summary['normal_pct']:.0f}%")
+            col2.metric("Homogeneous Variance", f"{summary['homogeneous_pct']:.0f}%")
+            col3.metric("Mean Skewness", f"{summary['mean_skewness']:.2f}")
+            
+            st.markdown(summary['summary'])
+            
+            # Detailed breakdown
+            st.markdown("**Sample Breakdown:**")
+            cond_display = cond_df[['Sample', 'n', 'Mean (Log2)', 'Shapiro p', 'Levene p', 'Normal?']].copy()
+            st.dataframe(cond_display, hide_index=True)
+
+# ============================================================================
+# SUMMARY STATISTICS
+# ============================================================================
+
+st.markdown("---")
+
 normal_count = (results_df['Normal?'] == '✓').sum()
 homogeneous_count = (results_df['Levene p'] > 0.05).sum()
 
