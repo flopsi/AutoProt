@@ -35,7 +35,7 @@ def permanova_test(distance_matrix, grouping, permutations=999):
     Parameters:
     -----------
     distance_matrix : array-like
-        Square distance matrix
+        Square distance matrix (dissimilarities)
     grouping : list
         Group labels for each sample
     permutations : int
@@ -45,64 +45,142 @@ def permanova_test(distance_matrix, grouping, permutations=999):
     --------
     dict with 'test statistic', 'p-value', and 'permutations'
     """
+    # Convert to numpy array
+    distance_matrix = np.array(distance_matrix)
+    grouping = np.array(grouping)
     n = len(grouping)
+    
+    if n != distance_matrix.shape[0] or n != distance_matrix.shape[1]:
+        raise ValueError(f"Distance matrix shape {distance_matrix.shape} does not match grouping length {n}")
+    
+    # Get unique groups
     groups = np.unique(grouping)
+    n_groups = len(groups)
     
-    # Calculate total sum of squares
-    total_ss = np.sum(distance_matrix ** 2) / n
+    if n_groups < 2:
+        raise ValueError("Need at least 2 groups for PERMANOVA")
     
-    # Calculate within-group sum of squares
-    within_ss = 0
-    for group in groups:
-        group_indices = [i for i, g in enumerate(grouping) if g == group]
-        group_distances = distance_matrix[np.ix_(group_indices, group_indices)]
-        within_ss += np.sum(group_distances ** 2) / (2 * len(group_indices))
+    # Calculate sum of squared distances
+    def calc_ss(dist_mat, group_labels):
+        """Calculate sum of squares"""
+        total_ss = 0
+        within_ss = 0
+        
+        # Total sum of squares
+        total_ss = np.sum(dist_mat ** 2) / (2 * n)
+        
+        # Within-group sum of squares
+        for group in np.unique(group_labels):
+            group_mask = group_labels == group
+            group_indices = np.where(group_mask)[0]
+            n_group = len(group_indices)
+            
+            if n_group > 1:
+                # Extract submatrix for this group
+                group_dist = dist_mat[np.ix_(group_indices, group_indices)]
+                within_ss += np.sum(group_dist ** 2) / (2 * n_group)
+        
+        between_ss = total_ss - within_ss
+        return total_ss, within_ss, between_ss
     
-    # Calculate between-group sum of squares
-    between_ss = total_ss - within_ss
+    # Calculate observed F-statistic
+    total_ss, within_ss, between_ss = calc_ss(distance_matrix, grouping)
     
-    # Calculate F-statistic
-    df_between = len(groups) - 1
-    df_within = n - len(groups)
+    df_between = n_groups - 1
+    df_within = n - n_groups
     
-    if df_within > 0:
-        f_stat = (between_ss / df_between) / (within_ss / df_within)
-    else:
-        f_stat = 0
+    if within_ss == 0 or df_within == 0:
+        return {
+            'test statistic': np.nan,
+            'p-value': 1.0,
+            'permutations': permutations
+        }
     
-    # Permutation test for p-value
+    # Pseudo-F statistic
+    f_stat = (between_ss / df_between) / (within_ss / df_within)
+    
+    # Permutation test
     perm_f_stats = []
-    grouping_array = np.array(grouping)
+    np.random.seed(42)  # For reproducibility
     
     for _ in range(permutations):
         # Permute group labels
-        perm_grouping = np.random.permutation(grouping_array)
+        perm_grouping = np.random.permutation(grouping)
         
-        # Calculate within-group SS for permuted data
-        perm_within_ss = 0
-        for group in groups:
-            group_indices = [i for i, g in enumerate(perm_grouping) if g == group]
-            if len(group_indices) > 0:
-                group_distances = distance_matrix[np.ix_(group_indices, group_indices)]
-                perm_within_ss += np.sum(group_distances ** 2) / (2 * len(group_indices))
+        # Calculate F-statistic for permuted data
+        _, perm_within_ss, perm_between_ss = calc_ss(distance_matrix, perm_grouping)
         
-        # Calculate permuted F-statistic
-        perm_between_ss = total_ss - perm_within_ss
-        if df_within > 0:
+        if perm_within_ss > 0:
             perm_f_stat = (perm_between_ss / df_between) / (perm_within_ss / df_within)
-        else:
-            perm_f_stat = 0
-        
-        perm_f_stats.append(perm_f_stat)
+            perm_f_stats.append(perm_f_stat)
     
     # Calculate p-value
-    p_value = np.sum(np.array(perm_f_stats) >= f_stat) / permutations
+    if len(perm_f_stats) > 0:
+        p_value = (np.sum(np.array(perm_f_stats) >= f_stat) + 1) / (len(perm_f_stats) + 1)
+    else:
+        p_value = 1.0
     
     return {
         'test statistic': f_stat,
         'p-value': p_value,
         'permutations': permutations
     }
+
+
+def run_permanova(distance_matrix, grouping, title):
+    """Run PERMANOVA test using manual implementation"""
+    try:
+        # Validate inputs
+        if len(distance_matrix) != len(grouping):
+            return {
+                'Dataset': title,
+                'F-statistic': 'Error',
+                'p-value': 'Error',
+                'Significant': 'N/A',
+                'Interpretation': f'Dimension mismatch: distance matrix {len(distance_matrix)}x{len(distance_matrix)}, grouping {len(grouping)}'
+            }
+        
+        # Check for sufficient groups
+        unique_groups = len(set(grouping))
+        if unique_groups < 2:
+            return {
+                'Dataset': title,
+                'F-statistic': 'N/A',
+                'p-value': 'N/A',
+                'Significant': 'N/A',
+                'Interpretation': 'Need at least 2 groups for comparison'
+            }
+        
+        # Run PERMANOVA
+        result = permanova_test(distance_matrix, grouping, permutations=999)
+        
+        # Check for valid results
+        if np.isnan(result['test statistic']):
+            return {
+                'Dataset': title,
+                'F-statistic': 'N/A',
+                'p-value': 'N/A',
+                'Significant': 'N/A',
+                'Interpretation': 'Insufficient variance within groups'
+            }
+        
+        return {
+            'Dataset': title,
+            'F-statistic': f"{result['test statistic']:.4f}",
+            'p-value': f"{result['p-value']:.4f}",
+            'Significant': '✅ Yes' if result['p-value'] < 0.05 else '❌ No',
+            'Interpretation': 'Significant separation between conditions' if result['p-value'] < 0.05 else 'No significant separation'
+        }
+    except Exception as e:
+        import traceback
+        error_msg = str(e)
+        return {
+            'Dataset': title,
+            'F-statistic': 'Error',
+            'p-value': 'Error',
+            'Significant': 'N/A',
+            'Interpretation': f'Error: {error_msg}'
+        }
 
 # ============================================================================
 # PAGE CONFIG
@@ -227,8 +305,6 @@ for condition in conditions:
     ))
 
 # Add KDE overlay for each condition
-from scipy.stats import gaussian_kde
-
 for condition in conditions:
     condition_data = intensity_df[intensity_df['Condition'] == condition]['Log2_Intensity'].values
     
@@ -260,11 +336,6 @@ st.markdown("**Distribution Statistics by Condition**")
 dist_stats = intensity_df.groupby('Condition')['Log2_Intensity'].agg(['mean', 'median', 'std', 'min', 'max'])
 dist_stats.columns = ['Mean', 'Median', 'Std Dev', 'Min', 'Max']
 st.dataframe(dist_stats.round(2), use_container_width=True)
-
-st.markdown("---")
-
-
-# Add this section right after the intensity distribution histogram/KDE section
 
 st.markdown("---")
 
@@ -595,33 +666,6 @@ st.markdown("""
 - **p < 0.05**: Significant separation between conditions
 """)
 
-# Helper function for PERMANOVA
-def run_permanova(distance_matrix, grouping, title):
-    """Run PERMANOVA test"""
-    try:
-        # Create distance matrix
-        from skbio import DistanceMatrix
-        dm = DistanceMatrix(distance_matrix, ids=[str(i) for i in range(len(distance_matrix))])
-        
-        # Run PERMANOVA
-        result = permanova(dm, grouping, permutations=999)
-        
-        return {
-            'Dataset': title,
-            'F-statistic': f"{result['test statistic']:.4f}",
-            'p-value': f"{result['p-value']:.4f}",
-            'Significant': '✅ Yes' if result['p-value'] < 0.05 else '❌ No',
-            'Interpretation': 'Significant separation between conditions' if result['p-value'] < 0.05 else 'No significant separation'
-        }
-    except Exception as e:
-        return {
-            'Dataset': title,
-            'F-statistic': 'Error',
-            'p-value': 'Error',
-            'Significant': 'N/A',
-            'Interpretation': str(e)
-        }
-
 # Calculate distance matrices (Euclidean)
 dist_all = squareform(pdist(scaled_all, metric='euclidean'))
 dist_common = squareform(pdist(scaled_common, metric='euclidean'))
@@ -645,15 +689,15 @@ st.markdown("### 📊 Statistical Interpretation")
 significant_count = sum(1 for r in permanova_results if '✅' in r['Significant'])
 
 if significant_count == 3:
-    st.success("""
+    st.success(f"""
     **Strong Evidence of Condition Separation**: All three protein subsets show statistically significant 
     separation between experimental conditions (PERMANOVA p < 0.05). This indicates that:
     - Biological differences between conditions are captured across the entire proteome
-    - Both major ({}) and minor species contribute to group differences
+    - Both major ({most_common_species}) and minor species contribute to group differences
     - The data quality is sufficient for downstream differential expression analysis
-    """.format(most_common_species))
+    """)
 elif significant_count == 2:
-    st.info("""
+    st.info(f"""
     **Moderate Evidence of Condition Separation**: Two out of three protein subsets show significant 
     separation. This suggests:
     - Major biological differences exist, but may be driven by specific protein subsets
@@ -661,7 +705,7 @@ elif significant_count == 2:
     - Proceed with caution and consider species-stratified analysis
     """)
 elif significant_count == 1:
-    st.warning("""
+    st.warning(f"""
     **Weak Evidence of Condition Separation**: Only one protein subset shows significant separation. 
     Consider:
     - Increasing sample size or biological replicates
@@ -669,7 +713,7 @@ elif significant_count == 1:
     - Re-evaluating experimental design and sample quality
     """)
 else:
-    st.error("""
+    st.error(f"""
     **No Significant Condition Separation**: None of the protein subsets show statistically significant 
     differences. This may indicate:
     - Insufficient biological differences between conditions
@@ -740,7 +784,6 @@ quality_metrics = {
         'Conditions',
         'Most Common Species',
         'Imputation Method',
-        'Mean Sample Correlation',
         'All Proteins - PC1 Variance (%)',
         f'{most_common_species} - PC1 Variance (%)',
         'Other Species - PC1 Variance (%)',
@@ -752,7 +795,6 @@ quality_metrics = {
         f"{len(conditions)} ({', '.join(conditions)})",
         f"{most_common_species} ({species_counts_total[most_common_species]:,} proteins)",
         imputation_method,
-        f"{corr_reordered.values[np.triu_indices_from(corr_reordered.values, k=1)].mean():.3f}",
         f"{var_all[0]:.1f}",
         f"{var_common[0]:.1f}",
         f"{var_rest[0]:.1f}",
