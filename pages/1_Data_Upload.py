@@ -1,6 +1,6 @@
 """
 pages/1_Data_Upload.py - DATA UPLOAD WITH SPECIES FILTER AND RENAMING
-Persistent cache with reset options
+Fixed manual renaming persistence
 """
 
 import streamlit as st
@@ -211,34 +211,45 @@ if rename_style == "smart":
         st.caption(f"... and {len(numerical_cols) - 10} more")
 
 elif rename_style == "manual":
-    # Manual editing
+    # Manual editing with proper persistence
     st.markdown("**Edit sample names:**")
     
-    # Initialize manual mapping if not exists
-    if 'manual_name_mapping' not in st.session_state:
+    # Initialize manual mapping if not exists OR if columns changed
+    if 'manual_name_mapping' not in st.session_state or set(st.session_state.manual_name_mapping.keys()) != set(numerical_cols):
         st.session_state.manual_name_mapping = {col: col for col in numerical_cols}
     
-    # Create editable dataframe
+    # Create editable dataframe from session state
     edit_df = pd.DataFrame({
         'Original': list(numerical_cols),
-        'New Name': [st.session_state.manual_name_mapping.get(col, col) for col in numerical_cols]
+        'New Name': [st.session_state.manual_name_mapping[col] for col in numerical_cols]
     })
+    
+    # Use on_change callback to persist changes immediately
+    def update_manual_mapping():
+        """Callback to update mapping when data_editor changes"""
+        if 'name_editor' in st.session_state:
+            edited = st.session_state['name_editor']
+            if 'edited_rows' in edited and edited['edited_rows']:
+                for idx, changes in edited['edited_rows'].items():
+                    if 'New Name' in changes:
+                        original = edit_df.iloc[idx]['Original']
+                        st.session_state.manual_name_mapping[original] = changes['New Name']
     
     edited_df = st.data_editor(
         edit_df,
         key="name_editor",
         hide_index=True,
         use_container_width=True,
+        on_change=update_manual_mapping,
         column_config={
             "Original": st.column_config.TextColumn("Original", disabled=True),
             "New Name": st.column_config.TextColumn("New Name", help="Edit to rename")
         }
     )
     
-    # Update mapping from edited dataframe
-    name_mapping = dict(zip(edited_df['Original'], edited_df['New Name']))
-    st.session_state.manual_name_mapping = name_mapping
-    numerical_cols_renamed = list(edited_df['New Name'])
+    # Get final mapping from session state (not from edited_df)
+    name_mapping = st.session_state.manual_name_mapping
+    numerical_cols_renamed = [name_mapping[col] for col in numerical_cols]
 
 else:  # "none"
     name_mapping = {col: col for col in numerical_cols}
