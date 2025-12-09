@@ -1,6 +1,6 @@
 """
 pages/1_Data_Upload.py - DATA UPLOAD WITH SPECIES FILTER AND RENAMING
-Fixed manual renaming persistence
+Fixed manual renaming with proper condition extraction
 """
 
 import streamlit as st
@@ -70,6 +70,32 @@ def infer_species_from_text(text: str) -> str:
             return tail
     
     return "Other"
+
+def extract_condition_from_sample(sample_name: str) -> str:
+    """
+    Extract condition letter(s) from sample name.
+    Handles patterns like: A_R1, Cond_A_R2, CondA_R1, etc.
+    """
+    sample_name = str(sample_name).strip()
+    
+    # Try to find condition before replicate (R#)
+    import re
+    
+    # Pattern 1: Something_R# or Something-R#
+    match = re.search(r'([a-zA-Z_]+?)[\-_]?[rR](\d+)', sample_name)
+    if match:
+        return match.group(1).rstrip('_').rstrip('-')
+    
+    # Pattern 2: Just a letter or letters at start
+    match = re.search(r'^([A-Z]+)', sample_name)
+    if match:
+        return match.group(1)
+    
+    # Pattern 3: Something before first underscore
+    if '_' in sample_name:
+        return sample_name.split('_')[0]
+    
+    return sample_name[0] if len(sample_name) > 0 else "Unknown"
 
 # ============================================================================
 # SESSION STATE INITIALIZATION
@@ -258,6 +284,14 @@ else:  # "none"
 st.session_state.name_mapping = name_mapping
 st.session_state.numerical_cols_renamed = numerical_cols_renamed
 
+# Extract conditions from renamed columns
+conditions_mapping = {}
+for orig_col, renamed_col in name_mapping.items():
+    condition = extract_condition_from_sample(renamed_col)
+    conditions_mapping[renamed_col] = condition
+
+st.session_state.conditions_mapping = conditions_mapping
+
 st.markdown("---")
 
 # ============================================================================
@@ -373,6 +407,9 @@ df_filtered = df_pandas[df_pandas['__SPECIES__'].isin(selected_species)].copy()
 # Rename numerical columns
 df_filtered = df_filtered.rename(columns=name_mapping)
 
+# Add condition column based on RENAMED column names
+df_filtered['__CONDITION__'] = df_filtered.columns[[col in numerical_cols_renamed for col in df_filtered.columns]].map(lambda x: conditions_mapping.get(x, "Unknown"))
+
 st.success(f"✅ {len(df_filtered):,} rows after species filter")
 
 species_counts = df_filtered['__SPECIES__'].value_counts()
@@ -397,6 +434,8 @@ if confirm:
         st.session_state.df_raw = df_filtered
         st.session_state.numeric_cols = numerical_cols_renamed
         st.session_state.species_col = '__SPECIES__'
+        st.session_state.condition_col = '__CONDITION__'
+        st.session_state.conditions_mapping = conditions_mapping
         st.session_state.data_ready = True
         
         st.success("✅ Data uploaded successfully! Proceed to **📊 Visual EDA**")
@@ -423,7 +462,7 @@ def reset_current_page():
         'file_hash', 'metadata_cols', 'numerical_cols', 'selected_species',
         'df_raw', 'numeric_cols', 'id_col', 'species_col', 'data_type',
         'replicates_per_condition', 'data_ready', 'rename_style', 
-        'manual_name_mapping', 'rename_style_index'
+        'manual_name_mapping', 'rename_style_index', 'conditions_mapping'
     ]
     for key in keys_to_delete:
         if key in st.session_state:
