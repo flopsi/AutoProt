@@ -23,21 +23,6 @@ st.set_page_config(
 )
 
 # ============================================================================
-# RESET FUNCTIONS
-# ============================================================================
-
-def reset_all():
-    """Clear all session state and restart from upload page"""
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-    st.switch_page("pages/1_Data_Upload.py")
-
-def reset_current_page():
-    """Clear only current page's cached data"""
-    st.cache_data.clear()
-    st.rerun()
-
-# ============================================================================
 # NORMALITY DIAGNOSTICS
 # ============================================================================
 
@@ -106,19 +91,10 @@ def normality_diagnostics(values: pd.Series) -> dict:
     }
 
 # ============================================================================
-# HEADER WITH RESET BUTTONS
+# HEADER
 # ============================================================================
 
 st.title("📊 Visual Exploratory Data Analysis")
-
-col1, col2, col3 = st.columns([3, 1, 1])
-with col2:
-    if st.button("🔄 Reset Page", help="Clear this page's cache and restart"):
-        reset_current_page()
-with col3:
-    if st.button("🗑️ Reset All", help="Clear everything and start over", type="secondary"):
-        reset_all()
-
 st.markdown("Log2 intensity distribution by sample")
 st.markdown("---")
 
@@ -223,3 +199,29 @@ st.markdown("---")
 st.caption("💡 **Normality Tests:** Shapiro-Wilk (all n), D'Agostino-Pearson (n≥8) | **Thresholds:** p > 0.05 = normal")
 st.caption("💡 **Skewness:** 0 = symmetric, >0 = right-skewed, <0 = left-skewed")
 st.caption("💡 **Kurtosis:** 0 = normal, >0 = heavy-tailed, <0 = light-tailed")
+
+st.markdown("---")
+st.markdown("---")
+
+# ============================================================================
+# RESET BUTTONS (BOTTOM)
+# ============================================================================
+
+def reset_all():
+    """Clear all session state and restart from upload page"""
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.switch_page("pages/1_Data_Upload.py")
+
+def reset_current_page():
+    """Clear only current page's cached data"""
+    st.cache_data.clear()
+    st.rerun()
+
+col1, col2, col3 = st.columns([3, 1, 1])
+with col2:
+    if st.button("🔄 Reset Page", help="Clear this page's cache and restart", key="reset_page_bottom"):
+        reset_current_page()
+with col3:
+    if st.button("🗑️ Reset All", help="Clear everything and start over", type="secondary", key="reset_all_bottom"):
+        reset_all()
