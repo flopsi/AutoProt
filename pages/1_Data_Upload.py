@@ -467,52 +467,7 @@ if st.session_state.data_type == 'peptide':
 else:
     sequence_col = None
 
-# Show species preview if selected
-if species_col:
-    with col2:
-            # Perform inference
-            df_pandas_temp = df_filtered.to_pandas()
-            inferred_species = df_pandas_temp[source_col].apply(infer_species_from_protein_name)
-            
-            # Show preview
-            preview_df = pd.DataFrame({
-                'Protein Name': df_pandas_temp[source_col].head(10),
-                'Inferred Species': inferred_species.head(10)
-            })
-            st.dataframe(preview_df, use_container_width=True, height=250)
-            
-            # Add inferred species column
-            df_filtered = df_filtered.with_columns([
-                pl.Series("Inferred_Species", inferred_species.tolist())
-            ])
-            
-            # Update species_col if not set
-            if species_col is None:
-                species_col = "Inferred_Species"
-                st.success("✓ Added 'Inferred_Species' column")
-            else:
-                st.info(f"✓ Added 'Inferred_Species' column (current species column: {species_col})")
-    
-    with col_chart:
-        st.write("**Distribution:**")
-        
-        import altair as alt
-        
-        # Create color mapping
-        species_list = species_counts['Species'].tolist()
-        colors = get_species_colors(species_list, theme=st.session_state.theme)
-        color_scale = alt.Scale(domain=species_list, range=colors)
-        
-        # Create Altair bar chart
-        chart = alt.Chart(species_counts).mark_bar().encode(
-            x=alt.X('Species:N', title='Species'),
-            y=alt.Y('Count:Q', title='Count'),
-            color=alt.Color('Species:N', scale=color_scale, legend=None)
-        ).properties(width=300, height=250)
-        
-        st.altair_chart(chart, use_container_width=True)
 
-st.markdown("---")
 
 # ============================================================================
 # SPECIES INFERENCE
