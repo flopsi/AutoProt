@@ -385,7 +385,7 @@ with col3:
             'Original': list(name_mapping.keys()),
             'Renamed': list(name_mapping.values())
         })
-        st.dataframe(mapping_df, use_container_width=True, height=200)
+        st.dataframe(mapping_df, width=True, height=200)
         
         # Store mapping
         st.session_state.column_mapping = name_mapping
@@ -477,7 +477,7 @@ preview_df = pd.DataFrame({
     'Protein Name': df_pandas_temp[species_col].head(10),
     'Inferred Species': inferred_species.head(10)
 })
-st.dataframe(preview_df, use_container_width=True, height=250)
+st.dataframe(preview_df, width=True, height=250)
 
 # Add inferred species column
 df_filtered = df_filtered.with_columns([
@@ -541,7 +541,7 @@ with st.expander("📊 Data Preview", expanded=False):
     
     col1, col2 = st.columns([2, 1])
     with col1:
-        st.dataframe(df_filtered.head(preview_rows).to_pandas(), use_container_width=True, height=400)
+        st.dataframe(df_filtered.head(preview_rows).to_pandas(), width=True, height=400)
     
     with col2:
         st.write("**Column Info:**")
@@ -550,7 +550,7 @@ with st.expander("📊 Data Preview", expanded=False):
             'Type': [str(dtype) for dtype in df_filtered.dtypes],
             'Non-Null': [len(df_filtered) - df_filtered[col].null_count() for col in df_filtered.columns]
         })
-        st.dataframe(col_info, use_container_width=True, height=400)
+        st.dataframe(col_info, width=True, height=400)
 
 st.markdown("---")
 
@@ -607,7 +607,7 @@ st.markdown("---")
 if st.button(
     f"🚀 Upload {st.session_state.data_type.upper()} Data",
     type="primary",
-    use_container_width=True,
+    width=True,
     disabled=not all_passed
 ):
     with st.spinner(f"Processing {st.session_state.data_type} data..."):
