@@ -137,7 +137,19 @@ df_long = df_raw.melt(
 )
 
 df_long['Log2_Intensity'] = np.log2(df_long['Intensity'])
-df_long['Condition'] = df_long['Sample'].str.extract(r'^([A-Z]+)', expand=False)
+
+# REPLACE WITH:
+
+# Use pre-computed conditions if available, otherwise extract
+if 'sample_to_condition' in st.session_state:
+    df_long['Condition'] = df_long['Sample'].map(st.session_state.sample_to_condition)
+else:
+    # Fallback: extract from sample name
+    import re
+    df_long['Condition'] = df_long['Sample'].apply(
+        lambda x: re.search(r'^([A-Z]+)', str(x)).group(1) if re.search(r'^([A-Z]+)', str(x)) else "Unknown"
+    )
+
 
 # ============================================================================
 # VIOLIN PLOT
