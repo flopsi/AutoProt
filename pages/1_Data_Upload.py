@@ -469,25 +469,30 @@ else:
 
 # Show species preview if selected
 if species_col:
-    st.markdown("---")
-    st.write("**Species Preview:**")
-    
-    df_pandas_temp = df_filtered.to_pandas()
-    species_values = df_pandas_temp[species_col]
-    species_counts = species_values.value_counts().reset_index()
-    species_counts.columns = ['Species', 'Count']
-    
-    # Sort for consistent ordering
-    species_counts = species_counts.sort_values('Species')
-    
-    col_preview, col_chart = st.columns([2, 1])
-    
-    with col_preview:
+    with col2:
+    if infer_species:
+        # Perform inference
+        df_pandas_temp = df_filtered.to_pandas()
+        inferred_species = df_pandas_temp[source_col].apply(infer_species_from_protein_name)
+        
+        # Show preview
         preview_df = pd.DataFrame({
-            'Sample': range(1, min(11, len(df_pandas_temp) + 1)),
-            'Species': species_values.head(10).values
+            'Protein Name': df_pandas_temp[source_col].head(10),
+            'Inferred Species': inferred_species.head(10)
         })
-        st.dataframe(preview_df, use_container_width=True, height=200)
+        st.dataframe(preview_df, use_container_width=True, height=250)
+        
+        # Add inferred species column
+        df_filtered = df_filtered.with_columns([
+            pl.Series("Inferred_Species", inferred_species.tolist())
+        ])
+        
+        # Update species_col if not set
+        if species_col is None:
+            species_col = "Inferred_Species"
+            st.success("✓ Added 'Inferred_Species' column")
+        else:
+            st.info(f"✓ Added 'Inferred_Species' column (current species column: {species_col})")
     
     with col_chart:
         st.write("**Distribution:**")
