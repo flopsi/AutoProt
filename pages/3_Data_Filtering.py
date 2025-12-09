@@ -35,7 +35,8 @@ if 'df_raw' not in st.session_state or st.session_state.df_raw is None:
     st.error("❌ No data uploaded. Please start with **📁 Data Upload**")
     st.stop()
 
-df = st.session_state.df_raw.copy()
+# Convert to pandas for easier manipulation
+df = st.session_state.df_raw.to_pandas() if isinstance(st.session_state.df_raw, pl.DataFrame) else st.session_state.df_raw.copy()
 numeric_cols = st.session_state.numeric_cols
 species_col = st.session_state.species_col
 sample_to_condition = st.session_state.get('sample_to_condition', {})
@@ -72,7 +73,7 @@ if contaminant_cols:
         for col in contaminant_cols:
             if 'contaminant' in col.lower():
                 initial = len(df_qc)
-                df_qc = df_qc.filter(df_qc[col] != '+')
+                df_qc = df_qc[df_qc[col] != '+']
                 removed_qc += initial - len(df_qc)
     
     remove_reverse = col2.checkbox(
@@ -85,7 +86,7 @@ if contaminant_cols:
         for col in contaminant_cols:
             if 'reverse' in col.lower():
                 initial = len(df_qc)
-                df_qc = df_qc.filter(df_qc[col] != '+')
+                df_qc = df_qc[df_qc[col] != '+']
                 removed_qc += initial - len(df_qc)
     
     remove_only_site = col3.checkbox(
@@ -98,7 +99,7 @@ if contaminant_cols:
         for col in contaminant_cols:
             if 'only' in col.lower() and 'site' in col.lower():
                 initial = len(df_qc)
-                df_qc = df_qc.filter(df_qc[col] != '+')
+                df_qc = df_qc[df_qc[col] != '+']
                 removed_qc += initial - len(df_qc)
     
     st.success(f"✅ Removed {removed_qc:,} rows ({removed_qc/len(df)*100:.1f}%)")
@@ -131,7 +132,7 @@ removed_pep = 0
 if peptide_cols:
     pep_col = [c for c in peptide_cols if 'unique' in c.lower()][0] if any('unique' in c.lower() for c in peptide_cols) else peptide_cols[0]
     initial = len(df_qc)
-    df_qc = df_qc.filter(pl.col(pep_col) >= min_peptides)
+    df_qc = df_qc[pd.to_numeric(df_qc[pep_col], errors='coerce') >= min_peptides]
     removed_pep = initial - len(df_qc)
     st.success(f"✅ Removed {removed_pep:,} rows ({removed_pep/initial*100:.1f}%)")
     st.caption(f"Filter: {pep_col} ≥ {min_peptides}")
@@ -176,7 +177,7 @@ st.markdown("**Missing Value Statistics**")
 
 missing_stats = []
 for col in numeric_cols:
-    n_missing = df_qc[col].is_null().sum()
+    n_missing = df_qc[col].isna().sum()
     pct_missing = n_missing / len(df_qc) * 100 if len(df_qc) > 0 else 0
     missing_stats.append({
         'Sample': col,
@@ -189,7 +190,7 @@ stats_df = pd.DataFrame(missing_stats)
 col2.dataframe(stats_df, hide_index=True, use_container_width=True)
 
 # Apply per-group missing value filter
-df_filtered = df_qc.clone()
+df_filtered = df_qc.copy()
 valid_threshold_frac = valid_threshold / 100
 
 # Group samples by condition
@@ -204,16 +205,22 @@ for sample, condition in sample_to_condition.items():
 rows_to_keep = []
 for idx in range(len(df_filtered)):
     keep = False
-    for condition, samples in condition_samples.items():
-        valid_count = sum(1 for s in samples if df_filtered[s][idx].is_not_null())
-        if valid_count >= len(samples) * valid_threshold_frac:
-            keep = True
-            break
+    if condition_samples:
+        for condition, samples in condition_samples.items():
+            valid_count = sum(1 for s in samples if pd.notna(df_filtered.iloc[idx][s]))
+            if valid_count >= len(samples) * valid_threshold_frac:
+                keep = True
+                break
+    else:
+        # No conditions, use global threshold
+        valid_count = sum(1 for s in numeric_cols if pd.notna(df_filtered.iloc[idx][s]))
+        keep = valid_count >= len(numeric_cols) * valid_threshold_frac
+    
     if keep:
         rows_to_keep.append(idx)
 
 initial_filtered = len(df_filtered)
-df_filtered = df_filtered[rows_to_keep]
+df_filtered = df_filtered.iloc[rows_to_keep].reset_index(drop=True)
 removed_mv = initial_filtered - len(df_filtered)
 
 st.success(f"✅ Removed {removed_mv:,} rows ({removed_mv/initial_filtered*100:.1f}%)")
@@ -250,10 +257,8 @@ cv_threshold = st.slider(
 
 removed_cv = 0
 
-if apply_cv:
-    # Calculate CV per condition
-    df_cv = df_filtered.clone()
-    df_cv = df_cv.to_pandas()
+if apply_cv and condition_samples:
+    df_cv = df_filtered.copy()
     
     cv_summary = []
     rows_to_keep_cv = set(range(len(df_cv)))
@@ -262,7 +267,12 @@ if apply_cv:
         valid_samples = [s for s in samples if s in numeric_cols]
         if len(valid_samples) >= 3:  # Need at least 3 replicates for CV
             for idx in range(len(df_cv)):
-                values = df_cv.loc[idx, valid_samples].dropna()
+                values = pd.to_numeric(
+                    [df_cv.iloc[idx][s] for s in valid_samples],
+                    errors='coerce'
+                )
+                values = values.dropna()
+                
                 if len(values) >= 2:
                     mean_val = values.mean()
                     if mean_val > 0:
@@ -277,7 +287,7 @@ if apply_cv:
                         if cv > cv_threshold:
                             rows_to_keep_cv.discard(idx)
     
-    df_filtered = df_filtered[[i in rows_to_keep_cv for i in range(len(df_filtered))]]
+    df_filtered = df_filtered.iloc[list(rows_to_keep_cv)].reset_index(drop=True)
     removed_cv = initial_filtered - len(df_filtered)
     
     if cv_summary:
@@ -291,6 +301,8 @@ if apply_cv:
         st.success(f"✅ Removed {removed_cv:,} rows with CV > {cv_threshold}% ({removed_cv/initial_filtered*100:.1f}%)")
     else:
         st.info("ℹ️ Not enough replicates per condition for CV calculation")
+else:
+    st.info("ℹ️ CV filter skipped (need ≥3 replicates per condition)")
 
 st.markdown("---")
 
@@ -307,12 +319,10 @@ st.markdown("""
 """)
 
 # Show sample statistics
-df_numeric = df_filtered[numeric_cols].to_pandas()
-
-st.write("**Sample Intensity Statistics (log2)**")
+st.write("**Sample Intensity Statistics**")
 sample_stats = []
 for col in numeric_cols:
-    valid_vals = pd.to_numeric(df_numeric[col], errors='coerce').dropna()
+    valid_vals = pd.to_numeric(df_filtered[col], errors='coerce').dropna()
     if len(valid_vals) > 0:
         sample_stats.append({
             'Sample': col,
@@ -416,7 +426,7 @@ report_text = f"""
 
 ## Quality Metrics
 - **Missing data per sample**: {stats_df['Missing %'].str.rstrip('%').astype(float).mean():.1f}% (mean)
-- **Sample coverage**: {(df_filtered[numeric_cols].count() / len(df_filtered) * 100).mean():.1f}%
+- **Sample coverage**: {(df_filtered[numeric_cols].notna().sum(axis=0) / len(df_filtered) * 100).mean():.1f}%
 
 ## Recommendations for Next Steps
 1. Normalize data (median normalization recommended)
@@ -449,8 +459,11 @@ confirm = st.checkbox("I confirm the filtering parameters and QC results")
 
 if confirm:
     if st.button("💾 Save Filtered Data", type="primary"):
+        # Convert back to polars if needed
+        df_filtered_pl = pl.from_pandas(df_filtered)
+        
         # Save to session state
-        st.session_state.df_filtered = df_filtered
+        st.session_state.df_filtered = df_filtered_pl
         st.session_state.df_numeric_filtered = df_filtered[numeric_cols]
         st.session_state.filtering_report = report_text
         st.session_state.filtering_complete = True
