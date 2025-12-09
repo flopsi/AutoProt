@@ -50,19 +50,7 @@ def reset_current_page():
 
 st.title("📁 Data Upload")
 
-col1, col2, col3 = st.columns([3, 1, 1])
-with col2:
-    if st.button("🔄 Reset Page", help="Clear this page and restart"):
-        reset_current_page()
-with col3:
-    if st.button("🗑️ Reset All", help="Clear everything and start over", type="secondary"):
-        reset_all()
 
-st.markdown("---")
-
-# ============================================================================
-# CACHED FUNCTIONS
-# ============================================================================
 
 @st.cache_data(show_spinner=False, persist="disk")
 def load_csv_file(file_bytes: bytes) -> pl.DataFrame:
@@ -383,3 +371,14 @@ if confirm:
         st.balloons()
 else:
     st.info("👆 Check the box to enable upload")
+
+col1, col2, col3 = st.columns([3, 1, 1])
+with col2:
+    if st.button("🔄 Reset Page", help="Clear this page and restart"):
+        reset_current_page()
+with col3:
+    if st.button("🗑️ Reset All", help="Clear everything and start over", type="secondary"):
+        reset_all()
+
+st.markdown("---")
+
