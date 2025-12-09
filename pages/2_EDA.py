@@ -75,14 +75,7 @@ with st.sidebar:
     plot_section = st.radio(
         "Select visualization:",
         options=[
-            "Distribution",
-            "Box & Violin",
-            "Transformations",
-            "Q-Q Plots",
-            "PCA",
-            "t-SNE",
-            "Heatmap",
-            "Missing Data"
+            "Violin Plot"
         ],
         key="plot_section"
     )
