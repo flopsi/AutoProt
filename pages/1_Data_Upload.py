@@ -23,34 +23,15 @@ st.set_page_config(
 )
 
 # ============================================================================
-# RESET FUNCTIONS
-# ============================================================================
-
-def reset_all():
-    """Clear all session state and restart from upload page"""
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-    st.rerun()
-
-def reset_current_page():
-    """Clear only current page's session state"""
-    keys_to_delete = [
-        'file_hash', 'metadata_cols', 'numerical_cols', 'selected_species',
-        'df_raw', 'numeric_cols', 'id_col', 'species_col', 'data_type',
-        'replicates_per_condition', 'data_ready', 'rename_style'
-    ]
-    for key in keys_to_delete:
-        if key in st.session_state:
-            del st.session_state[key]
-    st.rerun()
-
-# ============================================================================
-# HEADER WITH RESET BUTTONS
+# HEADER
 # ============================================================================
 
 st.title("📁 Data Upload")
+st.markdown("---")
 
-
+# ============================================================================
+# CACHED FUNCTIONS
+# ============================================================================
 
 @st.cache_data(show_spinner=False, persist="disk")
 def load_csv_file(file_bytes: bytes) -> pl.DataFrame:
@@ -197,29 +178,69 @@ st.subheader("3️⃣ Rename Sample Columns")
 
 rename_style = st.selectbox(
     "Renaming strategy:",
-    options=["none", "smart"],
+    options=["none", "smart", "manual"],
     format_func=lambda x: {
         "none": "Keep original names",
-        "smart": "Auto-detect condition/replicate (e.g., CondA_R1)"
+        "smart": "Auto-detect condition/replicate (e.g., CondA_R1)",
+        "manual": "Manual override (edit below)"
     }[x],
+    index=st.session_state.get('rename_style_index', 0),
     key="rename_style_select",
-    help="Smart: Auto-detects patterns like A1→A_R1, Sample01→Sample_R1"
+    help="Smart: Auto-detects patterns | Manual: Edit each name individually"
 )
 
+# Store index for persistence
+rename_options = ["none", "smart", "manual"]
+st.session_state.rename_style_index = rename_options.index(rename_style)
 st.session_state.rename_style = rename_style
 
-if rename_style != "none":
-    # Generate mapping using smart standardization
+if rename_style == "smart":
+    # Auto-generate mapping
     name_mapping = standardize_condition_names(list(numerical_cols))
     numerical_cols_renamed = [name_mapping[col] for col in numerical_cols]
     
     # Show preview
+    st.markdown("**Auto-detected names:**")
     preview_df = pd.DataFrame({
-        'Original': list(numerical_cols)[:5],
-        'Renamed': [name_mapping[col] for col in list(numerical_cols)[:5]]
+        'Original': list(numerical_cols)[:10],
+        'Renamed': [name_mapping[col] for col in list(numerical_cols)[:10]]
     })
     st.dataframe(preview_df, hide_index=True)
-else:
+    
+    if len(numerical_cols) > 10:
+        st.caption(f"... and {len(numerical_cols) - 10} more")
+
+elif rename_style == "manual":
+    # Manual editing
+    st.markdown("**Edit sample names:**")
+    
+    # Initialize manual mapping if not exists
+    if 'manual_name_mapping' not in st.session_state:
+        st.session_state.manual_name_mapping = {col: col for col in numerical_cols}
+    
+    # Create editable dataframe
+    edit_df = pd.DataFrame({
+        'Original': list(numerical_cols),
+        'New Name': [st.session_state.manual_name_mapping.get(col, col) for col in numerical_cols]
+    })
+    
+    edited_df = st.data_editor(
+        edit_df,
+        key="name_editor",
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Original": st.column_config.TextColumn("Original", disabled=True),
+            "New Name": st.column_config.TextColumn("New Name", help="Edit to rename")
+        }
+    )
+    
+    # Update mapping from edited dataframe
+    name_mapping = dict(zip(edited_df['Original'], edited_df['New Name']))
+    st.session_state.manual_name_mapping = name_mapping
+    numerical_cols_renamed = list(edited_df['New Name'])
+
+else:  # "none"
     name_mapping = {col: col for col in numerical_cols}
     numerical_cols_renamed = list(numerical_cols)
 
@@ -372,13 +393,36 @@ if confirm:
 else:
     st.info("👆 Check the box to enable upload")
 
-col1, col2, col3 = st.columns([3, 1, 1])
-with col2:
-    if st.button("🔄 Reset Page", help="Clear this page and restart"):
-        reset_current_page()
-with col3:
-    if st.button("🗑️ Reset All", help="Clear everything and start over", type="secondary"):
-        reset_all()
-
+st.markdown("---")
 st.markdown("---")
 
+# ============================================================================
+# RESET BUTTONS (BOTTOM)
+# ============================================================================
+
+def reset_all():
+    """Clear all session state and restart from upload page"""
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun()
+
+def reset_current_page():
+    """Clear only current page's session state"""
+    keys_to_delete = [
+        'file_hash', 'metadata_cols', 'numerical_cols', 'selected_species',
+        'df_raw', 'numeric_cols', 'id_col', 'species_col', 'data_type',
+        'replicates_per_condition', 'data_ready', 'rename_style', 
+        'manual_name_mapping', 'rename_style_index'
+    ]
+    for key in keys_to_delete:
+        if key in st.session_state:
+            del st.session_state[key]
+    st.rerun()
+
+col1, col2, col3 = st.columns([3, 1, 1])
+with col2:
+    if st.button("🔄 Reset Page", help="Clear this page and restart", key="reset_page_bottom"):
+        reset_current_page()
+with col3:
+    if st.button("🗑️ Reset All", help="Clear everything and start over", type="secondary", key="reset_all_bottom"):
+        reset_all()
