@@ -1,6 +1,6 @@
 """
 pages/2_Visual_EDA.py - VISUAL EXPLORATORY DATA ANALYSIS
-Enhanced normality diagnostics: Shapiro, D'Agostino, Skewness, Kurtosis
+Enhanced normality diagnostics: Shapiro, D'Agostino, Skewness, Kurtosis, F-statistic
 """
 
 import streamlit as st
@@ -111,6 +111,7 @@ numeric_cols = st.session_state.numeric_cols
 id_col = st.session_state.id_col
 species_col = st.session_state.species_col
 data_type = st.session_state.data_type
+replicates_per_condition = st.session_state.replicates_per_condition
 
 st.success(f"✅ Loaded {data_type} data: {len(df_raw):,} rows × {len(numeric_cols)} samples")
 st.markdown("---")
@@ -163,20 +164,52 @@ fig_violin.update_layout(
 st.plotly_chart(fig_violin, use_container_width=True)
 
 # ============================================================================
-# ENHANCED NORMALITY STATISTICS
+# ENHANCED NORMALITY STATISTICS WITH F-STATISTIC
 # ============================================================================
 
 st.subheader("📈 Sample Statistics with Normality Diagnostics")
 
+# Prepare data for F-test by condition
+log2_df = df_raw[numeric_cols].apply(lambda x: np.log2(x))
+log2_df = log2_df.replace([np.inf, -np.inf], np.nan)
+
+# Group samples by condition for F-test
+condition_groups = {}
+for col in numeric_cols:
+    # Extract condition (e.g., "A" from "A_R1")
+    condition = col.split('_')[0] if '_' in col else col[0]
+    if condition not in condition_groups:
+        condition_groups[condition] = []
+    condition_groups[condition].append(col)
+
 results = []
 for col in numeric_cols:
-    log2_values = np.log2(df_raw[col])
-    log2_values = log2_values[np.isfinite(log2_values)]
+    log2_values = log2_df[col].dropna()
     
     diag = normality_diagnostics(log2_values)
     
+    # Extract condition for this sample
+    condition = col.split('_')[0] if '_' in col else col[0]
+    
+    # Calculate F-statistic for this sample against others in same condition
+    f_stat = np.nan
+    f_pvalue = np.nan
+    
+    if condition in condition_groups and len(condition_groups[condition]) > 1:
+        # Get all samples in this condition
+        condition_samples = condition_groups[condition]
+        if len(condition_samples) >= 2:
+            # Perform Levene's test for homogeneity of variance
+            condition_data = [log2_df[s].dropna() for s in condition_samples]
+            try:
+                f_stat, f_pvalue = stats.levene(*condition_data)
+            except:
+                f_stat = np.nan
+                f_pvalue = np.nan
+    
     results.append({
         "Sample": col,
+        "Condition": condition,
         "n": diag["n"],
         "Mean (Log2)": log2_values.mean(),
         "Std (Log2)": log2_values.std(),
@@ -184,6 +217,8 @@ for col in numeric_cols:
         "DAgostino p": diag["dagostino_p"],
         "Skewness": diag["skewness"],
         "Kurtosis": diag["kurtosis"],
+        "F-statistic": f_stat,
+        "F p-value": f_pvalue,
         "Normal?": "✓" if diag["is_normal"] else "✗"
     })
 
@@ -191,12 +226,19 @@ results_df = pd.DataFrame(results).round(4)
 
 st.dataframe(results_df, use_container_width=True, hide_index=True)
 
-# Summary
+# Summary statistics
 normal_count = (results_df['Normal?'] == '✓').sum()
-st.info(f"🔬 **Normality Summary:** {normal_count}/{len(results_df)} samples pass normality tests (Shapiro & D'Agostino p > 0.05)")
+homogeneous_count = (results_df['F p-value'] > 0.05).sum()
+
+col1, col2 = st.columns(2)
+with col1:
+    st.info(f"🔬 **Normality:** {normal_count}/{len(results_df)} samples pass (Shapiro & D'Agostino p > 0.05)")
+with col2:
+    st.info(f"📊 **Homogeneity:** {homogeneous_count}/{len(results_df)} samples pass variance test (Levene p > 0.05)")
 
 st.markdown("---")
 st.caption("💡 **Normality Tests:** Shapiro-Wilk (all n), D'Agostino-Pearson (n≥8) | **Thresholds:** p > 0.05 = normal")
+st.caption("💡 **F-statistic:** Levene's test for equal variances within condition | p > 0.05 = homogeneous variance")
 st.caption("💡 **Skewness:** 0 = symmetric, >0 = right-skewed, <0 = left-skewed")
 st.caption("💡 **Kurtosis:** 0 = normal, >0 = heavy-tailed, <0 = light-tailed")
 
