@@ -143,7 +143,7 @@ try:
         logger.info(f"File loaded: {df_raw.shape}")
         
         with st.expander("Preview First 5 Rows", expanded=False):
-            st.dataframe(df_raw.head(5), use_container_width=True)
+            st.dataframe(df_raw.head(5), width="stretch")
 
 except Exception as e:
     st.error(f"❌ Error loading file: {str(e)}")
@@ -352,7 +352,7 @@ with col3:
         st.metric("Mean Abundance", f"{mean_val:.1f}")
 
 with st.expander("View Filtered Data", expanded=False):
-    st.dataframe(df_filtered.head(10), use_container_width=True)
+    st.dataframe(df_filtered.head(10), width="stretch")
 
 st.markdown("---")
 
@@ -415,7 +415,7 @@ else:
         'Inferred Species': inferred_species.head(10)
     })
     
-    st.dataframe(preview_df, use_container_width=True, hide_index=True)
+    st.dataframe(preview_df, width="stretch", hide_index=True)
     
     # Show distribution
     species_counts = inferred_species.value_counts()
@@ -503,7 +503,7 @@ confirm = st.checkbox(
 )
 
 if confirm:
-    if st.button("🚀 Upload & Proceed", type="primary", use_container_width=True):
+    if st.button("🚀 Upload & Proceed", type="primary", width="stretch"):
         try:
             with st.spinner("Processing data..."):
                 # Convert 1.0 to NaN (preprocessing artifact)
