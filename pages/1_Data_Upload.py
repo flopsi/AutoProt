@@ -470,11 +470,11 @@ else:
 
 # Perform inference
 df_pandas_temp = df_filtered.to_pandas()
-inferred_species = df_pandas_temp[source_col].apply(infer_species_from_protein_name)
+inferred_species = df_pandas_temp[species_col].apply(infer_species_from_protein_name)
 
 # Show preview
 preview_df = pd.DataFrame({
-    'Protein Name': df_pandas_temp[source_col].head(10),
+    'Protein Name': df_pandas_temp[species_col].head(10),
     'Inferred Species': inferred_species.head(10)
 })
 st.dataframe(preview_df, use_container_width=True, height=250)
