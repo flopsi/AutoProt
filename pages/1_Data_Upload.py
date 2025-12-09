@@ -1,38 +1,39 @@
 """
-pages/1_Data_Upload.py - ENHANCED WITH COLUMN DROPPING & INTELLIGENT RENAMING
-VERSION 3: Fixed species/protein name handling when they're in same column
+pages/1_Data_Upload.py - FINAL VERSION
+Unified data upload with column selection, intelligent renaming, and working species detection
 
-Advanced data upload with:
-- Smart column selection (keep/drop metadata columns)
+Advanced features:
+- Smart column selection (keep/drop metadata and samples)
 - Intelligent column renaming (trim, extract, auto-generate)
-- Ability to extract species from protein names (e.g., NUD4B_HUMAN -> NUD4B + HUMAN)
-- Variable file format support
-- Species inference from protein names
+- Working species inference from protein names
+- Polars for efficient data handling
 - Direct column manipulation
 """
 
 import streamlit as st
+import polars as pl
 import pandas as pd
 import numpy as np
 from pathlib import Path
-import logging
+from typing import Tuple, Optional, List, Dict
+import gc
 import re
-from typing import Dict, List, Tuple
 
-from helpers.io import load_csv, load_excel, detect_numeric_columns, validate_dataframe, check_duplicates, check_missing_data, convert_string_numbers_to_float
 from helpers.core import ProteinData, PeptideData
-from helpers.analysis import detect_conditions_from_columns, create_condition_mapping
 
-logger = logging.getLogger(__name__)
+# ============================================================================
+# PAGE CONFIG
+# ============================================================================
 
 st.set_page_config(
     page_title="Data Upload - AutoProt",
     page_icon="📁",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 st.title("📁 Data Upload & Configuration")
-st.caption("Load, validate, configure, and rename your proteomics data")
+st.markdown("Load, validate, configure, and rename your proteomics data")
 
 if "upload_step" not in st.session_state:
     st.session_state.upload_step = 1
@@ -42,11 +43,32 @@ if "upload_step" not in st.session_state:
 # HELPER FUNCTIONS
 # ============================================================================
 
+def longest_common_prefix(strings: list) -> str:
+    """Find longest common prefix from list of strings."""
+    if not strings:
+        return ""
+    s1, s2 = min(strings), max(strings)
+    for i, (c1, c2) in enumerate(zip(s1, s2)):
+        if c1 != c2:
+            return s1[:i]
+    return s1
+
+
+def generate_default_column_names(n_cols: int, replicates_per_condition: int = 2) -> list:
+    """Generate default names: A1, A2, B1, B2, etc."""
+    names = []
+    for i in range(n_cols):
+        condition_idx = i // replicates_per_condition
+        replicate_num = (i % replicates_per_condition) + 1
+        condition_letter = chr(ord('A') + condition_idx)
+        names.append(f"{condition_letter}{replicate_num}")
+    return names
+
+
 def infer_species_from_protein_name(name: str) -> str:
     """Extract species from protein name (e.g., 'PROT_HUMAN' → 'HUMAN')."""
     if pd.isna(name) or name is None:
         return None
-    
     s = str(name).upper()
     
     # Check common patterns
@@ -77,105 +99,106 @@ def extract_protein_id_from_name(name: str) -> str:
     
     # If has underscore, return part before last underscore
     if "_" in s:
-        # Take everything except the last token (which is usually species)
         parts = s.rsplit("_", 1)
         return parts[0]
     
     return s
 
 
-# ============================================================================
-# STEP 1: SELECT DATA TYPE
-# ============================================================================
-
-st.header("Step 1️⃣: Select Data Type")
-
-col1, col2, col3 = st.columns([1, 1, 1])
-
-with col1:
-    st.markdown("""
-    **Select the type of data:**
+def trim_common_prefix_suffix(columns: list) -> dict:
+    """Remove common prefix and suffix from column names."""
+    if len(columns) < 2:
+        return {col: col for col in columns}
     
-    - **Protein:** Unique protein identifiers
-    - **Peptide:** Peptide sequences with protein mapping
-    """)
+    prefix = longest_common_prefix(columns)
+    reversed_cols = [col[::-1] for col in columns]
+    suffix = longest_common_prefix(reversed_cols)[::-1]
+    
+    mapping = {}
+    for col in columns:
+        trimmed = col[len(prefix):] if prefix else col
+        trimmed = trimmed[:-len(suffix)] if suffix else trimmed
+        mapping[col] = trimmed if trimmed else col
+    
+    return mapping
 
-data_type = st.radio(
-    "Data type:",
-    options=["protein", "peptide"],
-    format_func=lambda x: f"🧬 {x.capitalize()}" if x == "protein" else f"🔗 {x.capitalize()}",
-    horizontal=True,
-    key="data_type_selection"
-)
 
-st.session_state.data_type = data_type
-st.markdown("---")
+def smart_rename_columns(columns: list, style: str = 'trim') -> dict:
+    """Rename columns with various strategies."""
+    if style == 'trim':
+        return trim_common_prefix_suffix(columns)
+    elif style == 'default':
+        new_names = generate_default_column_names(len(columns))
+        return {orig: new for orig, new in zip(columns, new_names)}
+    else:
+        return {col: col for col in columns}
 
 
 # ============================================================================
-# STEP 2: FILE UPLOAD
+# SESSION STATE INITIALIZATION
 # ============================================================================
 
-st.header("Step 2️⃣: Upload Your Data File")
+def init_session_state(key: str, default_value):
+    """Initialize session state variable if not already set."""
+    if key not in st.session_state:
+        st.session_state[key] = default_value
 
-st.markdown("""
-**Supported formats:** CSV, TSV, TXT, Excel (.xlsx, .xls)
+init_session_state('data_type', 'protein')
+init_session_state('protein_data', None)
+init_session_state('peptide_data', None)
+init_session_state('metadata_columns', [])
+init_session_state('numerical_columns', [])
+init_session_state('column_mapping', {})
+init_session_state('reverse_mapping', {})
 
-**Note:** Uploads are highly variable - many metadata columns that may not be needed downstream. You'll have full control to select and drop columns.
-""")
+# ============================================================================
+# FILE UPLOAD
+# ============================================================================
+
+st.subheader("1️⃣ Upload File")
+
+col1, col2 = st.columns([2, 1])
+with col1:
+    st.caption(f"Upload your {st.session_state.data_type} abundance data (CSV or Excel)")
+with col2:
+    st.caption("Supported: .csv, .xlsx, .xls")
+
+peptides = st.toggle("Toggle if Peptide Data")
+st.session_state.data_type = "peptide" if peptides else "protein"
 
 uploaded_file = st.file_uploader(
-    "Choose a file",
-    type=["csv", "tsv", "txt", "xlsx", "xls"],
-    key="file_uploader"
+    f"Choose a {st.session_state.data_type} data file",
+    type=["csv", "xlsx", "xls"],
+    key=f"file_upload_{st.session_state.data_type}"
 )
 
 if uploaded_file is None:
-    st.info("👈 Upload a file to continue")
+    st.info(f"👈 Upload a {st.session_state.data_type} abundance file to begin analysis")
     st.stop()
 
-logger.info(f"File uploaded: {uploaded_file.name}")
-st.markdown("---")
-
-
 # ============================================================================
-# STEP 3: LOAD DATA
+# LOAD FILE
 # ============================================================================
-
-st.header("Step 3️⃣: Load & Preview")
 
 try:
-    with st.spinner("Loading file..."):
-        file_ext = Path(uploaded_file.name).suffix.lower()
-        
-        if file_ext in [".csv", ".tsv", ".txt"]:
-            delimiter = "\t" if file_ext == ".tsv" else ","
-            df_raw = load_csv(uploaded_file, sep=delimiter)
-        elif file_ext in [".xlsx", ".xls"]:
-            df_raw = load_excel(uploaded_file)
+    with st.spinner(f"Loading {st.session_state.data_type} data..."):
+        if uploaded_file.name.endswith('.csv'):
+            df_raw = pl.read_csv(uploaded_file, has_header=True, null_values=["#NUM!"])
         else:
-            st.error(f"❌ Unsupported file type: {file_ext}")
-            st.stop()
+            df_raw = pl.read_excel(uploaded_file, sheet_id=0)
         
         st.success(f"✅ Loaded {len(df_raw):,} rows × {len(df_raw.columns)} columns")
-        logger.info(f"File loaded: {df_raw.shape}")
-        
-        with st.expander("Preview First 5 Rows", expanded=False):
-            st.dataframe(df_raw.head(5), use_container_width=True)
-
 except Exception as e:
     st.error(f"❌ Error loading file: {str(e)}")
-    logger.error(f"Error loading file: {str(e)}")
     st.stop()
 
 st.markdown("---")
 
-
 # ============================================================================
-# STEP 4: SELECT & DROP COLUMNS
+# SELECT COLUMNS - METADATA & SAMPLES
 # ============================================================================
 
-st.header("Step 4️⃣: Select Columns (Keep/Drop)")
+st.subheader("2️⃣ Select Columns (Keep/Drop)")
 
 st.markdown("""
 **Choose which columns to keep for downstream analysis:**
@@ -184,36 +207,42 @@ st.markdown("""
 - **Sample columns:** Abundance values you want to analyze
 """)
 
-numeric_cols, categorical_cols = detect_numeric_columns(df_raw)
+df_preview = df_raw.head(5).to_pandas()
 
 col1, col2 = st.columns(2)
 
 # Metadata columns
 with col1:
     st.subheader("📋 Metadata Columns")
-    st.caption(f"Found: {len(categorical_cols)} columns")
+    st.caption(f"Found: {len(df_raw.columns) - len([c for c in df_raw.columns if df_raw[c].dtype in [pl.Float32, pl.Float64, pl.Int32, pl.Int64]])} columns")
     
-    if categorical_cols:
+    # Auto-detect metadata (non-numeric)
+    all_metadata = [c for c in df_raw.columns if df_raw[c].dtype not in [pl.Float32, pl.Float64, pl.Int32, pl.Int64]]
+    
+    if all_metadata:
         selected_metadata = st.multiselect(
             "Select metadata to KEEP:",
-            options=categorical_cols,
-            default=categorical_cols,
+            options=all_metadata,
+            default=all_metadata,
             key="select_metadata"
         )
     else:
         selected_metadata = []
-        st.info("No categorical columns detected")
+        st.info("No metadata columns detected")
 
 # Sample columns
 with col2:
     st.subheader("🧪 Sample Columns")
-    st.caption(f"Found: {len(numeric_cols)} columns")
     
-    if numeric_cols:
+    # Auto-detect samples (numeric)
+    all_samples = [c for c in df_raw.columns if df_raw[c].dtype in [pl.Float32, pl.Float64, pl.Int32, pl.Int64]]
+    st.caption(f"Found: {len(all_samples)} columns")
+    
+    if all_samples:
         selected_samples = st.multiselect(
             "Select samples to KEEP:",
-            options=numeric_cols,
-            default=numeric_cols,
+            options=all_samples,
+            default=all_samples,
             key="select_samples"
         )
     else:
@@ -224,127 +253,104 @@ if not selected_metadata or not selected_samples:
     st.warning("⚠️ Select at least one metadata and one sample column")
     st.stop()
 
-st.success(f"✅ Keeping {len(selected_metadata)} metadata + {len(selected_samples)} samples = {len(selected_metadata) + len(selected_samples)} total columns")
+st.success(f"✅ Keeping {len(selected_metadata)} metadata + {len(selected_samples)} samples")
 st.markdown("---")
 
-
 # ============================================================================
-# STEP 5: RENAME COLUMNS INTELLIGENTLY
+# RENAME COLUMNS
 # ============================================================================
 
-st.header("Step 5️⃣: Rename Columns")
-
-st.markdown("**Rename columns for clarity and standardization**")
+st.subheader("3️⃣ Rename Columns")
 
 col1, col2 = st.columns(2)
 
-# METADATA RENAMING
+# Metadata renaming
 with col1:
     st.subheader("📋 Rename Metadata")
     
-    if selected_metadata:
-        metadata_rename = {}
-        
-        for col in selected_metadata:
-            new_name = st.text_input(
-                f"Rename '{col}':",
-                value=col,
-                key=f"rename_meta_{col}"
-            )
-            if new_name != col:
-                metadata_rename[col] = new_name
-        
-        if metadata_rename:
-            st.caption(f"✓ Renaming {len(metadata_rename)} metadata column(s)")
-        else:
-            st.caption("No renames - using original names")
+    metadata_rename = {}
+    for col in selected_metadata:
+        new_name = st.text_input(
+            f"Rename '{col}':",
+            value=col,
+            key=f"rename_meta_{col}"
+        )
+        if new_name != col:
+            metadata_rename[col] = new_name
+    
+    if metadata_rename:
+        st.caption(f"✓ Renaming {len(metadata_rename)} metadata column(s)")
     else:
-        metadata_rename = {}
+        st.caption("No renames - using original names")
 
-# SAMPLE RENAMING
+# Sample renaming
 with col2:
     st.subheader("🧪 Rename Samples")
     
-    if selected_samples:
-        rename_strategy = st.radio(
-            "Strategy:",
-            options=[
-                "Keep Original",
-                "Trim Prefix/Suffix",
-                "Extract ID",
-                "Auto-Generate (S1, S2, ...)"
-            ],
-            key="sample_strategy"
-        )
-        
+    rename_strategy = st.radio(
+        "Strategy:",
+        options=[
+            "Keep Original",
+            "Trim Prefix/Suffix",
+            "Extract ID",
+            "Auto-Generate (S1, S2, ...)"
+        ],
+        key="sample_strategy"
+    )
+    
+    sample_rename = {}
+    
+    if rename_strategy == "Keep Original":
+        st.caption("Using original names")
         sample_rename = {}
+    
+    elif rename_strategy == "Trim Prefix/Suffix":
+        prefix = longest_common_prefix(selected_samples)
+        reversed_strs = [s[::-1] for s in selected_samples]
+        suffix = longest_common_prefix(reversed_strs)[::-1]
         
-        if rename_strategy == "Keep Original":
-            st.caption("Using original names")
-            sample_rename = {}
+        st.info(f"Removing prefix: '{prefix[:20]}...' and suffix: '...{suffix[-10:]}'")
         
-        elif rename_strategy == "Trim Prefix/Suffix":
-            # Find common prefix/suffix and remove
-            def common_prefix(strs):
-                if not strs: return ""
-                s1, s2 = min(strs), max(strs)
-                for i, (c1, c2) in enumerate(zip(s1, s2)):
-                    if c1 != c2: return s1[:i]
-                return s1
-            
-            prefix = common_prefix(selected_samples)
-            reversed_strs = [s[::-1] for s in selected_samples]
-            suffix = common_prefix(reversed_strs)[::-1]
-            
-            st.info(f"Removing prefix: '{prefix[:20]}...' and suffix: '...{suffix[-10:]}'")
-            
-            for col in selected_samples:
-                trimmed = col[len(prefix):] if prefix else col
-                trimmed = trimmed[:-len(suffix)] if suffix else trimmed
-                sample_rename[col] = trimmed if trimmed else col
-            
-            st.caption(f"✓ Trimmed {len(sample_rename)} sample(s)")
+        for col in selected_samples:
+            trimmed = col[len(prefix):] if prefix else col
+            trimmed = trimmed[:-len(suffix)] if suffix else trimmed
+            sample_rename[col] = trimmed if trimmed else col
         
-        elif rename_strategy == "Extract ID":
-            # Extract last numeric ID (e.g., 1268 from ...1268.d)
-            st.info("Extracting numeric IDs from file paths")
-            
-            for col in selected_samples:
-                match = re.search(r'(\d{4})\.d$', col)
-                if match:
-                    sample_rename[col] = f"S{match.group(1)}"
-                else:
-                    sample_rename[col] = col
-            
-            st.caption(f"✓ Extracted {len(sample_rename)} sample IDs")
+        st.caption(f"✓ Trimmed {len(sample_rename)} sample(s)")
+    
+    elif rename_strategy == "Extract ID":
+        st.info("Extracting numeric IDs from file paths")
         
-        elif rename_strategy == "Auto-Generate (S1, S2, ...)":
-            st.info(f"Auto-generating: S1, S2, ..., S{len(selected_samples)}")
-            sample_rename = {col: f"S{i+1}" for i, col in enumerate(selected_samples)}
-            st.caption(f"✓ Generated {len(sample_rename)} new names")
-    else:
-        sample_rename = {}
+        for col in selected_samples:
+            match = re.search(r'(\d{4})\.d$', col)
+            if match:
+                sample_rename[col] = f"S{match.group(1)}"
+            else:
+                sample_rename[col] = col
+        
+        st.caption(f"✓ Extracted {len(sample_rename)} sample IDs")
+    
+    elif rename_strategy == "Auto-Generate (S1, S2, ...)":
+        st.info(f"Auto-generating: S1, S2, ..., S{len(selected_samples)}")
+        sample_rename = {col: f"S{i+1}" for i, col in enumerate(selected_samples)}
+        st.caption(f"✓ Generated {len(sample_rename)} new names")
 
 st.markdown("---")
 
-
 # ============================================================================
-# STEP 6: APPLY CHANGES & VALIDATE
+# APPLY CHANGES
 # ============================================================================
 
-st.header("Step 6️⃣: Apply Changes & Validate")
+st.subheader("4️⃣ Apply Changes & Validate")
 
-# Filter columns
-df_filtered = df_raw[selected_metadata + selected_samples].copy()
+# Filter and rename
+df_filtered = df_raw.select(selected_metadata + selected_samples)
 
-# Apply metadata renames
-if metadata_rename:
-    df_filtered.rename(columns=metadata_rename, inplace=True)
+# Apply renames
+all_renames = {**metadata_rename, **sample_rename}
+if all_renames:
+    df_filtered = df_filtered.rename(all_renames)
     selected_metadata = [metadata_rename.get(col, col) for col in selected_metadata]
-
-# Apply sample renames
-if sample_rename:
-    df_filtered.rename(columns=sample_rename, inplace=True)
     selected_samples = [sample_rename.get(col, col) for col in selected_samples]
 
 numeric_cols_final = selected_samples
@@ -363,23 +369,24 @@ with col2:
     st.metric("Total Cols", len(df_filtered.columns))
 
 with col3:
-    all_values = df_filtered[numeric_cols_final].values.flatten()
-    all_values_clean = all_values[~pd.isna(all_values)]
-    if len(all_values_clean) > 0:
-        mean_val = float(np.nanmean(all_values_clean))
-        st.metric("Mean Abundance", f"{mean_val:.1f}")
-
-with st.expander("View Filtered Data", expanded=False):
-    st.dataframe(df_filtered.head(10), use_container_width=True)
+    # Calculate mean
+    try:
+        numeric_data = df_filtered.select(numeric_cols_final).to_pandas()
+        all_values = numeric_data.values.flatten()
+        all_values_clean = all_values[~pd.isna(all_values)]
+        if len(all_values_clean) > 0:
+            mean_val = float(np.nanmean(all_values_clean))
+            st.metric("Mean Abundance", f"{mean_val:.1f}")
+    except:
+        st.metric("Mean Abundance", "N/A")
 
 st.markdown("---")
 
-
 # ============================================================================
-# STEP 7: CONFIGURE KEY COLUMNS & INFER SPECIES
+# CONFIGURE KEY COLUMNS & INFER SPECIES
 # ============================================================================
 
-st.header("Step 7️⃣: Configure Key Columns")
+st.subheader("5️⃣ Configure Key Columns")
 
 col1, col2, col3 = st.columns(3)
 
@@ -398,7 +405,7 @@ with col2:
         key="species_col_select"
     )
 
-if data_type == "peptide":
+if st.session_state.data_type == "peptide":
     with col3:
         sequence_col = st.selectbox(
             "Sequence Column:",
@@ -408,15 +415,16 @@ if data_type == "peptide":
 else:
     sequence_col = None
 
-# Show species information AFTER column configuration
+# Convert to pandas for species inference
+df_pandas_temp = df_filtered.to_pandas()
+
 st.subheader("🔬 Species Information")
 
 if selected_species_col:
     # User provided explicit species column
     st.info(f"Using species from: **{selected_species_col}**")
     
-    # Get non-null values
-    species_values = df_filtered[selected_species_col].dropna()
+    species_values = df_pandas_temp[selected_species_col].dropna()
     unique_species = species_values.nunique()
     
     st.metric("Unique Species/Values", unique_species)
@@ -430,11 +438,11 @@ else:
     # Infer species from ID column
     st.info(f"Inferring species from ID column: **{id_col}**")
     
-    inferred_species = df_filtered[id_col].apply(infer_species_from_protein_name)
+    inferred_species = df_pandas_temp[id_col].apply(infer_species_from_protein_name)
     
     # Show preview
     preview_df = pd.DataFrame({
-        'Original ID': df_filtered[id_col].head(10),
+        'Original ID': df_pandas_temp[id_col].head(10),
         'Inferred Species': inferred_species.head(10)
     })
     
@@ -451,13 +459,15 @@ else:
         st.bar_chart(species_counts)
     
     # Add as column
-    df_filtered['Inferred_Species'] = inferred_species
+    df_filtered = df_filtered.with_columns([
+        pl.Series("Inferred_Species", inferred_species.tolist())
+    ])
     species_col = 'Inferred_Species'
 
-# Extract protein IDs (remove species suffix if present)
-st.subheader("📌 Extract Protein IDs")
+# Optional: Extract protein IDs from combined ID+species names
+st.subheader("📌 Extract Protein IDs (Optional)")
 
-st.caption(f"Does your ID column contain species (e.g., NUD4B_HUMAN)? If yes, extract just the protein name.")
+st.caption("If your ID column contains both protein name and species (e.g., NUD4B_HUMAN), extract just the ID.")
 
 extract_protein = st.checkbox(
     "Extract protein ID (remove species suffix like _HUMAN)",
@@ -468,156 +478,118 @@ extract_protein = st.checkbox(
 if extract_protein:
     st.info("Extracting protein IDs without species suffix...")
     
-    # Extract protein IDs
-    extracted_ids = df_filtered[id_col].apply(extract_protein_id_from_name)
+    extracted_ids = df_pandas_temp[id_col].apply(extract_protein_id_from_name)
     
-    # Show preview
     preview_extract = pd.DataFrame({
-        'Original': df_filtered[id_col].head(10),
+        'Original': df_pandas_temp[id_col].head(10),
         'Extracted ID': extracted_ids.head(10)
     })
     
     st.dataframe(preview_extract, use_container_width=True, hide_index=True)
     
     # Replace in dataframe
-    df_filtered[id_col] = extracted_ids
+    df_filtered = df_filtered.with_columns([
+        pl.Series(id_col, extracted_ids.tolist())
+    ])
     st.success(f"✅ Extracted protein IDs from {id_col}")
 
 st.markdown("---")
 
-
 # ============================================================================
-# STEP 8: CALCULATE STATISTICS
-# ============================================================================
-
-st.header("Step 8️⃣: Data Statistics")
-
-numeric_data = df_filtered[numeric_cols_final].copy()
-all_values = numeric_data.values.flatten()
-all_values_clean = all_values[~pd.isna(all_values)]
-
-if len(all_values_clean) > 0:
-    mean_abundance = float(np.nanmean(all_values_clean))
-    median_abundance = float(np.nanmedian(all_values_clean))
-    min_value = float(np.nanmin(all_values_clean))
-    max_value = float(np.nanmax(all_values_clean))
-else:
-    mean_abundance = median_abundance = min_value = max_value = 0.0
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.metric("Proteins/Peptides", f"{len(df_filtered):,}")
-    st.metric("Samples", len(numeric_cols_final))
-
-with col2:
-    st.metric("Mean Abundance", f"{mean_abundance:.1f}")
-    st.metric("Median Abundance", f"{median_abundance:.1f}")
-
-with col3:
-    st.metric("Min Value", f"{min_value:.2e}" if min_value > 0 else "0.0")
-    st.metric("Max Value", f"{max_value:.2e}" if max_value > 0 else "0.0")
-
-st.markdown("---")
-
-
-# ============================================================================
-# STEP 9: FINAL CONFIRMATION & UPLOAD
+# FINAL VALIDATION & UPLOAD
 # ============================================================================
 
-st.header("Step 9️⃣: Finalize Upload")
+st.subheader("6️⃣ Validate & Upload")
 
 col1, col2 = st.columns(2)
 
 with col1:
-    st.markdown(f"""
-    **Configuration Summary:**
+    st.write("**Validation Checks:**")
     
-    - Type: **{data_type.title()}**
-    - ID Column: **{id_col}**
-    - Species Column: **{species_col if species_col else 'None'}**
-    - Rows: **{len(df_filtered):,}**
-    - Samples: **{len(numeric_cols_final)}**
-    - Metadata: **{len(selected_metadata)}**
-    """)
+    checks = {
+        "✅ Metadata columns selected": len(selected_metadata) > 0,
+        "✅ Numerical columns selected": len(numeric_cols_final) > 0,
+        "✅ ID column configured": id_col is not None,
+        "✅ Data loaded": df_filtered is not None,
+        "✅ Samples available": len(df_filtered) > 0,
+    }
+    
+    if st.session_state.data_type == 'peptide':
+        checks["✅ Sequence column selected"] = sequence_col is not None
+    
+    all_passed = all(checks.values())
+    
+    for check, status in checks.items():
+        if status:
+            st.success(check)
+        else:
+            st.error(check.replace("✅", "❌"))
 
 with col2:
-    st.markdown("""
-    **Before uploading, verify:**
-    
-    - ✓ Columns selected correctly
-    - ✓ Renames look good
-    - ✓ ID column configured
-    - ✓ Species column shows correct values
-    - ✓ Protein IDs extracted (if needed)
-    - ✓ No unwanted columns
-    """)
-
-confirm = st.checkbox(
-    "✅ I confirm the configuration is correct",
-    key="confirm_upload"
-)
-
-if confirm:
-    if st.button("🚀 Upload & Proceed", type="primary", use_container_width=True):
-        try:
-            with st.spinner("Processing data..."):
-                # Convert 1.0 to NaN (preprocessing artifact)
-                for col in numeric_cols_final:
-                    df_filtered[col] = df_filtered[col].replace(1.0, float('nan'))
-                
-                # Create data object
-                if data_type == "protein":
-                    data_obj = ProteinData(
-                        raw=df_filtered,
-                        numeric_cols=numeric_cols_final,
-                        id_col=id_col,
-                        species_col=species_col,
-                        file_path=uploaded_file.name
-                    )
-                    st.session_state.protein_data = data_obj
-                else:
-                    data_obj = PeptideData(
-                        raw=df_filtered,
-                        numeric_cols=numeric_cols_final,
-                        id_col=id_col,
-                        species_col=species_col,
-                        sequence_col=sequence_col,
-                        file_path=uploaded_file.name
-                    )
-                    st.session_state.peptide_data = data_obj
-                
-                # Store in session state
-                st.session_state.df_raw = df_filtered
-                st.session_state.numeric_cols = numeric_cols_final
-                st.session_state.id_col = id_col
-                st.session_state.species_col = species_col
-                st.session_state.sequence_col = sequence_col if data_type == "peptide" else None
-                st.session_state.metadata_columns = selected_metadata
-                st.session_state.data_ready = True
-                
-                logger.info(f"Data uploaded: {data_type} ({len(df_filtered)} rows × {len(numeric_cols_final)} samples)")
-            
-            st.success("✅ Data uploaded successfully!")
-            st.balloons()
-            
-            st.markdown("---")
-            st.subheader("✨ What's Next?")
-            st.markdown("""
-            Your data is ready for analysis!
-            
-            **Next steps:**
-            1. Go to **📊 Visual EDA** to explore distributions
-            2. Choose a transformation (log2, yeo-johnson, etc.)
-            3. Assess normality with Q-Q plots
-            4. Proceed to **🧪 Statistical EDA** for filtering and testing
-            """)
-            
-        except Exception as e:
-            st.error(f"❌ Error: {str(e)}")
-            logger.error(f"Error: {str(e)}")
-else:
-    st.caption("👈 Check the confirmation box to proceed")
+    st.write("**Summary:**")
+    st.write(f"- **Type:** {st.session_state.data_type.upper()}")
+    st.write(f"- **ID Column:** {id_col}")
+    st.write(f"- **Species Column:** {species_col if species_col else 'None'}")
+    if st.session_state.data_type == 'peptide':
+        st.write(f"- **Sequence Column:** {sequence_col}")
+    st.write(f"- **Metadata Columns:** {len(selected_metadata)}")
+    st.write(f"- **Samples:** {len(numeric_cols_final)}")
+    st.write(f"- **Total {st.session_state.data_type.title()}s:** {len(df_filtered):,}")
 
 st.markdown("---")
-st.caption("**💡 Tip:** If your protein column has both ID and species (e.g., NUD4B_HUMAN), use Step 7 to extract just the protein ID and automatically infer the species. This keeps your data clean and separated.")
+
+# ============================================================================
+# UPLOAD BUTTON
+# ============================================================================
+
+if st.button(
+    f"🚀 Upload {st.session_state.data_type.upper()} Data",
+    type="primary",
+    width="stretch",
+    disabled=not all_passed
+):
+    with st.spinner(f"Processing {st.session_state.data_type} data..."):
+        try:
+            df_final_pandas = df_filtered.to_pandas()
+            
+            if st.session_state.data_type == 'protein':
+                data_obj = ProteinData(
+                    raw=df_final_pandas,
+                    numeric_cols=numeric_cols_final,
+                    id_col=id_col,
+                    species_col=species_col,
+                    file_path=str(uploaded_file.name)
+                )
+                st.session_state.protein_data = data_obj
+            else:
+                data_obj = PeptideData(
+                    raw=df_final_pandas,
+                    numeric_cols=numeric_cols_final,
+                    id_col=id_col,
+                    species_col=species_col,
+                    sequence_col=sequence_col,
+                    file_path=str(uploaded_file.name)
+                )
+                st.session_state.peptide_data = data_obj
+            
+            # Store in session
+            st.session_state.df_raw = df_final_pandas
+            st.session_state.df_raw_polars = df_filtered
+            st.session_state.numeric_cols = numeric_cols_final
+            st.session_state.id_col = id_col
+            st.session_state.species_col = species_col
+            st.session_state.sequence_col = sequence_col if st.session_state.data_type == "peptide" else None
+            st.session_state.metadata_columns = selected_metadata
+            st.session_state.data_ready = True
+            
+            gc.collect()
+            
+            st.success(f"✅ {st.session_state.data_type.upper()} data uploaded successfully!")
+            st.info("Ready for analysis. Go to **Visual EDA** page to continue.")
+            
+        except Exception as e:
+            st.error(f"❌ Error processing data: {str(e)}")
+
+st.markdown("---")
+
+st.caption("**💡 Tip:** Use intelligent renaming to standardize column names. Species are auto-inferred from protein names (e.g., _HUMAN, _MOUSE). Extract protein IDs if your names contain species suffixes.")
