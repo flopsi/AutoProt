@@ -33,7 +33,7 @@ def fit_linear_model(df: pd.DataFrame,
     
     for protein_id, row in df.iterrows():
         g1_vals = row[group1_cols].dropna()
-        g2_vals = group2_cols].dropna()
+        g2_vals = group2_cols.dropna()
         
         if len(g1_vals) < 2 or len(g2_vals) < 2:
             results.append({
