@@ -137,49 +137,39 @@ df_numeric = df_raw[numeric_cols].copy()
 df_numeric = df_numeric.replace(1.0, np.nan)
 
 # ============================================================================
-# SECTION 1: DISTRIBUTION PLOTS
+# SECTION 1: VIOLIN PLOT (HORIZONTAL - SAMPLES ON X-AXIS)
 # ============================================================================
 
-if plot_section == "Distribution":
-    st.header("1️⃣ Intensity Distributions")
+if plot_section == "Violin Plot":
+    st.header("🎻 Intensity Distribution by Sample")
+    st.caption("Horizontal violin plots for each sample, colored by condition/species")
     
-    col1, col2 = st.columns(2)
+    fig_violin = px.violin(
+        df_long.dropna(subset=['Log2_Intensity']),
+        x='Sample',
+        y='Log2_Intensity',
+        color=species_col,
+        title='Log2 Intensity Distribution by Sample',
+        labels={
+            'Log2_Intensity': 'Log2(Intensity + 1)',
+            'Sample': 'Sample',
+            species_col: 'Condition'
+        },
+        box=True,
+        points=False,
+        color_discrete_sequence=px.colors.qualitative.Set2
+    )
     
-    # Histogram (all data)
-    with col1:
-        st.subheader("Histogram - All Samples")
-        st.caption("Log2-transformed intensity distribution across all samples")
-        
-        fig_hist = px.histogram(
-            df_long.dropna(subset=['Log2_Intensity']),
-            x='Log2_Intensity',
-            nbins=hist_bins,
-            color_discrete_sequence=['steelblue'],
-            title='Log2 Intensity Distribution',
-            labels={'Log2_Intensity': 'Log2(Intensity + 1)', 'count': 'Count'},
-            marginal='rug'
-        )
-        fig_hist.update_traces(marker=dict(line=dict(color='black', width=0.5)))
-        fig_hist.update_layout(height=fig_height, showlegend=False)
-        st.plotly_chart(fig_hist, width="stretch")
+    fig_violin.update_layout(
+        height=fig_height,
+        hovermode='closest',
+        xaxis_tickangle=-45,
+        template='plotly_white'
+    )
     
-    # Density plot by species
-    with col2:
-        st.subheader("Density - By Species")
-        st.caption("Overlay of intensity distributions by species")
-        
-        fig_dens = px.density_contour(
-            df_long.dropna(subset=['Log2_Intensity']),
-            x='Log2_Intensity',
-            color=species_col,
-            title='Density by Species',
-            marginal_x='histogram',
-            color_discrete_sequence=px.colors.qualitative.Set2
-        )
-        fig_dens.update_layout(height=fig_height)
-        st.plotly_chart(fig_dens, width="stretch")
+    st.plotly_chart(fig_violin, width="stretch")
     
-    # Statistics by sample
+    # Sample statistics
     st.subheader("Sample Statistics")
     stats_df = pd.DataFrame({
         'Sample': numeric_cols,
