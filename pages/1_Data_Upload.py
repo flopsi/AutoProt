@@ -5,6 +5,7 @@ Advanced data upload with:
 - Smart column selection (keep/drop metadata columns)
 - Intelligent column renaming (trim, extract, auto-generate)
 - Variable file format support
+- Species inference from protein names
 - Direct column manipulation
 """
 
@@ -33,6 +34,36 @@ st.caption("Load, validate, configure, and rename your proteomics data")
 
 if "upload_step" not in st.session_state:
     st.session_state.upload_step = 1
+
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def infer_species_from_protein_name(name: str) -> str:
+    """Extract species from protein name (e.g., 'PROT_HUMAN' → 'HUMAN')."""
+    if pd.isna(name) or name is None:
+        return None
+    
+    s = str(name).upper()
+    
+    # Check common patterns
+    if "HUMAN" in s:
+        return "HUMAN"
+    if "MOUSE" in s:
+        return "MOUSE"
+    if "YEAST" in s:
+        return "YEAST"
+    if "ECOLI" in s or "_ECOL" in s:
+        return "ECOLI"
+    
+    # Fallback: last token after underscore
+    if "_" in s:
+        tail = s.split("_")[-1]
+        if len(tail) >= 3:
+            return tail
+    
+    return None
 
 
 # ============================================================================
@@ -327,7 +358,7 @@ st.markdown("---")
 
 
 # ============================================================================
-# STEP 7: CONFIGURE KEY COLUMNS
+# STEP 7: CONFIGURE KEY COLUMNS & INFER SPECIES
 # ============================================================================
 
 st.header("Step 7️⃣: Configure Key Columns")
@@ -358,6 +389,44 @@ if data_type == "peptide":
         )
 else:
     sequence_col = None
+
+# Show species inference
+st.subheader("🔬 Species Information")
+
+if species_col:
+    # User provided explicit species column
+    st.info(f"Using species from: **{species_col}**")
+    
+    unique_species = df_filtered[species_col].nunique()
+    st.metric("Unique Species/Values", unique_species)
+    
+    with st.expander("View Species Distribution", expanded=False):
+        species_counts = df_filtered[species_col].value_counts()
+        st.bar_chart(species_counts)
+else:
+    # Infer species from ID column
+    st.info(f"Inferring species from ID column: **{id_col}**")
+    
+    inferred_species = df_filtered[id_col].apply(infer_species_from_protein_name)
+    
+    # Show preview
+    preview_df = pd.DataFrame({
+        'Protein ID': df_filtered[id_col].head(10),
+        'Inferred Species': inferred_species.head(10)
+    })
+    
+    st.dataframe(preview_df, use_container_width=True, hide_index=True)
+    
+    # Show distribution
+    species_counts = inferred_species.value_counts()
+    st.metric("Unique Species Detected", len(species_counts))
+    
+    with st.expander("View Species Distribution", expanded=False):
+        st.bar_chart(species_counts)
+    
+    # Add as column
+    df_filtered['Inferred_Species'] = inferred_species
+    species_col = 'Inferred_Species'
 
 st.markdown("---")
 
@@ -424,6 +493,7 @@ with col2:
     - ✓ Columns selected correctly
     - ✓ Renames look good
     - ✓ ID column configured
+    - ✓ Species column shows correct values
     - ✓ No unwanted columns
     """)
 
@@ -494,4 +564,4 @@ else:
     st.caption("👈 Check the confirmation box to proceed")
 
 st.markdown("---")
-st.caption("**💡 Tip:** Use intelligent renaming to standardize column names across different file formats.")
+st.caption("**💡 Tip:** Use intelligent renaming to standardize column names across different file formats. Species are automatically inferred from protein names using common patterns (e.g., _HUMAN, _MOUSE).")
