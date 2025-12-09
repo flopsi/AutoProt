@@ -493,3 +493,28 @@ with col1:
         label="📥 Download Imputed Data",
         data=csv,
         file_name="imputed_proteomics_data.csv",
+        mime="text/csv"
+    )
+
+with col2:
+    # Export PCA results (all proteins)
+    pca_csv = pca_all.to_csv(index=False)
+    st.download_button(
+        label="📥 Download PCA Results",
+        data=pca_csv,
+        file_name="pca_all_proteins.csv",
+        mime="text/csv"
+    )
+
+with col3:
+    # Export PERMANOVA results
+    permanova_csv = permanova_df.to_csv(index=False)
+    st.download_button(
+        label="📥 Download PERMANOVA Results",
+        data=permanova_csv,
+        file_name="permanova_results.csv",
+        mime="text/csv"
+    )
+
+st.markdown("---")
+st.success("✅ EDA Complete! Data shows clear biological structure and is ready for differential expression analysis.")
