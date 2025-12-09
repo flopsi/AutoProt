@@ -378,7 +378,15 @@ species_list = sorted(list(all_species_set))
 
 st.info(f"🔍 Detected {len(species_list)} unique species/tags: {', '.join(species_list)}")
 
-default_species = st.session_state.get('selected_species', species_list)
+# Get saved species selection, but filter to only include species that exist in current list
+if 'selected_species' in st.session_state:
+    default_species = [s for s in st.session_state.selected_species if s in species_list]
+else:
+    default_species = species_list
+
+# Ensure default is never empty
+if not default_species:
+    default_species = species_list
 
 selected_species = st.multiselect(
     "Select species to **include** in analysis:",
