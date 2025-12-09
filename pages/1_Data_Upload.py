@@ -470,7 +470,6 @@ else:
 # Show species preview if selected
 if species_col:
     with col2:
-        if infer_species:
             # Perform inference
             df_pandas_temp = df_filtered.to_pandas()
             inferred_species = df_pandas_temp[source_col].apply(infer_species_from_protein_name)
