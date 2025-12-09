@@ -337,16 +337,22 @@ else:
 # Check missing data
 missing_data = check_missing_data(df_raw, numeric_cols_filtered)
 
+# Extract values from missing_data dictionary
+# check_missing_data returns: {'total_missing': int, 'missing_percent': float, 'complete_rows': int, 'by_column': dict}
+total_missing = missing_data.get('total_missing', 0)
+missing_percent = missing_data.get('missing_percent', 0.0)
+complete_rows = missing_data.get('complete_rows', 0)
+
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.metric("Total Missing", f"{missing_data['total_missing']:,} cells")
+    st.metric("Total Missing", f"{total_missing:,} cells")
 
 with col2:
-    st.metric("Missing %", f"{missing_data['missing_percent']:.1f}%")
+    st.metric("Missing %", f"{missing_percent:.1f}%")
 
 with col3:
-    st.metric("Complete Cases", f"{missing_data['complete_rows']}")
+    st.metric("Complete Cases", f"{complete_rows}")
 
 # Show detailed missing data analysis
 with st.expander("Missing Data Details", expanded=False):
@@ -358,6 +364,8 @@ with st.expander("Missing Data Details", expanded=False):
         ]).sort_values("Missing", ascending=False)
         
         st.dataframe(missing_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No missing data details available")
 
 st.markdown("---")
 
@@ -423,7 +431,7 @@ with col2:
     - Type: **{data_type.title()}**
     - Rows: **{len(df_raw):,}**
     - Samples: **{len(numeric_cols_filtered)}**
-    - Missing: **{missing_data['missing_percent']:.1f}%**
+    - Missing: **{missing_percent:.1f}%**
     - Status: **✅ Ready**
     """)
 
