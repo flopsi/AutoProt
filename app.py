@@ -153,7 +153,7 @@ with st.sidebar:
                 st.metric("Missing %", f"{protein_data.missing_rate:.1f}%")
                 st.metric("Type", "Protein")
             
-            if st.button("🔄 Reset Data", use_container_width=True, key="btn_reset"):
+            if st.button("🔄 Reset Data", width="stretch", key="btn_reset"):
                 st.session_state.data_ready = False
                 st.session_state.protein_data = None
                 st.session_state.peptide_data = None
@@ -172,7 +172,7 @@ with st.sidebar:
                 st.metric("Missing %", f"{peptide_data.missing_rate:.1f}%")
                 st.metric("Type", "Peptide")
             
-            if st.button("🔄 Reset Data", use_container_width=True, key="btn_reset_pep"):
+            if st.button("🔄 Reset Data", width="stretch", key="btn_reset_pep"):
                 st.session_state.data_ready = False
                 st.session_state.protein_data = None
                 st.session_state.peptide_data = None
