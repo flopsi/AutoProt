@@ -161,7 +161,7 @@ if plot_section == "Distribution":
         )
         fig_hist.update_traces(marker=dict(line=dict(color='black', width=0.5)))
         fig_hist.update_layout(height=fig_height, showlegend=False)
-        st.plotly_chart(fig_hist, use_container_width=True)
+        st.plotly_chart(fig_hist, width="stretch")
     
     # Density plot by species
     with col2:
@@ -177,7 +177,7 @@ if plot_section == "Distribution":
             color_discrete_sequence=px.colors.qualitative.Set2
         )
         fig_dens.update_layout(height=fig_height)
-        st.plotly_chart(fig_dens, use_container_width=True)
+        st.plotly_chart(fig_dens, width="stretch")
     
     # Statistics by sample
     st.subheader("Sample Statistics")
@@ -191,7 +191,7 @@ if plot_section == "Distribution":
         'Max': [df_raw[col].max() for col in numeric_cols],
     }).round(2)
     
-    st.dataframe(stats_df, use_container_width=True, hide_index=True)
+    st.dataframe(stats_df, width="stretch", hide_index=True)
 
 # ============================================================================
 # SECTION 2: BOX & VIOLIN PLOTS
@@ -217,7 +217,7 @@ elif plot_section == "Box & Violin":
             color_discrete_sequence=px.colors.qualitative.Set2
         )
         fig_box.update_layout(height=fig_height, showlegend=False)
-        st.plotly_chart(fig_box, use_container_width=True)
+        st.plotly_chart(fig_box, width="stretch")
     
     # Violin plot
     with col2:
@@ -236,7 +236,7 @@ elif plot_section == "Box & Violin":
             color_discrete_sequence=px.colors.qualitative.Set2
         )
         fig_violin.update_layout(height=fig_height)
-        st.plotly_chart(fig_violin, use_container_width=True)
+        st.plotly_chart(fig_violin, width="stretch")
     
     # Summary by species
     st.subheader("Summary by Species")
@@ -244,7 +244,7 @@ elif plot_section == "Box & Violin":
         'count', 'mean', 'median', 'std', 'min', 'max'
     ]).round(2).reset_index()
     species_summary.columns = [species_col, 'Count', 'Mean', 'Median', 'Std', 'Min', 'Max']
-    st.dataframe(species_summary, use_container_width=True, hide_index=True)
+    st.dataframe(species_summary, width="stretch", hide_index=True)
 
 # ============================================================================
 # SECTION 3: TRANSFORMATION COMPARISON
@@ -326,7 +326,7 @@ elif plot_section == "Transformations":
             labels={'Value': 'Value', 'count': 'Count'}
         )
         fig_trans.update_layout(height=fig_height, showlegend=False)
-        st.plotly_chart(fig_trans, use_container_width=True)
+        st.plotly_chart(fig_trans, width="stretch")
 
 # ============================================================================
 # SECTION 4: Q-Q PLOTS
@@ -422,7 +422,7 @@ elif plot_section == "PCA":
             color_discrete_sequence=px.colors.qualitative.Set2
         )
         fig_2d.update_layout(height=fig_height)
-        st.plotly_chart(fig_2d, use_container_width=True)
+        st.plotly_chart(fig_2d, width="stretch")
     
     # Scree plot
     with col2:
@@ -457,7 +457,7 @@ elif plot_section == "PCA":
             height=fig_height,
             showlegend=True
         )
-        st.plotly_chart(fig_scree, use_container_width=True)
+        st.plotly_chart(fig_scree, width="stretch")
     
     # Variance table
     st.subheader("Variance Explained")
@@ -466,7 +466,7 @@ elif plot_section == "PCA":
         'Variance': (var_exp * 100).round(2),
         'Cumulative': (cumsum_var * 100).round(2)
     })
-    st.dataframe(var_df, use_container_width=True, hide_index=True)
+    st.dataframe(var_df, width="stretch", hide_index=True)
 
 # ============================================================================
 # SECTION 6: t-SNE
@@ -504,7 +504,7 @@ elif plot_section == "t-SNE":
             hover_data={species_col: True}
         )
         fig_tsne.update_layout(height=fig_height)
-        st.plotly_chart(fig_tsne, use_container_width=True)
+        st.plotly_chart(fig_tsne, width="stretch")
 
 # ============================================================================
 # SECTION 7: HEATMAP
@@ -548,7 +548,7 @@ elif plot_section == "Heatmap":
         xaxis_title='Sample',
         yaxis_title='Protein'
     )
-    st.plotly_chart(fig_heat, use_container_width=True)
+    st.plotly_chart(fig_heat, width="stretch")
 
 # ============================================================================
 # SECTION 8: MISSING DATA
@@ -574,7 +574,7 @@ elif plot_section == "Missing Data":
             color_continuous_scale='Reds'
         )
         fig_missing.update_layout(height=fig_height, showlegend=False)
-        st.plotly_chart(fig_missing, use_container_width=True)
+        st.plotly_chart(fig_missing, width="stretch")
     
     # Valid counts by sample
     with col2:
@@ -591,7 +591,7 @@ elif plot_section == "Missing Data":
             color_continuous_scale='Greens'
         )
         fig_valid.update_layout(height=fig_height, showlegend=False)
-        st.plotly_chart(fig_valid, use_container_width=True)
+        st.plotly_chart(fig_valid, width="stretch")
     
     # Summary statistics
     st.subheader("Missing Data Summary")
@@ -602,7 +602,7 @@ elif plot_section == "Missing Data":
         'Missing': df_raw[numeric_cols].isna().sum().values,
         '% Missing': (df_raw[numeric_cols].isna().sum() / len(df_raw) * 100).round(2).values
     })
-    st.dataframe(missing_summary, use_container_width=True, hide_index=True)
+    st.dataframe(missing_summary, width="stretch", hide_index=True)
 
 st.markdown("---")
 st.caption("💡 **Tip:** All plots are interactive - hover for details, zoom, pan, and download as PNG. Use sidebar to customize appearance.")
