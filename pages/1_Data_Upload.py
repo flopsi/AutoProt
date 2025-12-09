@@ -468,7 +468,7 @@ if species_scan:
             columns=['Species', 'Count']
         ).sort_values('Count', ascending=False)
         
-        st.dataframe(species_df, use_container_width=True, hide_index=True)
+        st.dataframe(species_df, width="stretch", hide_index=True)
     
     with col2:
         # Show distribution chart
@@ -485,7 +485,7 @@ if species_scan:
         'Inferred Species': inferred_col.head(10).values
     })
     
-    st.dataframe(preview_df, use_container_width=True, hide_index=True)
+    st.dataframe(preview_df, width="stretch", hide_index=True)
 else:
     st.warning(f"⚠️ No species patterns detected in **{species_col_select}**")
     st.info("Common patterns detected: HUMAN, MOUSE, YEAST, ECOLI, DROSOPHILA, ARABIDOPSIS, ZEBRAFISH, etc.")
@@ -517,7 +517,7 @@ if extract_protein:
         'Extracted ID': extracted_ids.head(10)
     })
     
-    st.dataframe(preview_extract, use_container_width=True, hide_index=True)
+    st.dataframe(preview_extract, width="stretch", hide_index=True)
     
     # Replace in dataframe
     df_filtered = df_filtered.with_columns([
