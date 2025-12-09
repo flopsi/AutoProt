@@ -1,10 +1,9 @@
 """
-pages/2_Visual_EDA.py - PRODUCTION-READY VISUAL EXPLORATORY DATA ANALYSIS
-Violin plots showing intensity distribution per sample, colored by condition
+pages/2_Visual_EDA.py - VISUAL EXPLORATORY DATA ANALYSIS
+Violin plots showing raw intensity distribution per sample
 """
 
 import streamlit as st
-import polars as pl
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -56,10 +55,7 @@ df_long = df_raw.melt(
     value_name='Intensity'
 )
 
-# Log2 transformation
-df_long['Log2_Intensity'] = np.log2(df_long['Intensity'] + 1)
-
-# Extract condition from sample name (first letter: A, B, C, etc.)
+# Extract condition from sample name (first letter)
 df_long['Condition'] = df_long['Sample'].str[0]
 
 # ============================================================================
@@ -67,17 +63,16 @@ df_long['Condition'] = df_long['Sample'].str[0]
 # ============================================================================
 
 st.header("🎻 Intensity Distribution by Sample")
-st.caption("All proteins per sample, colored by condition (A, B, C, ...)")
+st.caption("Raw intensity values, colored by condition")
 
-# Create violin plot
 fig_violin = px.violin(
-    df_long.dropna(subset=['Log2_Intensity']),
+    df_long,
     x='Sample',
-    y='Log2_Intensity',
+    y='Intensity',
     color='Condition',
-    title='Log2 Intensity Distribution by Sample',
+    title='Intensity Distribution by Sample',
     labels={
-        'Log2_Intensity': 'Log2(Intensity + 1)',
+        'Intensity': 'Intensity',
         'Sample': 'Sample',
         'Condition': 'Condition'
     },
@@ -106,6 +101,7 @@ stats_df = pd.DataFrame({
     'Sample': numeric_cols,
     'Condition': [col[0] for col in numeric_cols],
     'N': [df_raw[col].notna().sum() for col in numeric_cols],
+    'N (1.00)': [(df_raw[col] == 1.00).sum() for col in numeric_cols],
     'Mean': [df_raw[col].mean() for col in numeric_cols],
     'Median': [df_raw[col].median() for col in numeric_cols],
     'Std': [df_raw[col].std() for col in numeric_cols],
