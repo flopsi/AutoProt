@@ -537,8 +537,6 @@ with col4:
 
 # Show preview
 with st.expander("📊 Data Preview", expanded=False):
-    preview_rows = st.slider("Preview rows:", 5, min(50, len(df_filtered)), 10)
-    
     col1, col2 = st.columns([2, 1])
     with col1:
         st.dataframe(df_filtered.head(preview_rows).to_pandas(), width="content", height=400)
