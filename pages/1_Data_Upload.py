@@ -385,7 +385,7 @@ with col3:
             'Original': list(name_mapping.keys()),
             'Renamed': list(name_mapping.values())
         })
-        st.dataframe(mapping_df, width=True, height=200)
+        st.dataframe(mapping_df, width="content", height=200)
         
         # Store mapping
         st.session_state.column_mapping = name_mapping
