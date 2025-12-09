@@ -9,7 +9,6 @@ Limma-style empirical Bayes DA with composition-based spike-in validation.
 from __future__ import annotations
 
 import streamlit as st
-import polars as pl
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -316,8 +315,8 @@ if "df_imputed" not in st.session_state or st.session_state.df_imputed is None:
     st.error("No imputed data found. Please finish the Missing Value Imputation step first.")
     st.stop()
 
-df_pl: pl.DataFrame = st.session_state.df_imputed
-df = df_pl.to_pandas()  # for limma-style operations
+# df_imputed is already pandas DataFrame
+df = st.session_state.df_imputed.copy()
 numeric_cols: List[str] = st.session_state.numeric_cols
 species_col: str = st.session_state.species_col
 sample_to_condition: Dict[str, str] = st.session_state.sample_to_condition
@@ -374,7 +373,7 @@ use_comp = st.checkbox(
 )
 
 theoretical_fc: Dict[str, float] = {}
-species_values = sorted([s for s in df[species_col].unique() if isinstance(s, str)])
+species_values = sorted([s for s in df[species_col].unique() if isinstance(s, str) and s != 'Unknown'])
 
 if use_comp:
     st.markdown("Enter percentage composition (will be normalized to 100% within each condition).")
@@ -438,8 +437,8 @@ if use_comp:
     st.markdown("**Expected log2FC from composition (A/B)**")
     st.dataframe(pd.DataFrame(rows), use_container_width=True)
 
-    # single combined visualization (remove “useless” right plot)
-    st.markdown("**Composition per condition (stacked) and species-specific expected log2FC**")
+    # single combined visualization
+    st.markdown("### Composition Visualization")
     l, r = st.columns(2)
     with l:
         plot_rows = []
@@ -459,22 +458,6 @@ if use_comp:
         )
         figc.update_yaxes(range=[0, 100])
         st.plotly_chart(figc, use_container_width=True)
-
-    with r:
-        fc_plot = pd.DataFrame(
-            dict(Species=list(theoretical_fc.keys()), Log2FC=list(theoretical_fc.values()))
-        )
-        figf = px.bar(
-            fc_plot,
-            x="Species",
-            y="Log2FC",
-            color="Species",
-            title=f"Expected log2FC (A/B = {ref_cond}/{treat_cond})",
-            labels={"Log2FC": "Expected log2 fold change"},
-            height=450,
-        )
-        figf.add_hline(y=0.0, line_color="red")
-        st.plotly_chart(figf, use_container_width=True)
 
 st.markdown("---")
 
@@ -508,7 +491,7 @@ st.markdown("---")
 
 st.subheader("4️⃣ Run limma (A vs B)")
 
-if st.button("Run analysis", type="primary"):
+if st.button("🚀 Run Analysis", type="primary"):
     with st.spinner("Fitting linear models and empirical Bayes..."):
         # log2 transform if not already on log scale
         df_num = df[numeric_cols]
@@ -528,19 +511,16 @@ if st.button("Run analysis", type="primary"):
             test_col = "pvalue"
 
         # significance purely by p/FDR (no FC cutoff)
-        limma_res["regulation"] = limma_res.apply(
-            lambda r: (
-                "up"
-                if (r[test_col] < p_thr and r["log2fc"] > 0)
-                else "down"
-                if (r[test_col] < p_thr and r["log2fc"] < 0)
-                else "not_significant"
-            ),
-            axis=1,
-        )
-
+        def classify(row):
+            if pd.isna(row[test_col]) or pd.isna(row["log2fc"]):
+                return "not_tested"
+            if row[test_col] < p_thr:
+                return "up" if row["log2fc"] > 0 else "down"
+            return "not_significant"
+        
+        limma_res["regulation"] = limma_res.apply(classify, axis=1)
         limma_res["neg_log10_p"] = -np.log10(limma_res[test_col].replace(0, 1e-300))
-        limma_res["species"] = limma_res.index.to_series().map(df[species_col])
+        limma_res["species"] = limma_res.index.to_series().map(df.set_index(df.index)[species_col])
 
         st.session_state.dea_results = limma_res
         st.session_state.dea_ref = ref_cond
@@ -548,7 +528,7 @@ if st.button("Run analysis", type="primary"):
         st.session_state.dea_p_thr = p_thr
         st.session_state.dea_theoretical_fc = theoretical_fc
 
-    st.success("Analysis finished.")
+    st.success("✅ Analysis finished.")
 
 # ---------------------------------------------------------------------
 # 5. RESULTS: MA/VOLCANO COLORED BY SPECIES
@@ -562,7 +542,7 @@ if "dea_results" in st.session_state:
     theoretical_fc = st.session_state.dea_theoretical_fc
 
     st.markdown("---")
-    st.subheader("5️⃣ Results overview")
+    st.subheader("5️⃣ Results Overview")
 
     n_total = len(res)
     n_up = int((res["regulation"] == "up").sum())
@@ -575,7 +555,7 @@ if "dea_results" in st.session_state:
     m3.metric("Up / Down", f"{n_up} / {n_down}")
 
     # Volcano (colored by species)
-    st.markdown("### Volcano plot (colored by species)")
+    st.markdown("### 🌋 Volcano Plot (colored by species)")
     volc = res[res["regulation"] != "not_tested"].copy()
     fig_v = px.scatter(
         volc,
@@ -594,7 +574,7 @@ if "dea_results" in st.session_state:
     st.plotly_chart(fig_v, use_container_width=True)
 
     # MA plot (colored by species)
-    st.markdown("### MA plot (colored by species)")
+    st.markdown("### 📈 MA Plot (colored by species)")
     ma = res[res["regulation"] != "not_tested"].copy()
     ma["A"] = (ma["mean_g1"] + ma["mean_g2"]) / 2
     ma["M"] = ma["log2fc"]
@@ -612,7 +592,7 @@ if "dea_results" in st.session_state:
     st.plotly_chart(fig_ma, use_container_width=True)
 
     # top table
-    st.markdown("### Top significant proteins")
+    st.markdown("### 📋 Top Significant Proteins")
     top = res[res["regulation"].isin(["up", "down"])].sort_values("fdr").head(100)
     st.dataframe(
         top[["log2fc", "t_stat", "pvalue", "fdr", "regulation", "species"]].round(4),
@@ -624,7 +604,7 @@ if "dea_results" in st.session_state:
     # -----------------------------------------------------------------
     if theoretical_fc:
         st.markdown("---")
-        st.subheader("6️⃣ Spike-in based error metrics")
+        st.subheader("6️⃣ Spike-in Validation Metrics")
 
         species_map = dict(zip(res.index.astype(str), res["species"].astype(str)))
 
@@ -636,19 +616,19 @@ if "dea_results" in st.session_state:
         )
 
         if ov_stab:
-            st.markdown("**Stable proteome (false positives)**")
+            st.markdown("**Stable Proteome (False Positives)**")
             c1, c2 = st.columns(2)
             c1.metric(
-                "False positive rate",
+                "False Positive Rate",
                 f"{ov_stab['False_Positive_Rate']:.1%}",
                 help=f"CI {ov_stab['FPR_CI'][0]:.1%}–{ov_stab['FPR_CI'][1]:.1%}",
             )
-            c2.metric("Stable proteins used", f"{ov_stab['Total_Stable']:,}")
+            c2.metric("Stable Proteins", f"{ov_stab['Total_Stable']:,}")
             if not sp_stab.empty:
                 st.dataframe(sp_stab, use_container_width=True)
 
         if ov_var:
-            st.markdown("**Variable proteome (detection performance)**")
+            st.markdown("**Variable Proteome (Detection)**")
             c1, c2, c3 = st.columns(3)
             c1.metric(
                 "Sensitivity",
@@ -668,13 +648,13 @@ if "dea_results" in st.session_state:
     # 7. EXPORT
     # -----------------------------------------------------------------
     st.markdown("---")
-    st.subheader("7️⃣ Export")
+    st.subheader("💾 Export Results")
 
     st.download_button(
-        "Download limma results (CSV)",
+        "📥 Download Results (CSV)",
         data=res.to_csv().encode("utf-8"),
         file_name=f"limma_{ref_cond}_vs_{treat_cond}.csv",
         mime="text/csv",
     )
 else:
-    st.info("Configure settings and run the analysis to see results.")
+    st.info("👆 Configure parameters and run the analysis to see results.")
