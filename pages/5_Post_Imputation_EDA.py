@@ -20,9 +20,89 @@ from sklearn.preprocessing import StandardScaler
 from scipy.cluster.hierarchy import dendrogram, linkage
 from scipy.spatial.distance import pdist, squareform
 import scipy.stats as stats
-from skbio.stats.distance import permanova
+from scipy.stats import gaussian_kde
 
 sys.path.append(str(Path(__file__).parent.parent))
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def permanova_test(distance_matrix, grouping, permutations=999):
+    """
+    Manual implementation of PERMANOVA (Permutational Multivariate Analysis of Variance)
+    
+    Parameters:
+    -----------
+    distance_matrix : array-like
+        Square distance matrix
+    grouping : list
+        Group labels for each sample
+    permutations : int
+        Number of permutations for significance testing
+    
+    Returns:
+    --------
+    dict with 'test statistic', 'p-value', and 'permutations'
+    """
+    n = len(grouping)
+    groups = np.unique(grouping)
+    
+    # Calculate total sum of squares
+    total_ss = np.sum(distance_matrix ** 2) / n
+    
+    # Calculate within-group sum of squares
+    within_ss = 0
+    for group in groups:
+        group_indices = [i for i, g in enumerate(grouping) if g == group]
+        group_distances = distance_matrix[np.ix_(group_indices, group_indices)]
+        within_ss += np.sum(group_distances ** 2) / (2 * len(group_indices))
+    
+    # Calculate between-group sum of squares
+    between_ss = total_ss - within_ss
+    
+    # Calculate F-statistic
+    df_between = len(groups) - 1
+    df_within = n - len(groups)
+    
+    if df_within > 0:
+        f_stat = (between_ss / df_between) / (within_ss / df_within)
+    else:
+        f_stat = 0
+    
+    # Permutation test for p-value
+    perm_f_stats = []
+    grouping_array = np.array(grouping)
+    
+    for _ in range(permutations):
+        # Permute group labels
+        perm_grouping = np.random.permutation(grouping_array)
+        
+        # Calculate within-group SS for permuted data
+        perm_within_ss = 0
+        for group in groups:
+            group_indices = [i for i, g in enumerate(perm_grouping) if g == group]
+            if len(group_indices) > 0:
+                group_distances = distance_matrix[np.ix_(group_indices, group_indices)]
+                perm_within_ss += np.sum(group_distances ** 2) / (2 * len(group_indices))
+        
+        # Calculate permuted F-statistic
+        perm_between_ss = total_ss - perm_within_ss
+        if df_within > 0:
+            perm_f_stat = (perm_between_ss / df_between) / (perm_within_ss / df_within)
+        else:
+            perm_f_stat = 0
+        
+        perm_f_stats.append(perm_f_stat)
+    
+    # Calculate p-value
+    p_value = np.sum(np.array(perm_f_stats) >= f_stat) / permutations
+    
+    return {
+        'test statistic': f_stat,
+        'p-value': p_value,
+        'permutations': permutations
+    }
 
 # ============================================================================
 # PAGE CONFIG
