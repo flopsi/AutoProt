@@ -540,7 +540,8 @@ st.sidebar.markdown("---")
 # RUN ANALYSIS
 # ============================================================================
 
-st.subheader("1️⃣ Running Analysis")    if st.button("🚀 Run DEA", type="primary", width='stretch'):
+st.subheader("1️⃣ Running Analysis")    
+if st.button("🚀 Run DEA", type="primary", width='stretch'):
     with st.spinner("⏳ Processing..."):
         # Log2 transform
         df_num = df[numeric_cols]
