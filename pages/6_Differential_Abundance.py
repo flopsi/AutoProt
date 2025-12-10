@@ -534,7 +534,7 @@ if "dea_results" in st.session_state:
             asymmetry_text = ", ".join([f"Asym. {k} {v:.2f}" for k, v in asym_dict.items()])
             st.markdown(f"**{asymmetry_text}**")
     
-    # === PLOT 1: FACETED SCATTER (MA PLOT) ===
+        # === PLOT 1: FACETED SCATTER (MA PLOT) - ALL POINTS ===
     st.markdown("### 📊 MA Plot (Faceted by Species)")
     
     ma = res[res["regulation"] != "not_tested"].copy()
@@ -554,34 +554,52 @@ if "dea_results" in st.session_state:
         sp_data = ma[ma["species"] == sp]
         color = SPECIES_COLORS.get(sp, "#95a5a6")
         
-        # Color by regulation status
-        sp_data_up = sp_data[sp_data["regulation"] == "up"]
-        sp_data_down = sp_data[sp_data["regulation"] == "down"]
+        # Significant points
+        sp_sig = sp_data[sp_data["regulation"] != "not_significant"]
+        sp_nonsig = sp_data[sp_data["regulation"] == "not_significant"]
         
-        # Up-regulated
+        # Non-significant (grayed out)
         fig_facet.add_trace(
             go.Scatter(
-                x=sp_data_up["A"],
-                y=sp_data_up["log2fc"],
+                x=sp_nonsig["A"],
+                y=sp_nonsig["log2fc"],
                 mode='markers',
-                marker=dict(size=4, color=color, opacity=0.8, symbol='circle'),
-                name=f"{sp} (up)",
-                showlegend=(i==1),
-                hovertemplate=f"{sp} (up)<br>A=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
+                marker=dict(size=3, color="lightgray", opacity=0.3),
+                name=f"{sp} (ns)",
+                showlegend=False,
+                hovertemplate=f"{sp} (ns)<br>A=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
             ),
             row=1, col=i
         )
         
-        # Down-regulated
+        # Significant by regulation
+        sp_up = sp_sig[sp_sig["regulation"] == "up"]
+        sp_down = sp_sig[sp_sig["regulation"] == "down"]
+        
+        # Up-regulated (circles)
         fig_facet.add_trace(
             go.Scatter(
-                x=sp_data_down["A"],
-                y=sp_data_down["log2fc"],
+                x=sp_up["A"],
+                y=sp_up["log2fc"],
+                mode='markers',
+                marker=dict(size=4, color=color, opacity=0.8, symbol='circle'),
+                name=f"{sp} (↑)",
+                showlegend=(i==1),
+                hovertemplate=f"{sp} ↑<br>A=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
+            ),
+            row=1, col=i
+        )
+        
+        # Down-regulated (diamonds)
+        fig_facet.add_trace(
+            go.Scatter(
+                x=sp_down["A"],
+                y=sp_down["log2fc"],
                 mode='markers',
                 marker=dict(size=4, color=color, opacity=0.8, symbol='diamond'),
-                name=f"{sp} (down)",
+                name=f"{sp} (↓)",
                 showlegend=(i==1),
-                hovertemplate=f"{sp} (down)<br>A=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
+                hovertemplate=f"{sp} ↓<br>A=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
             ),
             row=1, col=i
         )
@@ -624,56 +642,66 @@ if "dea_results" in st.session_state:
     fig_facet.update_layout(height=500, title_text="", showlegend=False)
     st.plotly_chart(fig_facet, use_container_width=True)
     
-    # === PLOT 2: REGULAR SCATTER (MA PLOT) ===
+    # === PLOT 2: REGULAR SCATTER (MA PLOT) - ALL POINTS ===
     st.markdown("### 📈 MA Plot (Combined)")
     
-    ma["color_by_regulation"] = ma["regulation"].map({"up": "↑ Up", "down": "↓ Down"})
+    ma_plot_data = ma.copy()
+    ma_plot_data["Status"] = ma_plot_data.apply(
+        lambda x: "Not Sig." if x["regulation"] == "not_significant" else ("↑ Up" if x["regulation"] == "up" else "↓ Down"),
+        axis=1
+    )
     
     fig_ma = px.scatter(
-        ma,
+        ma_plot_data,
         x="A",
         y="log2fc",
         color="species",
+        symbol="Status",
         color_discrete_map=SPECIES_COLORS,
-        symbol="color_by_regulation",
-        hover_data=["regulation"],
+        category_orders={"Status": ["Not Sig.", "↓ Down", "↑ Up"]},
+        opacity=0.7,
         labels={"A": "log2(B)", "log2fc": f"log2({ref_cond}/{treat_cond})"},
         height=600,
     )
+    
+    # Gray out non-significant
+    for trace in fig_ma.data:
+        if trace.name == "Not Sig.":
+            trace.marker.opacity = 0.2
+            trace.marker.color = "lightgray"
     
     fig_ma.add_hline(y=0.0, line_color="red", line_width=1, opacity=0.5)
     
     if theoretical_fc:
         for species, expected_fc in theoretical_fc.items():
-            if abs(expected_fc) >= stable_thr:
-                color = SPECIES_COLORS.get(species, "#95a5a6")
-                
-                # Expected FC line
-                fig_ma.add_hline(
-                    y=expected_fc,
-                    line_dash="dash",
-                    line_width=2,
-                    line_color=color,
-                    opacity=0.7,
-                    annotation_text=f"{species} (exp={expected_fc:.2f})",
-                    annotation_position="right",
-                )
-                
-                # Tolerance band
-                fig_ma.add_hline(
-                    y=expected_fc + fc_tolerance,
-                    line_dash="dot",
-                    line_width=1,
-                    line_color=color,
-                    opacity=0.3,
-                )
-                fig_ma.add_hline(
-                    y=expected_fc - fc_tolerance,
-                    line_dash="dot",
-                    line_width=1,
-                    line_color=color,
-                    opacity=0.3,
-                )
+            color = SPECIES_COLORS.get(species, "#95a5a6")
+            
+            # Expected FC line
+            fig_ma.add_hline(
+                y=expected_fc,
+                line_dash="dash",
+                line_width=2,
+                line_color=color,
+                opacity=0.7,
+                annotation_text=f"{species}",
+                annotation_position="right",
+            )
+            
+            # Tolerance band (±0.58)
+            fig_ma.add_hline(
+                y=expected_fc + fc_tolerance,
+                line_dash="dot",
+                line_width=1,
+                line_color=color,
+                opacity=0.2,
+            )
+            fig_ma.add_hline(
+                y=expected_fc - fc_tolerance,
+                line_dash="dot",
+                line_width=1,
+                line_color=color,
+                opacity=0.2,
+            )
     
     st.plotly_chart(fig_ma, use_container_width=True)
     
@@ -726,108 +754,89 @@ if "dea_results" in st.session_state:
     
     st.plotly_chart(fig_density, use_container_width=True)
     
-    # === PLOT 4: VOLCANO ===
+    # === PLOT 4: VOLCANO - GRAY OUT NON-SIG + DASHED ±0.58 ===
     st.markdown("### 🌋 Volcano Plot")
+    
     volc = res[res["regulation"] != "not_tested"].dropna(subset=['neg_log10_p', 'log2fc'])
+    volc["Status"] = volc.apply(
+        lambda x: "Significant" if x["regulation"] != "not_significant" else "Not Significant",
+        axis=1
+    )
     
     fig_v = px.scatter(
         volc,
         x="log2fc",
         y="neg_log10_p",
         color="species",
+        opacity=0.7,
         color_discrete_map=SPECIES_COLORS,
-        hover_data=["regulation"],
         labels={"log2fc": f"log2 FC ({ref_cond}/{treat_cond})", "neg_log10_p": "-log10(FDR)" if use_fdr else "-log10(p)"},
         height=600,
     )
-    fig_v.add_hline(y=-np.log10(p_thr), line_dash="dash", line_color="gray")
+    
+    # Gray out non-significant
+    for i, trace in enumerate(fig_v.data):
+        mask = volc[volc["species"] == trace.name]["Status"] == "Not Significant"
+        if mask.any():
+            trace.marker.opacity = np.where(mask, 0.15, 0.7)
+    
+    # FDR threshold line
+    fig_v.add_hline(y=-np.log10(p_thr), line_dash="dash", line_color="gray", line_width=2, annotation_text=f"p={p_thr}")
+    
+    # Add ±0.58 dashed lines if theoretical FC available
+    if theoretical_fc:
+        fig_v.add_vline(x=fc_tolerance, line_dash="dot", line_color="gray", line_width=1, opacity=0.5)
+        fig_v.add_vline(x=-fc_tolerance, line_dash="dot", line_color="gray", line_width=1, opacity=0.5)
+    
     st.plotly_chart(fig_v, use_container_width=True)
     
-    # === TABLE: TOP SIGNIFICANT ===
-    st.markdown("### 📋 Top Significant Proteins")
-    top = res[res["regulation"].isin(["up", "down"])].sort_values("fdr").head(50)
-    st.dataframe(top[["log2fc", "pvalue", "fdr", "regulation", "species"]].round(4), use_container_width=True)
+    # === TABLE: ALL RESULTS IN ONE TABLE ===
+    st.markdown("### 📋 All Results Summary")
+    st.caption("Complete results table with all proteins tested")
     
-    # ---------------------------------------------------------------------
-    # 6. VALIDATION
-    # ---------------------------------------------------------------------
-    if theoretical_fc:
-        st.markdown("---")
-        st.subheader("6️⃣ Spike-in Validation")
-        
-        st.info(f"✓ Using: {', '.join(f'{k}={v:.2f}' for k,v in theoretical_fc.items())}")
-        st.caption(f"FP definition (all species): p<{p_thr} AND |log2fc - expected| > ±{fc_tolerance}")
-        
-        species_series = df[species_col]
-        var_ov, var_sp, stab_ov, stab_sp, asym_dict, error_dict, fp_var_sp = compute_species_metrics(
-            res, theoretical_fc, species_series, stable_thr, fc_tolerance, p_thr
-        )
-        
-        # Display asymmetry
-        if asym_dict:
-            st.markdown("**Asymmetry (median/expected)**")
-            asym_cols = st.columns(len(asym_dict))
-            for i, (sp, asym) in enumerate(asym_dict.items()):
-                asym_cols[i].metric(sp, f"{asym:.2f}")
-        
-        # === ERROR BREAKDOWN ===
-        st.markdown("---")
-        st.markdown("**False Positives (p<0.01 & Outside ±0.58)**")
-        
-        error_cols = st.columns(3)
-        fp_human = error_dict.get("FP_HUMAN", 0)
-        fp_ecoli = error_dict.get("FP_ECOLI", 0)
-        fp_yeast = error_dict.get("FP_YEAST", 0)
-        
-        error_cols[0].metric("HUMAN", f"{fp_human:,}")
-        error_cols[1].metric("ECOLI", f"{fp_ecoli:,}")
-        error_cols[2].metric("YEAST", f"{fp_yeast:,}")
-        
-        total_fp = fp_human + fp_ecoli + fp_yeast
-        
-        if true_positives > 0 and total_fp > 0:
-            defdr = total_fp / (true_positives + total_fp) * 100
-            st.markdown(f"**Overall deFDR: {defdr:.2f}%** ({total_fp:,} FP / {true_positives:,} TP)")
-        
-        st.markdown("---")
-        
-        if stab_ov:
-            st.markdown("**Stable Proteome (HUMAN)**")
-            st.caption("FP = p<0.01 AND |log2fc| > ±0.58 (false alarms in stable proteins)")
-            c1, c2 = st.columns(2)
-            c1.metric("False Positive Rate", f"{stab_ov['FPR']:.1%}")
-            c2.metric("Stable Proteins Tested", f"{stab_ov['Total']:,}")
-            if not stab_sp.empty:
-                st.dataframe(stab_sp, use_container_width=True)
-        
-        if var_ov:
-            st.markdown("---")
-            st.markdown("**Variable Proteome (Detection & Accuracy)**")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Sensitivity", f"{var_ov['Sensitivity']:.1%}")
-            c2.metric("Specificity", f"{var_ov['Specificity']:.1%}")
-            c3.metric("Precision", f"{var_ov['Precision']:.1%}")
-            if not var_sp.empty:
-                st.dataframe(var_sp, use_container_width=True)
-                st.caption("**RMSE/MAE**: log2 units | **MAPE**: % error vs expected | **Bias**: systematic over/under-estimation | **Detection %**: sensitivity within variable proteome")
-            
-            # Variable proteome FP details (ECOLI/YEAST)
-            if not fp_var_sp.empty:
-                st.markdown("---")
-                st.markdown("**False Positives in Variable Proteome (ECOLI & YEAST)**")
-                st.caption("FP = p<0.01 AND |log2fc - expected| > ±0.58 (detected but wrong magnitude)")
-                st.dataframe(fp_var_sp, use_container_width=True)
-    else:
-        st.info("💡 Enable spike-in composition for validation")
+    # Prepare comprehensive table
+    results_table = res.copy()
+    results_table["species"] = results_table.index.map(df[species_col])
+    results_table = results_table.reset_index()
+    results_table = results_table.rename(columns={"protein_id": "Protein_ID"})
     
-    # === EXPORT ===
-    st.markdown("---")
-    st.markdown("### 📥 Export Results")
+    # Round numeric columns
+    results_table = results_table.round({
+        "log2fc": 3,
+        "pvalue": 6,
+        "fdr": 6,
+        "mean_g1": 2,
+        "mean_g2": 2,
+        "neg_log10_p": 2
+    })
+    
+    # Reorder columns
+    display_cols = [
+        "Protein_ID", "species", "log2fc", "pvalue", "fdr", 
+        "mean_g1", "mean_g2", "regulation", "neg_log10_p", "n_g1", "n_g2"
+    ]
+    
+    results_table = results_table[[c for c in display_cols if c in results_table.columns]]
+    
+    # Display with sorting/filtering
+    st.dataframe(
+        results_table,
+        use_container_width=True,
+        height=600,
+        column_config={
+            "Protein_ID": st.column_config.TextColumn(width=100),
+            "species": st.column_config.TextColumn(width=80),
+            "log2fc": st.column_config.NumberColumn(format="%.3f"),
+            "pvalue": st.column_config.NumberColumn(format="%.2e"),
+            "fdr": st.column_config.NumberColumn(format="%.2e"),
+            "regulation": st.column_config.TextColumn(width=80),
+        }
+    )
+    
+    # Download button
     st.download_button(
-        "Download Results CSV",
-        data=res.to_csv().encode("utf-8"),
-        file_name=f"dea_{ref_cond}_vs_{treat_cond}.csv",
+        "📥 Download Full Results",
+        data=results_table.to_csv(index=False).encode("utf-8"),
+        file_name=f"dea_all_results_{ref_cond}_vs_{treat_cond}.csv",
         mime="text/csv",
     )
-else:
-    st.info("👆 Configure and run analysis")
