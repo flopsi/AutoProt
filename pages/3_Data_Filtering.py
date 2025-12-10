@@ -107,39 +107,75 @@ else:
     st.info("ℹ️ No contaminant columns detected. Skipping quality flags.")
 
 st.markdown("---")
-
 # ============================================================================
 # STEP 2: MINIMUM PEPTIDES FILTER
 # ============================================================================
 
 st.subheader("2️⃣ Minimum Peptide Requirements")
 
-# Detect peptide count columns
-peptide_cols = [col for col in df.columns if any(
-    keyword in col.lower() for keyword in 
-    ['peptide', 'unique peptide', 'razor']
-)]
-
-min_peptides = st.slider(
-    "Minimum unique peptides per protein:",
-    min_value=1,
-    max_value=5,
-    value=2,
-    help="Standard threshold: ≥2 peptides for high-confidence ID"
-)
-
-removed_pep = 0
-if peptide_cols:
-    pep_col = [c for c in peptide_cols if 'unique' in c.lower()][0] if any('unique' in c.lower() for c in peptide_cols) else peptide_cols[0]
-    initial = len(df_qc)
-    df_qc = df_qc[pd.to_numeric(df_qc[pep_col], errors='coerce') >= min_peptides]
-    removed_pep = initial - len(df_qc)
-    st.success(f"✅ Removed {removed_pep:,} rows ({removed_pep/initial*100:.1f}%)")
-    st.caption(f"Filter: {pep_col} ≥ {min_peptides}")
+# Get peptide count columns from upload page
+if 'peptide_count_cols' not in st.session_state or not st.session_state.peptide_count_cols:
+    st.warning("⚠️ No peptide count columns configured. Skipping filter.")
+    st.markdown("---")
 else:
-    st.warning("⚠️ No peptide count columns detected")
+    peptide_count_cols = st.session_state.peptide_count_cols
+    
+    st.info(f"📊 Using {len(peptide_count_cols)} peptide count column(s)")
+    
+    # Show which columns are being used
+    with st.expander("📋 Peptide count columns", expanded=False):
+        for col in peptide_count_cols[:5]:
+            st.text(col)
+        if len(peptide_count_cols) > 5:
+            st.caption(f"... and {len(peptide_count_cols) - 5} more")
+    
+    # Slider for minimum peptides
+    min_peptides = st.slider(
+        "Minimum unique peptides per protein (across all samples):",
+        min_value=1,
+        max_value=10,
+        value=2,
+        help="Standard threshold: ≥2 peptides for high-confidence protein identification"
+    )
+    
+    # Filter logic: protein must have >= min_peptides in at least one sample
+    initial_count = len(df_qc)
+    
+    # Convert peptide columns to numeric and compute max across all samples
+    peptide_count_numeric = df_qc[peptide_count_cols].apply(
+        pd.to_numeric, errors='coerce'
+    ).fillna(0)
+    
+    # Maximum peptides detected across all samples for each protein
+    max_peptides_per_protein = peptide_count_numeric.max(axis=1)
+    
+    # Filter: keep proteins with at least min_peptides in ANY sample
+    mask = max_peptides_per_protein >= min_peptides
+    df_qc = df_qc[mask].copy()
+    
+    removed_pep = initial_count - len(df_qc)
+    
+    if removed_pep > 0:
+        st.success(f"✅ Removed {removed_pep:,} proteins ({removed_pep/initial_count*100:.1f}%)")
+        st.caption(f"Filter: Max peptides across samples ≥ {min_peptides}")
+        
+        # Show distribution
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Proteins remaining", f"{len(df_qc):,}")
+        with col2:
+            avg_peptides = max_peptides_per_protein[mask].mean()
+            st.metric("Avg peptides (remaining)", f"{avg_peptides:.1f}")
+    else:
+        st.info(f"ℹ️ All {initial_count:,} proteins passed the filter (min {min_peptides})")
+    
+    # Show sample data with counts
+    with st.expander("🔍 Sample peptide counts", expanded=False):
+        sample_data = df_qc[[st.session_state.id_col] + peptide_count_cols[:5]].head(10)
+        st.dataframe(sample_data, hide_index=True)
 
 st.markdown("---")
+
 
 # ============================================================================
 # STEP 3: MISSING VALUES FILTER
