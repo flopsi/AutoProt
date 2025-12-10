@@ -1,11 +1,11 @@
 """
-pages/6_Differential_Abundance.py - PRODUCTION
+pages/6_Differential_Abundance.py - FIXED
 Comprehensive Differential Abundance Analysis (DEA)
 - Welch's t-test + Limma-style Empirical Bayes
 - Parametric & non-parametric tests
 - Spike-in validation with unified FP definition
 - Effect sizes, visualizations, interpretation
-- FIXED: Unified specificity, KeyError 'pvalue', deprecated use_container_width
+- BUGFIX: Empty species handling + deprecated Streamlit warnings
 """
 
 from __future__ import annotations
@@ -269,10 +269,10 @@ def compute_species_metrics(
     results_df: pd.DataFrame,
     true_fc_dict: Dict[str, float],
     species_col_series: pd.Series,
-    stable_thr: float,
-    fc_tolerance: float,
-    p_threshold: float,
-    test_col: str,
+    test_col: str = "p_ttest",
+    stable_thr: float = 0.5,
+    fc_tolerance: float = 0.58,
+    p_threshold: float = 0.01,
 ) -> Tuple[Dict, pd.DataFrame, Dict, pd.DataFrame, Dict, Dict, pd.DataFrame]:
     """
     Calculate validation metrics for variable and stable proteomes.
@@ -282,7 +282,11 @@ def compute_species_metrics(
     res = results_df.copy()
     res["species"] = res.index.map(species_col_series)
     res["true_log2fc"] = res["species"].map(true_fc_dict)
-    res["pvalue"] = res[test_col]  # Create pvalue column from test_col
+    res["pvalue"] = res[test_col].fillna(1.0)  # Unified pvalue column with NaN safety
+    
+    # BUGFIX: Add regulation column if not present
+    if "regulation" not in res.columns:
+        res["regulation"] = "not_tested"
     
     res = res[res["regulation"] != "not_tested"].copy()
     res = res.dropna(subset=["true_log2fc", "species"])
@@ -359,6 +363,7 @@ def compute_species_metrics(
     if not stab_df.empty:
         stab_df["significant"] = stab_df["pvalue"] < p_threshold
         stab_df["outside_tolerance"] = np.abs(stab_df["log2fc"] - stab_df["true_log2fc"]) > fc_tolerance
+        stab_df["is_fp"] = stab_df["significant"] & stab_df["outside_tolerance"]
         
         true_fp = int((stab_df["significant"] & stab_df["outside_tolerance"]).sum())
         tn = int((~stab_df["significant"] | ~stab_df["outside_tolerance"]).sum())
@@ -370,11 +375,9 @@ def compute_species_metrics(
         
         for sp in stab_df["species"].unique():
             sp_df = stab_df[stab_df["species"] == sp].copy()
-            sp_df["significant"] = sp_df["pvalue"] < p_threshold
-            sp_df["outside_tolerance"] = np.abs(sp_df["log2fc"] - sp_df["true_log2fc"]) > fc_tolerance
             
-            fp_s = int((sp_df["significant"] & sp_df["outside_tolerance"]).sum())
-            tn_s = int((~sp_df["significant"] | ~sp_df["outside_tolerance"]).sum())
+            fp_s = int(sp_df["is_fp"].sum())
+            tn_s = int((~sp_df["is_fp"]).sum())
             mae_log2 = sp_df["log2fc"].abs().mean()
             
             stab_species_rows.append({
@@ -521,15 +524,20 @@ use_spike_in = st.sidebar.checkbox("✓ Spike-in Validation", value=False)
 
 if use_spike_in:
     st.sidebar.markdown("**Spike-in Composition**")
-    species_values = sorted([s for s in df[species_col].unique() if isinstance(s, str) and s.strip()])
+    # BUGFIX: Handle empty species values safely
+    species_values = sorted([s for s in df[species_col].unique() if isinstance(s, str) and s.strip() and pd.notna(s)])
     
-    theoretical_fc_sidebar: Dict[str, float] = {}
-    for sp in species_values:
-        comp_a = st.sidebar.slider(f"{sp} in {ref_cond} (%)", 0.0, 100.0, 100.0/max(len(species_values),1), 5.0, key=f"sidebar_a_{sp}")
-        comp_b = st.sidebar.slider(f"{sp} in {treat_cond} (%)", 0.0, 100.0, 100.0/max(len(species_values),1), 5.0, key=f"sidebar_b_{sp}")
-        
-        if comp_a > 0 and comp_b > 0:
-            theoretical_fc_sidebar[sp] = np.log2(comp_a / comp_b)
+    if not species_values:
+        st.sidebar.warning("⚠️ No valid species found in data")
+        theoretical_fc_sidebar: Dict[str, float] = {}
+    else:
+        theoretical_fc_sidebar: Dict[str, float] = {}
+        for sp in species_values:
+            comp_a = st.sidebar.slider(f"{sp} in {ref_cond} (%)", 0.0, 100.0, 100.0/max(len(species_values),1), 5.0, key=f"sidebar_a_{sp}")
+            comp_b = st.sidebar.slider(f"{sp} in {treat_cond} (%)", 0.0, 100.0, 100.0/max(len(species_values),1), 5.0, key=f"sidebar_b_{sp}")
+            
+            if comp_a > 0 and comp_b > 0:
+                theoretical_fc_sidebar[sp] = np.log2(comp_a / comp_b)
     
     if st.sidebar.button("💾 Save Spike-in FC"):
         st.session_state.dea_theoretical_fc = theoretical_fc_sidebar.copy()
@@ -541,9 +549,8 @@ st.sidebar.markdown("---")
 # RUN ANALYSIS
 # ============================================================================
 
-st.subheader("1️⃣ Running Analysis")
-
-if st.button("🚀 Run DEA", type="primary", width="stretch"):
+st.subheader("1️⃣ Running Analysis")    
+if st.button("🚀 Run DEA", type="primary", use_container_width=True):  # BUGFIX: Changed width to use_container_width
     with st.spinner("⏳ Processing..."):
         # Log2 transform
         df_num = df[numeric_cols]
@@ -612,12 +619,12 @@ if st.button("🚀 Run DEA", type="primary", width="stretch"):
 
 if "dea_results" in st.session_state:
     res = st.session_state.dea_results
-    ref_cond = st.session_state.get('dea_ref', 'A')
-    treat_cond = st.session_state.get('dea_treat', 'B')
-    p_thr = st.session_state.get('dea_p_thr', 0.05)
-    fc_thr = st.session_state.get('dea_fc_thr', 0.5)
-    test_col = st.session_state.get('dea_test_col', 'q_ttest')
-    use_fdr = st.session_state.get('dea_use_fdr', True)
+    ref_cond = st.session_state.dea_ref
+    treat_cond = st.session_state.dea_treat
+    p_thr = st.session_state.dea_p_thr
+    fc_thr = st.session_state.dea_fc_thr
+    test_col = st.session_state.dea_test_col
+    use_fdr = st.session_state.dea_use_fdr
     use_limma_flag = st.session_state.get('dea_use_limma', True)
     use_param = st.session_state.get('dea_use_parametric', True)
     theoretical_fc = st.session_state.get('dea_theoretical_fc', {})
@@ -658,26 +665,36 @@ if "dea_results" in st.session_state:
     with col4:
         st.metric("|logFC|", f">{fc_thr:.1f}")
     
-    # Validation metrics if spike-in provided - USE UNIFIED FUNCTION
+    # Validation metrics if spike-in provided
     if theoretical_fc:
         species_series = df[species_col]
         stable_thr = 0.5
         fc_tolerance = 0.58
         
         var_ov, var_sp, stab_ov, stab_sp, asym_dict, error_dict, fp_var_sp = compute_species_metrics(
-            res, theoretical_fc, species_series, stable_thr, fc_tolerance, p_thr, test_col
+            st.session_state.dea_results, theoretical_fc, species_series, test_col,
+            stable_thr, fc_tolerance, p_thr
         )
         
         if var_ov:
+            tp = var_ov.get("TP", 0)
+            fn = var_ov.get("FN", 0)
+            tn = stab_ov.get("TN", 0) if stab_ov else 0
+            fp = stab_ov.get("FP", 0) if stab_ov else 0
+            
+            sens = var_ov["Sensitivity"] * 100
+            spec = var_ov["Specificity"] * 100
+            prec = var_ov["Precision"] * 100
+            
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Sensitivity", f"{var_ov['Sensitivity']*100:.1f}%")
+                st.metric("Sensitivity", f"{sens:.1f}%")
             with col2:
-                st.metric("Specificity", f"{var_ov.get('Specificity', 0)*100:.1f}%")
+                st.metric("Specificity", f"{spec:.1f}%")
             with col3:
-                st.metric("Precision", f"{var_ov['Precision']*100:.1f}%")
+                st.metric("Precision", f"{prec:.1f}%")
             with col4:
-                st.metric("True Positives", var_ov['TP'])
+                st.metric("True Positives", tp)
     
     st.markdown("---")
     
@@ -720,8 +737,9 @@ if "dea_results" in st.session_state:
         ma = res[res["regulation"] != "not_tested"].copy()
         ma = ma.dropna(subset=['log2fc', 'species'])
         
-        species_list = sorted(ma["species"].unique())
+        species_list = sorted([s for s in ma["species"].unique() if pd.notna(s)])  # BUGFIX: Filter out NaN species
         
+        # BUGFIX: Check if species_list is empty
         if len(species_list) > 0:
             fig_facet = make_subplots(
                 rows=1, cols=len(species_list),
@@ -737,6 +755,7 @@ if "dea_results" in st.session_state:
                 sp_sig = sp_data[sp_data["regulation"] != "not_significant"]
                 sp_nonsig = sp_data[sp_data["regulation"] == "not_significant"]
                 
+                # Non-sig
                 if len(sp_nonsig) > 0:
                     fig_facet.add_trace(
                         go.Scatter(
@@ -751,6 +770,7 @@ if "dea_results" in st.session_state:
                         row=1, col=i
                     )
                 
+                # Up
                 sp_up = sp_sig[sp_sig["regulation"] == "up"]
                 if len(sp_up) > 0:
                     fig_facet.add_trace(
@@ -766,6 +786,7 @@ if "dea_results" in st.session_state:
                         row=1, col=i
                     )
                 
+                # Down
                 sp_down = sp_sig[sp_sig["regulation"] == "down"]
                 if len(sp_down) > 0:
                     fig_facet.add_trace(
@@ -781,13 +802,35 @@ if "dea_results" in st.session_state:
                         row=1, col=i
                     )
                 
+                # Expected FC lines if spike-in
                 if theoretical_fc and sp in theoretical_fc:
                     expected_fc = theoretical_fc[sp]
                     fc_tolerance = 0.58
                     
-                    fig_facet.add_hline(y=expected_fc, line_dash="dash", line_color=color, line_width=2, row=1, col=i)
-                    fig_facet.add_hline(y=expected_fc + fc_tolerance, line_dash="dot", line_color=color, line_width=1, opacity=0.3, row=1, col=i)
-                    fig_facet.add_hline(y=expected_fc - fc_tolerance, line_dash="dot", line_color=color, line_width=1, opacity=0.3, row=1, col=i)
+                    fig_facet.add_hline(
+                        y=expected_fc,
+                        line_dash="dash",
+                        line_color=color,
+                        line_width=2,
+                        row=1, col=i
+                    )
+                    
+                    fig_facet.add_hline(
+                        y=expected_fc + fc_tolerance,
+                        line_dash="dot",
+                        line_color=color,
+                        line_width=1,
+                        opacity=0.3,
+                        row=1, col=i
+                    )
+                    fig_facet.add_hline(
+                        y=expected_fc - fc_tolerance,
+                        line_dash="dot",
+                        line_color=color,
+                        line_width=1,
+                        opacity=0.3,
+                        row=1, col=i
+                    )
                 
                 fig_facet.add_hline(y=0, line_color="red", line_width=1, opacity=0.5, row=1, col=i)
             
@@ -834,7 +877,9 @@ if "dea_results" in st.session_state:
         if len(density_data) > 0:
             fig_density = go.Figure()
             
-            for sp in sorted(density_data["species"].unique()):
+            valid_species = [s for s in sorted(density_data["species"].unique()) if pd.notna(s)]  # BUGFIX: Filter NaN
+            
+            for sp in valid_species:
                 sp_data = density_data[density_data["species"] == sp]["log2fc"]
                 if len(sp_data) > 1:
                     color = SPECIES_COLORS.get(sp, "#95a5a6")
@@ -929,6 +974,7 @@ if "dea_results" in st.session_state:
             
             heatmap_data = df.loc[top_proteins, ref_samples + treat_samples].copy()
             
+            # Z-score normalize
             heatmap_z = heatmap_data.T.apply(lambda x: (x - x.mean()) / (x.std() + 1e-6) if x.std() > 0 else x).T
             
             fig_heat = go.Figure(data=go.Heatmap(
@@ -961,7 +1007,7 @@ if "dea_results" in st.session_state:
             fig_cohens = px.histogram(
                 cohens_data,
                 x='cohens_d',
-                nbinsx=50,
+                nbins=50,
                 title="Cohen's d Distribution",
                 labels={'cohens_d': "Cohen's d"},
                 height=500
@@ -984,7 +1030,7 @@ if "dea_results" in st.session_state:
             fig_pval = px.histogram(
                 pval_data,
                 x=test_col,
-                nbinsx=50,
+                nbins=50,
                 title=f"{test_label} P-value Distribution",
                 labels={test_col: "P-value" if not use_fdr else "FDR (q-value)"},
                 height=500
@@ -996,7 +1042,7 @@ if "dea_results" in st.session_state:
             st.warning("⚠️ No p-value data")
     
     # === PARAMETRIC VS NON-PARAMETRIC COMPARISON ===
-    if "Parametric vs Non-parametric" in viz_options and use_param and st.session_state.get('dea_use_parametric'):
+    if "Parametric vs Non-parametric" in viz_options and use_parametric and use_nonparametric:
         st.markdown("### 🔍 Parametric vs Non-parametric Comparison")
         
         comp_data = res[res['p_ttest'].notna() & res['p_mannwhitney'].notna()]
@@ -1006,10 +1052,10 @@ if "dea_results" in st.session_state:
             
             col1, col2, col3 = st.columns(3)
             with col1:
-                sig_ttest = ((comp_data.get('q_ttest', comp_data['p_ttest']) < p_thr) & (comp_data['log2fc'].abs() > fc_thr)).sum()
+                sig_ttest = ((comp_data['q_ttest'] < p_thr) & (comp_data['log2fc'].abs() > fc_thr)).sum()
                 st.metric("Significant (t-test)", sig_ttest)
             with col2:
-                sig_mw = ((comp_data.get('q_mannwhitney', comp_data['p_mannwhitney']) < p_thr) & (comp_data['log2fc'].abs() > fc_thr)).sum()
+                sig_mw = ((comp_data['q_mannwhitney'] < p_thr) & (comp_data['log2fc'].abs() > fc_thr)).sum()
                 st.metric("Significant (MW)", sig_mw)
             with col3:
                 st.metric("P-value Correlation", f"{corr:.3f}")
@@ -1045,9 +1091,10 @@ if "dea_results" in st.session_state:
         fc_tolerance = 0.58
         
         var_ov, var_sp, stab_ov, stab_sp, asym_dict, error_dict, fp_var_sp = compute_species_metrics(
-            res, theoretical_fc, species_series, stable_thr, fc_tolerance, p_thr, test_col
+            res, theoretical_fc, species_series, test_col, stable_thr, fc_tolerance, p_thr
         )
         
+        # Validation metrics table
         validation_rows = []
         
         for sp in theoretical_fc.keys():
@@ -1074,19 +1121,19 @@ if "dea_results" in st.session_state:
             validation_rows.append({
                 "Metric": "Sensitivity",
                 "Species": "Overall",
-                "Value": f"{var_ov['Sensitivity']*100:.1f}%",
+                "Value": f"{var_ov['Sensitivity']:.1%}",
                 "Category": "Sensitivity"
             })
             validation_rows.append({
                 "Metric": "Specificity",
                 "Species": "Overall",
-                "Value": f"{var_ov.get('Specificity', 0)*100:.1f}%",
+                "Value": f"{var_ov['Specificity']:.1%}",
                 "Category": "Specificity"
             })
         
         if validation_rows:
             val_df = pd.DataFrame(validation_rows)
-            st.dataframe(val_df, width='stretch', hide_index=True)
+            st.dataframe(val_df, use_container_width=True, hide_index=True)
     
     # ============================================================================
     # RESULTS TABLE
@@ -1107,7 +1154,7 @@ if "dea_results" in st.session_state:
         display_df = display_df.round(4)
         display_df = display_df.sort_values(test_col)
         
-        st.dataframe(display_df, width='stretch', height=600)
+        st.dataframe(display_df, use_container_width=True, height=600)
         
         csv_data = display_df.to_csv(index=True).encode('utf-8')
         st.download_button(
