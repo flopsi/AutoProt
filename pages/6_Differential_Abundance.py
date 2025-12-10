@@ -134,9 +134,12 @@ def compute_species_metrics(
     true_fc_dict: Dict[str, float],
     species_col_series: pd.Series,
     stable_thr: float = 0.5,
+    fc_tolerance: float = 0.58,
 ) -> Tuple[Dict, pd.DataFrame, Dict, pd.DataFrame, Dict]:
     """
     Calculate metrics for variable and stable proteomes + asymmetry.
+    
+    False positives = proteins within ±fc_tolerance of theoretical FC that are called significant.
     
     Returns:
         (variable_overall, variable_per_species, stable_overall, stable_per_species, asymmetry_dict)
@@ -160,7 +163,7 @@ def compute_species_metrics(
             asym = calculate_asymmetry(sp_df["log2fc"].values, expected_fc)
             asymmetry_dict[sp] = asym
     
-    # === VARIABLE PROTEOME ===
+    # === VARIABLE PROTEOME (|expected FC| >= stable_thr) ===
     var_df = res[np.abs(res["true_log2fc"]) >= stable_thr].copy()
     
     var_overall = {}
@@ -210,7 +213,8 @@ def compute_species_metrics(
                 "Detection_%": f"{sp_df['observed_regulated'].mean()*100:.1f}",
             })
     
-    # === STABLE PROTEOME ===
+    # === STABLE PROTEOME (|expected FC| < stable_thr) ===
+    # False positives: proteins within ±fc_tolerance of theoretical FC that are called significant
     stab_df = res[np.abs(res["true_log2fc"]) < stable_thr].copy()
     
     stab_overall = {}
@@ -218,8 +222,16 @@ def compute_species_metrics(
     
     if not stab_df.empty:
         stab_df["observed_regulated"] = stab_df["regulation"].isin(["up", "down"])
-        fp = int(stab_df["observed_regulated"].sum())
+        
+        # Within tolerance window = false positives (should not be called)
+        stab_df["within_tolerance"] = np.abs(stab_df["log2fc"] - stab_df["true_log2fc"]) <= fc_tolerance
+        
+        # FP: called regulated AND within tolerance
+        fp = int((stab_df["observed_regulated"] & stab_df["within_tolerance"]).sum())
+        
+        # TN: called non-regulated
         tn = int((~stab_df["observed_regulated"]).sum())
+        
         total = len(stab_df)
         fpr = fp / total if total > 0 else 0.0
         
@@ -227,7 +239,9 @@ def compute_species_metrics(
         
         for sp in stab_df["species"].unique():
             sp_df = stab_df[stab_df["species"] == sp].copy()
-            fp_s = int(sp_df["observed_regulated"].sum())
+            sp_df["within_tolerance"] = np.abs(sp_df["log2fc"] - sp_df["true_log2fc"]) <= fc_tolerance
+            
+            fp_s = int((sp_df["observed_regulated"] & sp_df["within_tolerance"]).sum())
             tn_s = int((~sp_df["observed_regulated"]).sum())
             mae_log2 = sp_df["log2fc"].abs().mean()
             
@@ -375,7 +389,8 @@ with c2:
     use_fdr = st.checkbox("Use FDR correction (BH)", value=True)
 
 stable_thr = 0.5
-st.caption(f"Stable: |expected log2FC| < {stable_thr} · Errors on log2 scale")
+fc_tolerance = 0.58  # False positive window: ±0.58 log2FC
+st.caption(f"Stable: |expected log2FC| < {stable_thr} · FP window: ±{fc_tolerance} log2FC · Errors on log2 scale")
 st.markdown("---")
 
 # ---------------------------------------------------------------------
@@ -481,11 +496,10 @@ if "dea_results" in st.session_state:
             asymmetry_text = ", ".join([f"Asym. {k} {v:.2f}" for k, v in asym_dict.items()])
             st.markdown(f"**{asymmetry_text}**")
     
-    # === PLOT 1: FACETED SCATTER (MA PLOT) - SIGNIFICANT ONLY ===
+    # === PLOT 1: FACETED SCATTER (MA PLOT) - EVERYTHING ===
     st.markdown("### 📊 MA Plot (Faceted by Species)")
     
-    # Filter for SIGNIFICANT proteins only
-    ma = res[res["regulation"].isin(["up", "down"])].copy()
+    ma = res[res["regulation"] != "not_tested"].copy()
     ma["A"] = (ma["mean_g1"] + ma["mean_g2"]) / 2
     ma = ma.dropna(subset=['A', 'log2fc', 'species'])
     
@@ -502,16 +516,34 @@ if "dea_results" in st.session_state:
         sp_data = ma[ma["species"] == sp]
         color = SPECIES_COLORS.get(sp, "#95a5a6")
         
-        # Show ALL significant scatter points
+        # Color by regulation status
+        sp_data_up = sp_data[sp_data["regulation"] == "up"]
+        sp_data_down = sp_data[sp_data["regulation"] == "down"]
+        
+        # Up-regulated
         fig_facet.add_trace(
             go.Scatter(
-                x=sp_data["A"],
-                y=sp_data["log2fc"],
+                x=sp_data_up["A"],
+                y=sp_data_up["log2fc"],
                 mode='markers',
-                marker=dict(size=3, color=color, opacity=0.6),
-                name=sp,
-                showlegend=False,
-                hovertemplate=f"{sp}<br>A=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
+                marker=dict(size=4, color=color, opacity=0.8, symbol='circle'),
+                name=f"{sp} (up)",
+                showlegend=(i==1),
+                hovertemplate=f"{sp} (up)<br>A=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
+            ),
+            row=1, col=i
+        )
+        
+        # Down-regulated
+        fig_facet.add_trace(
+            go.Scatter(
+                x=sp_data_down["A"],
+                y=sp_data_down["log2fc"],
+                mode='markers',
+                marker=dict(size=4, color=color, opacity=0.8, symbol='diamond'),
+                name=f"{sp} (down)",
+                showlegend=(i==1),
+                hovertemplate=f"{sp} (down)<br>A=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
             ),
             row=1, col=i
         )
@@ -519,51 +551,45 @@ if "dea_results" in st.session_state:
         # Add expected FC line if available
         if theoretical_fc and sp in theoretical_fc:
             expected_fc = theoretical_fc[sp]
-            if abs(expected_fc) >= stable_thr:
-                fig_facet.add_hline(
-                    y=expected_fc,
-                    line_dash="dash",
-                    line_color=color,
-                    line_width=2,
-                    row=1, col=i
-                )
+            
+            fig_facet.add_hline(
+                y=expected_fc,
+                line_dash="dash",
+                line_color=color,
+                line_width=2,
+                row=1, col=i
+            )
+            
+            # Add tolerance band (±0.58)
+            fig_facet.add_hline(
+                y=expected_fc + fc_tolerance,
+                line_dash="dot",
+                line_color=color,
+                line_width=1,
+                opacity=0.3,
+                row=1, col=i
+            )
+            fig_facet.add_hline(
+                y=expected_fc - fc_tolerance,
+                line_dash="dot",
+                line_color=color,
+                line_width=1,
+                opacity=0.3,
+                row=1, col=i
+            )
         
         # Zero line
         fig_facet.add_hline(y=0, line_color="red", line_width=1, opacity=0.5, row=1, col=i)
-        
-        # Add boxplot - only show outliers beyond ±2 SD
-        mean_fc = sp_data["log2fc"].mean()
-        std_fc = sp_data["log2fc"].std()
-        lower_bound = mean_fc - 2 * std_fc
-        upper_bound = mean_fc + 2 * std_fc
-        
-        # Filter for outlier points
-        outliers = sp_data[(sp_data["log2fc"] < lower_bound) | (sp_data["log2fc"] > upper_bound)]
-        
-        fig_facet.add_trace(
-            go.Box(
-                y=sp_data["log2fc"],
-                name=sp,
-                marker_color=color,
-                showlegend=False,
-                width=0.3,
-                boxmean='sd',
-                boxpoints='outliers' if len(outliers) > 0 else False,
-                marker=dict(
-                    outliercolor=color,
-                    line=dict(outliercolor=color, outlierwidth=2)
-                )
-            ),
-            row=1, col=i
-        )
     
     fig_facet.update_xaxes(title_text="log2(B)", row=1, col=2)
     fig_facet.update_yaxes(title_text=f"log2(A:B)", row=1, col=1)
     fig_facet.update_layout(height=500, title_text="", showlegend=False)
     st.plotly_chart(fig_facet, use_container_width=True)
     
-    # === PLOT 2: REGULAR SCATTER (MA PLOT) - SIGNIFICANT ONLY ===
+    # === PLOT 2: REGULAR SCATTER (MA PLOT) ===
     st.markdown("### 📈 MA Plot (Combined)")
+    
+    ma["color_by_regulation"] = ma["regulation"].map({"up": "↑ Up", "down": "↓ Down"})
     
     fig_ma = px.scatter(
         ma,
@@ -571,6 +597,7 @@ if "dea_results" in st.session_state:
         y="log2fc",
         color="species",
         color_discrete_map=SPECIES_COLORS,
+        symbol="color_by_regulation",
         hover_data=["regulation"],
         labels={"A": "log2(B)", "log2fc": f"log2({ref_cond}/{treat_cond})"},
         height=600,
@@ -581,19 +608,38 @@ if "dea_results" in st.session_state:
     if theoretical_fc:
         for species, expected_fc in theoretical_fc.items():
             if abs(expected_fc) >= stable_thr:
+                color = SPECIES_COLORS.get(species, "#95a5a6")
+                
+                # Expected FC line
                 fig_ma.add_hline(
                     y=expected_fc,
-                    line_dash="dot",
+                    line_dash="dash",
                     line_width=2,
-                    line_color=SPECIES_COLORS.get(species, "#95a5a6"),
+                    line_color=color,
                     opacity=0.7,
                     annotation_text=f"{species} (exp={expected_fc:.2f})",
                     annotation_position="right",
                 )
+                
+                # Tolerance band
+                fig_ma.add_hline(
+                    y=expected_fc + fc_tolerance,
+                    line_dash="dot",
+                    line_width=1,
+                    line_color=color,
+                    opacity=0.3,
+                )
+                fig_ma.add_hline(
+                    y=expected_fc - fc_tolerance,
+                    line_dash="dot",
+                    line_width=1,
+                    line_color=color,
+                    opacity=0.3,
+                )
     
     st.plotly_chart(fig_ma, use_container_width=True)
     
-    # === PLOT 3: DENSITY PLOT - ALL TESTED ===
+    # === PLOT 3: DENSITY PLOT ===
     st.markdown("### 📊 Density Plot")
     
     density_data = res[res["regulation"] != "not_tested"].dropna(subset=["log2fc", "species"])
@@ -672,9 +718,10 @@ if "dea_results" in st.session_state:
         st.subheader("6️⃣ Spike-in Validation")
         
         st.info(f"✓ Using: {', '.join(f'{k}={v:.2f}' for k,v in theoretical_fc.items())}")
+        st.caption(f"FP window: proteins within ±{fc_tolerance} log2FC of expected value")
         
         species_series = df[species_col]
-        var_ov, var_sp, stab_ov, stab_sp, asym_dict = compute_species_metrics(res, theoretical_fc, species_series, stable_thr)
+        var_ov, var_sp, stab_ov, stab_sp, asym_dict = compute_species_metrics(res, theoretical_fc, species_series, stable_thr, fc_tolerance)
         
         # Display asymmetry
         if asym_dict:
@@ -684,15 +731,15 @@ if "dea_results" in st.session_state:
                 asym_cols[i].metric(sp, f"{asym:.2f}")
         
         if stab_ov:
-            st.markdown("**Stable Proteome (FP)**")
+            st.markdown("**Stable Proteome (False Positive Analysis)**")
             c1, c2 = st.columns(2)
-            c1.metric("FPR", f"{stab_ov['FPR']:.1%}")
-            c2.metric("N", f"{stab_ov['Total']:,}")
+            c1.metric("False Positive Rate", f"{stab_ov['FPR']:.1%}")
+            c2.metric("Stable Proteins", f"{stab_ov['Total']:,}")
             if not stab_sp.empty:
                 st.dataframe(stab_sp, use_container_width=True)
         
         if var_ov:
-            st.markdown("**Variable Proteome (Detection)**")
+            st.markdown("**Variable Proteome (Detection & Accuracy)**")
             c1, c2, c3 = st.columns(3)
             c1.metric("Sensitivity", f"{var_ov['Sensitivity']:.1%}")
             c2.metric("Specificity", f"{var_ov['Specificity']:.1%}")
