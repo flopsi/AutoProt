@@ -1,10 +1,11 @@
 """
-pages/6_Differential_Abundance.py
+pages/6_Differential_Abundance.py - FIXED
 Comprehensive Differential Abundance Analysis (DEA)
 - Welch's t-test + Limma-style Empirical Bayes
 - Parametric & non-parametric tests
 - Spike-in validation with unified FP definition
 - Effect sizes, visualizations, interpretation
+- BUGFIX: Empty species handling + deprecated Streamlit warnings
 """
 
 from __future__ import annotations
@@ -701,22 +702,25 @@ if "dea_results" in st.session_state:
         
         volc = res[res["regulation"] != "not_tested"].dropna(subset=['neg_log10_p', 'log2fc'])
         
-        fig_v = px.scatter(
-            volc,
-            x="log2fc",
-            y="neg_log10_p",
-            color="regulation",
-            color_discrete_map={"up": "#e74c3c", "down": "#3498db", "not_significant": "#bdc3c7"},
-            hover_data=["species", "mean_intensity", "cohens_d"],
-            labels={"log2fc": f"log2({ref_cond}/{treat_cond})", "neg_log10_p": "-log10(p)"},
-            height=600,
-        )
-        
-        fig_v.add_hline(y=-np.log10(p_thr), line_dash="dash", line_color="gray", line_width=2)
-        fig_v.add_vline(x=fc_thr, line_dash="dash", line_color="gray", line_width=1, opacity=0.5)
-        fig_v.add_vline(x=-fc_thr, line_dash="dash", line_color="gray", line_width=1, opacity=0.5)
-        
-        st.plotly_chart(fig_v, use_container_width=True)
+        if len(volc) > 0:
+            fig_v = px.scatter(
+                volc,
+                x="log2fc",
+                y="neg_log10_p",
+                color="regulation",
+                color_discrete_map={"up": "#e74c3c", "down": "#3498db", "not_significant": "#bdc3c7"},
+                hover_data=["species", "mean_intensity", "cohens_d"],
+                labels={"log2fc": f"log2({ref_cond}/{treat_cond})", "neg_log10_p": "-log10(p)"},
+                height=600,
+            )
+            
+            fig_v.add_hline(y=-np.log10(p_thr), line_dash="dash", line_color="gray", line_width=2)
+            fig_v.add_vline(x=fc_thr, line_dash="dash", line_color="gray", line_width=1, opacity=0.5)
+            fig_v.add_vline(x=-fc_thr, line_dash="dash", line_color="gray", line_width=1, opacity=0.5)
+            
+            st.plotly_chart(fig_v, use_container_width=True)
+        else:
+            st.warning("⚠️ No data for volcano plot after filtering")
     
     # === MA PLOT (FACETED) ===
     if "MA Plot (Faceted)" in viz_options:
@@ -726,101 +730,109 @@ if "dea_results" in st.session_state:
         ma = ma.dropna(subset=['log2fc', 'species'])
         
         species_list = sorted(ma["species"].unique())
-        fig_facet = make_subplots(
-            rows=1, cols=len(species_list),
-            subplot_titles=species_list,
-            shared_yaxes=True,
-            horizontal_spacing=0.05
-        )
         
-        for i, sp in enumerate(species_list, 1):
-            sp_data = ma[ma["species"] == sp]
-            color = SPECIES_COLORS.get(sp, "#95a5a6")
-            
-            sp_sig = sp_data[sp_data["regulation"] != "not_significant"]
-            sp_nonsig = sp_data[sp_data["regulation"] == "not_significant"]
-            
-            # Non-sig
-            fig_facet.add_trace(
-                go.Scatter(
-                    x=sp_nonsig["mean_intensity"],
-                    y=sp_nonsig["log2fc"],
-                    mode='markers',
-                    marker=dict(size=3, color="lightgray", opacity=0.2),
-                    name="ns",
-                    showlegend=False,
-                    hovertemplate=f"{sp}<br>Intensity=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
-                ),
-                row=1, col=i
+        # BUGFIX: Check if species_list is empty
+        if len(species_list) > 0:
+            fig_facet = make_subplots(
+                rows=1, cols=len(species_list),
+                subplot_titles=species_list,
+                shared_yaxes=True,
+                horizontal_spacing=0.05
             )
             
-            # Up
-            sp_up = sp_sig[sp_sig["regulation"] == "up"]
-            fig_facet.add_trace(
-                go.Scatter(
-                    x=sp_up["mean_intensity"],
-                    y=sp_up["log2fc"],
-                    mode='markers',
-                    marker=dict(size=4, color=color, opacity=0.8, symbol='circle'),
-                    name="↑",
-                    showlegend=(i==1),
-                    hovertemplate=f"{sp} ↑<br>Intensity=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
-                ),
-                row=1, col=i
-            )
-            
-            # Down
-            sp_down = sp_sig[sp_sig["regulation"] == "down"]
-            fig_facet.add_trace(
-                go.Scatter(
-                    x=sp_down["mean_intensity"],
-                    y=sp_down["log2fc"],
-                    mode='markers',
-                    marker=dict(size=4, color=color, opacity=0.8, symbol='diamond'),
-                    name="↓",
-                    showlegend=(i==1),
-                    hovertemplate=f"{sp} ↓<br>Intensity=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
-                ),
-                row=1, col=i
-            )
-            
-            # Expected FC lines if spike-in
-            if theoretical_fc and sp in theoretical_fc:
-                expected_fc = theoretical_fc[sp]
-                fc_tolerance = 0.58
+            for i, sp in enumerate(species_list, 1):
+                sp_data = ma[ma["species"] == sp]
+                color = SPECIES_COLORS.get(sp, "#95a5a6")
                 
-                fig_facet.add_hline(
-                    y=expected_fc,
-                    line_dash="dash",
-                    line_color=color,
-                    line_width=2,
-                    row=1, col=i
-                )
+                sp_sig = sp_data[sp_data["regulation"] != "not_significant"]
+                sp_nonsig = sp_data[sp_data["regulation"] == "not_significant"]
                 
-                fig_facet.add_hline(
-                    y=expected_fc + fc_tolerance,
-                    line_dash="dot",
-                    line_color=color,
-                    line_width=1,
-                    opacity=0.3,
-                    row=1, col=i
-                )
-                fig_facet.add_hline(
-                    y=expected_fc - fc_tolerance,
-                    line_dash="dot",
-                    line_color=color,
-                    line_width=1,
-                    opacity=0.3,
-                    row=1, col=i
-                )
+                # Non-sig
+                if len(sp_nonsig) > 0:
+                    fig_facet.add_trace(
+                        go.Scatter(
+                            x=sp_nonsig["mean_intensity"],
+                            y=sp_nonsig["log2fc"],
+                            mode='markers',
+                            marker=dict(size=3, color="lightgray", opacity=0.2),
+                            name="ns",
+                            showlegend=False,
+                            hovertemplate=f"{sp}<br>Intensity=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
+                        ),
+                        row=1, col=i
+                    )
+                
+                # Up
+                sp_up = sp_sig[sp_sig["regulation"] == "up"]
+                if len(sp_up) > 0:
+                    fig_facet.add_trace(
+                        go.Scatter(
+                            x=sp_up["mean_intensity"],
+                            y=sp_up["log2fc"],
+                            mode='markers',
+                            marker=dict(size=4, color=color, opacity=0.8, symbol='circle'),
+                            name="↑",
+                            showlegend=(i==1),
+                            hovertemplate=f"{sp} ↑<br>Intensity=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
+                        ),
+                        row=1, col=i
+                    )
+                
+                # Down
+                sp_down = sp_sig[sp_sig["regulation"] == "down"]
+                if len(sp_down) > 0:
+                    fig_facet.add_trace(
+                        go.Scatter(
+                            x=sp_down["mean_intensity"],
+                            y=sp_down["log2fc"],
+                            mode='markers',
+                            marker=dict(size=4, color=color, opacity=0.8, symbol='diamond'),
+                            name="↓",
+                            showlegend=(i==1),
+                            hovertemplate=f"{sp} ↓<br>Intensity=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
+                        ),
+                        row=1, col=i
+                    )
+                
+                # Expected FC lines if spike-in
+                if theoretical_fc and sp in theoretical_fc:
+                    expected_fc = theoretical_fc[sp]
+                    fc_tolerance = 0.58
+                    
+                    fig_facet.add_hline(
+                        y=expected_fc,
+                        line_dash="dash",
+                        line_color=color,
+                        line_width=2,
+                        row=1, col=i
+                    )
+                    
+                    fig_facet.add_hline(
+                        y=expected_fc + fc_tolerance,
+                        line_dash="dot",
+                        line_color=color,
+                        line_width=1,
+                        opacity=0.3,
+                        row=1, col=i
+                    )
+                    fig_facet.add_hline(
+                        y=expected_fc - fc_tolerance,
+                        line_dash="dot",
+                        line_color=color,
+                        line_width=1,
+                        opacity=0.3,
+                        row=1, col=i
+                    )
+                
+                fig_facet.add_hline(y=0, line_color="red", line_width=1, opacity=0.5, row=1, col=i)
             
-            fig_facet.add_hline(y=0, line_color="red", line_width=1, opacity=0.5, row=1, col=i)
-        
-        fig_facet.update_xaxes(title_text="log10(Intensity)", row=1, col=1)
-        fig_facet.update_yaxes(title_text=f"log2({ref_cond}/{treat_cond})", row=1, col=1)
-        fig_facet.update_layout(height=500, showlegend=True)
-        
-        st.plotly_chart(fig_facet, use_container_width=True)
+            fig_facet.update_xaxes(title_text="log10(Intensity)", row=1, col=1)
+            fig_facet.update_yaxes(title_text=f"log2({ref_cond}/{treat_cond})", row=1, col=1)
+            fig_facet.update_layout(height=500, showlegend=True)
+            
+            st.plotly_chart(fig_facet, use_container_width=True)
+        else:
+            st.warning("⚠️ No species data for faceted MA plot")
     
     # === MA PLOT (COMBINED) ===
     if "MA Plot (Combined)" in viz_options:
@@ -828,22 +840,25 @@ if "dea_results" in st.session_state:
         
         ma_plot = res[res["regulation"] != "not_tested"].dropna(subset=['log2fc'])
         
-        fig_ma = px.scatter(
-            ma_plot,
-            x="mean_intensity",
-            y="log2fc",
-            color="regulation",
-            color_discrete_map={"up": "#e74c3c", "down": "#3498db", "not_significant": "#bdc3c7"},
-            hover_data=["species", "cohens_d"],
-            labels={"mean_intensity": "Mean Intensity", "log2fc": f"log2({ref_cond}/{treat_cond})"},
-            height=600,
-        )
-        
-        fig_ma.add_hline(y=0.0, line_color="red", line_width=1, opacity=0.5)
-        fig_ma.add_hline(y=fc_thr, line_dash="dash", line_color="green", opacity=0.3)
-        fig_ma.add_hline(y=-fc_thr, line_dash="dash", line_color="green", opacity=0.3)
-        
-        st.plotly_chart(fig_ma, use_container_width=True)
+        if len(ma_plot) > 0:
+            fig_ma = px.scatter(
+                ma_plot,
+                x="mean_intensity",
+                y="log2fc",
+                color="regulation",
+                color_discrete_map={"up": "#e74c3c", "down": "#3498db", "not_significant": "#bdc3c7"},
+                hover_data=["species", "cohens_d"],
+                labels={"mean_intensity": "Mean Intensity", "log2fc": f"log2({ref_cond}/{treat_cond})"},
+                height=600,
+            )
+            
+            fig_ma.add_hline(y=0.0, line_color="red", line_width=1, opacity=0.5)
+            fig_ma.add_hline(y=fc_thr, line_dash="dash", line_color="green", opacity=0.3)
+            fig_ma.add_hline(y=-fc_thr, line_dash="dash", line_color="green", opacity=0.3)
+            
+            st.plotly_chart(fig_ma, use_container_width=True)
+        else:
+            st.warning("⚠️ No data for MA plot")
     
     # === DENSITY PLOT ===
     if "Density Plot" in viz_options:
@@ -851,45 +866,49 @@ if "dea_results" in st.session_state:
         
         density_data = res[res["regulation"] != "not_tested"].dropna(subset=["log2fc", "species"])
         
-        fig_density = go.Figure()
-        
-        for sp in sorted(density_data["species"].unique()):
-            sp_data = density_data[density_data["species"] == sp]["log2fc"]
-            color = SPECIES_COLORS.get(sp, "#95a5a6")
+        if len(density_data) > 0:
+            fig_density = go.Figure()
             
-            kde = gaussian_kde(sp_data)
-            x_range = np.linspace(sp_data.min(), sp_data.max(), 200)
-            density_vals = kde(x_range)
+            for sp in sorted(density_data["species"].unique()):
+                sp_data = density_data[density_data["species"] == sp]["log2fc"]
+                if len(sp_data) > 1:
+                    color = SPECIES_COLORS.get(sp, "#95a5a6")
+                    
+                    kde = gaussian_kde(sp_data)
+                    x_range = np.linspace(sp_data.min(), sp_data.max(), 200)
+                    density_vals = kde(x_range)
+                    
+                    fig_density.add_trace(go.Scatter(
+                        x=x_range,
+                        y=density_vals,
+                        mode='lines',
+                        name=sp,
+                        fill='tozeroy',
+                        opacity=0.6,
+                        line=dict(width=2, color=color),
+                        fillcolor=color
+                    ))
+                    
+                    if theoretical_fc and sp in theoretical_fc:
+                        expected_fc = theoretical_fc[sp]
+                        fig_density.add_vline(
+                            x=expected_fc,
+                            line_dash="dash",
+                            line_width=2,
+                            line_color=color,
+                            annotation_text=sp,
+                            annotation_position="top"
+                        )
             
-            fig_density.add_trace(go.Scatter(
-                x=x_range,
-                y=density_vals,
-                mode='lines',
-                name=sp,
-                fill='tozeroy',
-                opacity=0.6,
-                line=dict(width=2, color=color),
-                fillcolor=color
-            ))
+            fig_density.update_layout(
+                xaxis_title=f"log2({ref_cond}/{treat_cond})",
+                yaxis_title="Density",
+                height=500
+            )
             
-            if theoretical_fc and sp in theoretical_fc:
-                expected_fc = theoretical_fc[sp]
-                fig_density.add_vline(
-                    x=expected_fc,
-                    line_dash="dash",
-                    line_width=2,
-                    line_color=color,
-                    annotation_text=sp,
-                    annotation_position="top"
-                )
-        
-        fig_density.update_layout(
-            xaxis_title=f"log2({ref_cond}/{treat_cond})",
-            yaxis_title="Density",
-            height=500
-        )
-        
-        st.plotly_chart(fig_density, use_container_width=True)
+            st.plotly_chart(fig_density, use_container_width=True)
+        else:
+            st.warning("⚠️ No data for density plot")
     
     # === BOX PLOTS ===
     if "Box Plots (Top Proteins)" in viz_options:
@@ -897,37 +916,41 @@ if "dea_results" in st.session_state:
         
         res_sorted = res.sort_values(test_col)
         n_top = min(9, len(res_sorted))
-        top_proteins = res_sorted.head(n_top).index.values
         
-        n_cols = min(3, n_top)
-        n_rows = (n_top + n_cols - 1) // n_cols
-        
-        fig_box = make_subplots(
-            rows=n_rows, cols=n_cols,
-            subplot_titles=top_proteins,
-            specs=[[{'type': 'box'} for _ in range(n_cols)] for _ in range(n_rows)]
-        )
-        
-        for idx, protein in enumerate(top_proteins):
-            row = idx // n_cols + 1
-            col = idx % n_cols + 1
+        if n_top > 0:
+            top_proteins = res_sorted.head(n_top).index.values
             
-            data_ref = df.loc[protein, ref_samples].values
-            data_treat = df.loc[protein, treat_samples].values
+            n_cols = min(3, n_top)
+            n_rows = (n_top + n_cols - 1) // n_cols
             
-            fig_box.add_trace(
-                go.Box(y=data_ref, name=ref_cond, marker_color='#3498db', showlegend=(idx==0)),
-                row=row, col=col
+            fig_box = make_subplots(
+                rows=n_rows, cols=n_cols,
+                subplot_titles=top_proteins,
+                specs=[[{'type': 'box'} for _ in range(n_cols)] for _ in range(n_rows)]
             )
-            fig_box.add_trace(
-                go.Box(y=data_treat, name=treat_cond, marker_color='#e74c3c', showlegend=(idx==0)),
-                row=row, col=col
-            )
-        
-        fig_box.update_yaxes(title_text="Intensity")
-        fig_box.update_layout(height=300*n_rows, showlegend=True)
-        
-        st.plotly_chart(fig_box, use_container_width=True)
+            
+            for idx, protein in enumerate(top_proteins):
+                row = idx // n_cols + 1
+                col = idx % n_cols + 1
+                
+                data_ref = df.loc[protein, ref_samples].values
+                data_treat = df.loc[protein, treat_samples].values
+                
+                fig_box.add_trace(
+                    go.Box(y=data_ref, name=ref_cond, marker_color='#3498db', showlegend=(idx==0)),
+                    row=row, col=col
+                )
+                fig_box.add_trace(
+                    go.Box(y=data_treat, name=treat_cond, marker_color='#e74c3c', showlegend=(idx==0)),
+                    row=row, col=col
+                )
+            
+            fig_box.update_yaxes(title_text="Intensity")
+            fig_box.update_layout(height=300*n_rows, showlegend=True)
+            
+            st.plotly_chart(fig_box, use_container_width=True)
+        else:
+            st.warning("⚠️ No top proteins for box plots")
     
     # === HEATMAP ===
     if "Heatmap" in viz_options:
@@ -935,64 +958,78 @@ if "dea_results" in st.session_state:
         
         res_sorted = res.sort_values(test_col)
         n_top = min(20, len(res_sorted))
-        top_proteins = res_sorted.head(n_top).index.values
         
-        heatmap_data = df.loc[top_proteins, ref_samples + treat_samples].copy()
-        
-        # Z-score normalize
-        heatmap_z = heatmap_data.T.apply(lambda x: (x - x.mean()) / (x.std() + 1e-6) if x.std() > 0 else x).T
-        
-        fig_heat = go.Figure(data=go.Heatmap(
-            z=heatmap_z.values,
-            x=heatmap_z.columns,
-            y=heatmap_z.index,
-            colorscale='RdBu_r',
-            zmid=0,
-            colorbar=dict(title="Z-score")
-        ))
-        
-        fig_heat.update_layout(
-            title=f'Top {n_top} Proteins (Z-score normalized)',
-            xaxis_title='Sample',
-            yaxis_title='Protein',
-            height=600
-        )
-        
-        st.plotly_chart(fig_heat, use_container_width=True)
+        if n_top > 0:
+            top_proteins = res_sorted.head(n_top).index.values
+            
+            heatmap_data = df.loc[top_proteins, ref_samples + treat_samples].copy()
+            
+            # Z-score normalize
+            heatmap_z = heatmap_data.T.apply(lambda x: (x - x.mean()) / (x.std() + 1e-6) if x.std() > 0 else x).T
+            
+            fig_heat = go.Figure(data=go.Heatmap(
+                z=heatmap_z.values,
+                x=heatmap_z.columns,
+                y=heatmap_z.index,
+                colorscale='RdBu_r',
+                zmid=0,
+                colorbar=dict(title="Z-score")
+            ))
+            
+            fig_heat.update_layout(
+                title=f'Top {n_top} Proteins (Z-score normalized)',
+                xaxis_title='Sample',
+                yaxis_title='Protein',
+                height=600
+            )
+            
+            st.plotly_chart(fig_heat, use_container_width=True)
+        else:
+            st.warning("⚠️ No proteins for heatmap")
     
     # === COHEN'S D DISTRIBUTION ===
     if "Cohen's d Distribution" in viz_options:
         st.markdown("### 📊 Effect Size Distribution (Cohen's d)")
         
-        fig_cohens = px.histogram(
-            res[res["cohens_d"].notna()],
-            x='cohens_d',
-            nbinsx=50,
-            title="Cohen's d Distribution",
-            labels={'cohens_d': "Cohen's d"},
-            height=500
-        )
-        fig_cohens.add_vline(x=0.2, line_dash="dash", annotation_text="Small (0.2)", line_color="gray")
-        fig_cohens.add_vline(x=0.5, line_dash="dash", annotation_text="Medium (0.5)", line_color="orange")
-        fig_cohens.add_vline(x=0.8, line_dash="dash", annotation_text="Large (0.8)", line_color="red")
+        cohens_data = res[res["cohens_d"].notna()]
         
-        st.plotly_chart(fig_cohens, use_container_width=True)
+        if len(cohens_data) > 0:
+            fig_cohens = px.histogram(
+                cohens_data,
+                x='cohens_d',
+                nbinsx=50,
+                title="Cohen's d Distribution",
+                labels={'cohens_d': "Cohen's d"},
+                height=500
+            )
+            fig_cohens.add_vline(x=0.2, line_dash="dash", annotation_text="Small (0.2)", line_color="gray")
+            fig_cohens.add_vline(x=0.5, line_dash="dash", annotation_text="Medium (0.5)", line_color="orange")
+            fig_cohens.add_vline(x=0.8, line_dash="dash", annotation_text="Large (0.8)", line_color="red")
+            
+            st.plotly_chart(fig_cohens, use_container_width=True)
+        else:
+            st.warning("⚠️ No Cohen's d data")
     
     # === P-VALUE DISTRIBUTION ===
     if "P-value Distribution" in viz_options:
         st.markdown("### 📊 P-value Distribution")
         
-        fig_pval = px.histogram(
-            res[res[test_col].notna()],
-            x=test_col,
-            nbinsx=50,
-            title=f"{test_label} P-value Distribution",
-            labels={test_col: "P-value" if not use_fdr else "FDR (q-value)"},
-            height=500
-        )
-        fig_pval.add_vline(x=p_thr, line_dash="dash", annotation_text=f"Threshold={p_thr}", line_color="red")
+        pval_data = res[res[test_col].notna()]
         
-        st.plotly_chart(fig_pval, use_container_width=True)
+        if len(pval_data) > 0:
+            fig_pval = px.histogram(
+                pval_data,
+                x=test_col,
+                nbinsx=50,
+                title=f"{test_label} P-value Distribution",
+                labels={test_col: "P-value" if not use_fdr else "FDR (q-value)"},
+                height=500
+            )
+            fig_pval.add_vline(x=p_thr, line_dash="dash", annotation_text=f"Threshold={p_thr}", line_color="red")
+            
+            st.plotly_chart(fig_pval, use_container_width=True)
+        else:
+            st.warning("⚠️ No p-value data")
     
     # === PARAMETRIC VS NON-PARAMETRIC COMPARISON ===
     if "Parametric vs Non-parametric" in viz_options and use_parametric and use_nonparametric:
@@ -1026,6 +1063,8 @@ if "dea_results" in st.session_state:
             fig_comp.update_yaxes(type='log')
             
             st.plotly_chart(fig_comp, use_container_width=True)
+        else:
+            st.warning("⚠️ Insufficient data for comparison")
     
     # ============================================================================
     # SPIKE-IN VALIDATION
