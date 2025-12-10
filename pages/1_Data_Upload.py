@@ -270,39 +270,39 @@ with st.expander("🏷️ Customize Species Tags", expanded=False):
 # ============================================================================
 # STEP 7: SMART SPECIES DETECTION
 # ============================================================================
-
 st.subheader("8️⃣ Species Detection")
 
-df_pandas = df_raw.to_pandas()
-
+# df_raw is a Polars DataFrame
 # SMART CONDITIONAL LOGIC: Check for dedicated Species column with data
-species_col_candidates = [col for col in metadata_cols if 'species' in col.lower()]
+species_col_candidates = [col for col in metadata_cols if "species" in col.lower()]
 has_species_column_with_data = False
 
 if species_col_candidates:
     for spec_col in species_col_candidates:
-        if df_pandas[spec_col].dropna().shape[0] > 0:  # Has actual data
+        # any non-null values?
+        if df_raw.select(pl.col(spec_col).drop_nulls().len()).item() > 0:
             has_species_column_with_data = True
             break
 
-# Decide where to search
+# If we have a dedicated species column with data, search only that
+# Otherwise, search all available columns (including names)
 if has_species_column_with_data:
-    search_cols = species_col_candidates  # Only dedicated species columns
+    search_cols = species_col_candidates
 else:
-    search_cols = metadata_cols  # Search ALL columns including protein names
+    search_cols = metadata_cols
 
-all_species_set = set()
+all_species_set: set[str] = set()
 for col in search_cols:
-    for value in df_pandas[col].dropna():
+    # iterate over non‑null values in this column
+    for value in df_raw.select(pl.col(col).drop_nulls()).to_series().to_list():
         species = infer_species_from_text(str(value), st.session_state.species_tags)
-        if species != "Other":  # Only add actual detected species
+        if species != "Other":
             all_species_set.add(species)
 
-# If no species found, add "Other"
 if not all_species_set:
     all_species_set.add("Other")
 
-species_list = sorted(list(all_species_set))
+species_list = sorted(all_species_set)
 
 st.info(f"🔍 Detected {len(species_list)} unique species/tags: {', '.join(species_list)}")
 
