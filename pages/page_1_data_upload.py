@@ -1,12 +1,14 @@
 """
-pages/page_1_data_upload.py - Optimized Data Upload
-====================================================
+pages/page_1_data_upload.py - OPTIMIZED Data Upload with Column Selection
+===========================================================================
 
 Key optimizations:
 1. Vectorized species inference (instead of row loops)
 2. Cached file loading with hash-based keys
 3. Efficient condition mapping (comprehensions not loops)
 4. Smart caching of computed peptide counts
+5. COLUMN DESELECTION UI - User can select/deselect columns not needed downstream
+6. WIDE & LONG FORMAT SUPPORT - Automatic format detection
 """
 
 import streamlit as st
@@ -31,7 +33,7 @@ def load_csv_file(file_bytes: bytes, file_hash: str) -> pd.DataFrame:
         return pd.read_csv(
             io.BytesIO(file_bytes),
             low_memory=False,
-            dtype_backend='numpy_nullable',  # Better null handling
+            dtype_backend='numpy_nullable',
             na_values=['NUM!', '', 'NA', 'NaN'],
         )
     except Exception as e:
@@ -64,22 +66,17 @@ def get_default_species_tags() -> list:
     return ["HUMAN", "MOUSE", "YEAST", "ECOLI", "DROSOPHILA", "ARABIDOPSIS", "Contaminant"]
 
 def infer_species_from_text(text: str, species_tags: list) -> str:
-    """
-    Infer species from text based on user-defined tags.
-    OPTIMIZED: No loops in calling function - vectorized in caller.
-    """
+    """Infer species from text based on user-defined tags."""
     if pd.isna(text) or text is None:
         return "Other"
     
     s = str(text).upper()
     
-    # Check each tag
     for tag in species_tags:
         tag_upper = tag.upper()
         if tag_upper in s:
             return tag
     
-    # Additional pattern matching for UniProt-style suffixes
     if '_' in s:
         tail = s.split('_')[-1]
         if len(tail) <= 3 and tail.isalpha():
@@ -91,24 +88,18 @@ def infer_species_from_text(text: str, species_tags: list) -> str:
 
 @st.cache_data(show_spinner=False)
 def extract_condition_from_sample(sample_name: str) -> str:
-    """
-    Extract condition letters from sample name.
-    Handles patterns like AR1, CondAR2, CondAR1, etc.
-    """
+    """Extract condition letters from sample name."""
     import re
     sample_name = str(sample_name).strip()
     
-    # Pattern 1: Something_R or Something-R
     match = re.search(r'[a-zA-Z]+-?[rR]', sample_name)
     if match:
         return match.group()[:-1].rstrip('-').rstrip()
     
-    # Pattern 2: Just a letter or letters at start
     match = re.search(r'[A-Z]', sample_name)
     if match:
         return match.group()
     
-    # Pattern 3: Something before first underscore
     if '_' in sample_name:
         return sample_name.split('_')[0]
     
@@ -119,14 +110,12 @@ def find_peptide_columns(columns: list, data_type: str) -> list:
     peptide_cols = []
     
     if data_type == "peptide":
-        # For peptide data: look for stripped sequences identified
         peptide_cols = [
             col for col in columns 
             if any(keyword in col.lower() for keyword in 
                    ["NrOfStrippedSequencesIdentified", "peptide", "precursor"])
         ]
     else:
-        # For protein data: look for single columns with peptide count
         peptide_cols = [
             col for col in columns 
             if any(keyword in col.lower() for keyword in 
@@ -141,13 +130,7 @@ def compute_peptide_counts(
     peptide_cols: list,
     id_col: str
 ) -> tuple:
-    """
-    Compute peptide counts per protein per sample.
-    OPTIMIZED: Vectorized instead of row-by-row.
-    Detects whether columns contain:
-    - Sequences (strings) → Count unique sequences per protein
-    - Integers → Use directly
-    """
+    """Compute peptide counts per protein per sample - OPTIMIZED & VECTORIZED"""
     df_copy = df.copy()
     count_cols = []
     
@@ -159,46 +142,26 @@ def compute_peptide_counts(
         first_val = sample_values.iloc[0]
         count_col = f"{col}_Count"
         
-        # Check if it's a sequence string or numeric count
         if isinstance(first_val, str) and len(str(first_val)) > 5:
-            # It's a peptide sequence - count unique per protein
-            # OPTIMIZED: Vectorized string processing
             df_copy[count_col] = df_copy[col].apply(
                 lambda x: len(set(str(x).split(';'))) if pd.notna(x) and x != '' else 0
             )
         else:
-            # Already a count - convert to numeric
             df_copy[count_col] = pd.to_numeric(df_copy[col], errors='coerce').fillna(0).astype(int)
         
         count_cols.append(count_col)
     
     return df_copy, count_cols
 
-# ============================================================================
-# VECTORIZED SPECIES INFERENCE - MAJOR OPTIMIZATION
-# ============================================================================
-
 def infer_species_vectorized(df: pd.DataFrame, metadata_cols: list, species_tags: list) -> pd.Series:
-    """
-    VECTORIZED species inference using pandas apply (vectorized over rows).
-    
-    This replaces the row-by-row loop from original code:
-    for col in metadata_cols:
-        for value in df[col].dropna():
-            species = infer_species_from_text(str(value), species_tags)
-            all_species_set.add(species)
-    
-    OPTIMIZED: Uses vectorized operations across entire columns.
-    """
+    """VECTORIZED species inference using pandas apply - MAJOR OPTIMIZATION"""
     species_list = pd.Series(['Other'] * len(df), index=df.index)
     
-    # Check first metadata column
     if len(metadata_cols) > 0:
         species_list = df[metadata_cols[0]].apply(
             lambda x: infer_species_from_text(str(x), species_tags) if pd.notna(x) else 'Other'
         )
     
-    # If first column didn't find species, check other columns
     for col in metadata_cols[1:]:
         mask = species_list == 'Other'
         species_list[mask] = df.loc[mask, col].apply(
@@ -206,6 +169,23 @@ def infer_species_vectorized(df: pd.DataFrame, metadata_cols: list, species_tags
         )
     
     return species_list
+
+def detect_data_format(df: pd.DataFrame, numeric_cols: list) -> str:
+    """
+    Detect if data is in WIDE or LONG format.
+    
+    WIDE: Few columns (samples as columns), many rows (proteins)
+    LONG: Many columns, pivot-like structure
+    """
+    n_rows = len(df)
+    n_cols = len(numeric_cols)
+    
+    # Heuristic: if more rows than numeric columns, likely WIDE format
+    # If numeric columns > rows, likely LONG format
+    if n_cols > n_rows:
+        return "LONG"
+    else:
+        return "WIDE"
 
 # ============================================================================
 # MAIN PAGE RENDER
@@ -218,12 +198,14 @@ def render():
     st.markdown("Upload your proteomics data and configure basic settings.")
     st.markdown("---")
     
-    # Initialize session variables
     if "datatype" not in st.session_state:
         st.session_state.datatype = "protein"
     
     if "species_tags" not in st.session_state:
         st.session_state.species_tags = get_default_species_tags()
+    
+    if "selected_columns" not in st.session_state:
+        st.session_state.selected_columns = None
     
     # ========================================================================
     # STEP 1: DATA UPLOAD
@@ -237,7 +219,7 @@ def render():
         uploaded_file = st.file_uploader(
             "Choose CSV or Excel file",
             type=["csv", "xlsx", "xls"],
-            help="Upload your proteomics intensity matrix"
+            help="Upload your proteomics intensity matrix (WIDE or LONG format)"
         )
     
     with col2:
@@ -258,7 +240,6 @@ def render():
     file_bytes = uploaded_file.read()
     file_hash = get_file_hash(file_bytes)
     
-    # Load file using hash-based cache key
     if uploaded_file.name.endswith('.csv'):
         df_raw = load_csv_file(file_bytes, file_hash)
     else:
@@ -271,22 +252,25 @@ def render():
     st.success(f"✅ Loaded {len(df_raw):,} rows × {len(df_raw.columns)} columns")
     
     # ========================================================================
-    # STEP 3: COLUMN DETECTION - OPTIMIZED
+    # STEP 3: COLUMN DETECTION & DESELECTION - NEW FEATURE
     # ========================================================================
     
-    st.header("2️⃣  Column Configuration")
+    st.header("2️⃣  Column Selection & Format Detection")
     
     # VECTORIZED numeric column detection
     numeric_cols, categorical_cols = detect_numeric_columns(df_raw)
     df_raw = convert_string_numbers_to_float(df_raw, numeric_cols)
     
-    col1, col2, col3 = st.columns(3)
+    # Detect data format
+    data_format = detect_data_format(df_raw, numeric_cols)
+    
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.metric(
             "Numeric Columns",
             len(numeric_cols),
-            help="Sample/abundance columns"
+            help="Abundance/sample columns"
         )
     
     with col2:
@@ -298,17 +282,100 @@ def render():
     
     with col3:
         st.metric(
-            "Data Type Detected",
+            "Data Format",
+            data_format,
+            help="WIDE: samples as columns | LONG: samples in rows"
+        )
+    
+    with col4:
+        st.metric(
+            "Data Type",
             st.session_state.datatype.title(),
             help="Protein or peptide level"
         )
     
-    # Select ID column
-    st.subheader("Identify Columns")
+    # ========================================================================
+    # STEP 3A: SELECT/DESELECT COLUMNS TO KEEP - NEW FEATURE
+    # ========================================================================
+    
+    st.subheader("📋 Column Selection")
+    
+    tab1, tab2 = st.tabs(["Select Columns", "Preview Data"])
+    
+    with tab1:
+        st.markdown("""
+        **Choose which columns to include in analysis:**
+        - Metadata columns (ID, species, etc.) are usually needed
+        - Select only numeric columns you want to analyze
+        - Deselect columns you don't need downstream
+        """)
+        
+        col_a, col_b = st.columns(2)
+        
+        with col_a:
+            st.subheader("🔖 Categorical Columns (Metadata)")
+            selected_categorical = st.multiselect(
+                "Keep these columns:",
+                options=categorical_cols,
+                default=categorical_cols[:min(5, len(categorical_cols))],
+                key="cat_cols",
+                help="ID, species, gene names, etc."
+            )
+        
+        with col_b:
+            st.subheader("📊 Numeric Columns (Samples)")
+            selected_numeric = st.multiselect(
+                "Keep these columns:",
+                options=numeric_cols,
+                default=numeric_cols,
+                key="num_cols",
+                help="Abundance data - select only samples you need"
+            )
+            
+            # Quick select/deselect buttons
+            col_btn1, col_btn2, col_btn3 = st.columns(3)
+            with col_btn1:
+                if st.button("✅ Select All", key="sel_all"):
+                    st.session_state.num_cols = numeric_cols
+                    st.rerun()
+            with col_btn2:
+                if st.button("❌ Deselect All", key="desel_all"):
+                    st.session_state.num_cols = []
+                    st.rerun()
+            with col_btn3:
+                if st.button("🔄 Reset", key="reset_cols"):
+                    st.session_state.num_cols = numeric_cols
+                    st.rerun()
+        
+        # Keep only selected columns
+        selected_all_cols = selected_categorical + selected_numeric
+        df_raw = df_raw[selected_all_cols].copy()
+        
+        st.session_state.selected_columns = selected_all_cols
+        
+        st.success(f"✅ Keeping {len(selected_categorical)} metadata + {len(selected_numeric)} sample columns")
+    
+    with tab2:
+        st.subheader("Data Preview")
+        st.dataframe(df_raw.head(10), use_container_width=True, height=400)
+    
+    # ========================================================================
+    # STEP 4: ID COLUMN SELECTION
+    # ========================================================================
+    
+    st.header("3️⃣  Configure ID & Metadata")
+    
+    # Filter to only selected categorical columns
+    selected_categorical = [c for c in selected_categorical if c in df_raw.columns]
+    
+    if not selected_categorical:
+        st.error("❌ Must select at least one categorical column")
+        return
+    
     id_col = st.selectbox(
         "Select ID Column (Protein/Peptide name)",
-        options=categorical_cols,
-        index=0 if categorical_cols else None,
+        options=selected_categorical,
+        index=0 if selected_categorical else None,
         help="Column with protein/peptide identifiers"
     )
     
@@ -317,10 +384,10 @@ def render():
         return
     
     # ========================================================================
-    # STEP 4: SPECIES TAGGING - VECTORIZED & OPTIMIZED
+    # STEP 5: SPECIES TAGGING - VECTORIZED & OPTIMIZED
     # ========================================================================
     
-    st.header("3️⃣  Species Configuration")
+    st.header("4️⃣  Species Configuration")
     
     col1, col2 = st.columns([2, 1])
     
@@ -339,70 +406,48 @@ def render():
             st.success(f"✅ Updated to {len(new_tags)} species tags")
             st.rerun()
     
-    # VECTORIZED species inference - major optimization!
-    df_raw['SPECIES'] = infer_species_vectorized(df_raw, categorical_cols, st.session_state.species_tags)
+    # VECTORIZED species inference
+    metadata_cols = [c for c in selected_categorical if c != id_col]
+    df_raw['SPECIES'] = infer_species_vectorized(df_raw, metadata_cols, st.session_state.species_tags)
     
-    # Show detected species
     species_list = sorted(list(df_raw['SPECIES'].unique()))
-    st.info(f"🔍 Detected {len(species_list)} unique species tags: {', '.join(species_list)}")
+    st.info(f"🔍 Detected {len(species_list)} unique species: {', '.join(species_list)}")
     
-    # Multi-select species to include
     selected_species = st.multiselect(
-        "Select species to include in analysis",
+        "Select species to include",
         options=species_list,
         default=species_list[:min(3, len(species_list))],
         help="Choose which species to keep"
     )
     
     if not selected_species:
-        st.warning("⚠️ Select at least one species to continue")
+        st.warning("⚠️ Select at least one species")
         return
     
-    # Filter by species
     df_filtered = df_raw[df_raw['SPECIES'].isin(selected_species)].copy()
     species_counts = df_filtered['SPECIES'].value_counts()
     
     st.write("Species composition:")
     st.bar_chart(species_counts)
     
-    st.session_state.selected_species = selected_species
-    
     # ========================================================================
-    # STEP 5: PEPTIDE COUNTS (if applicable)
+    # STEP 6: NUMERIC COLUMNS & CONDITION MAPPING
     # ========================================================================
     
-    st.header("4️⃣  Peptide Count Configuration")
+    st.header("5️⃣  Sample Configuration")
     
-    peptide_cols_detected = find_peptide_columns(list(df_raw.columns), st.session_state.datatype)
+    # Get numeric columns from selected columns
+    numeric_cols_final = [c for c in selected_numeric if c in df_raw.columns]
     
-    if peptide_cols_detected:
-        st.info(f"Found {len(peptide_cols_detected)} peptide-related columns")
-        
-        # Use cached peptide count computation
-        with st.spinner("Computing peptide counts..."):
-            df_with_counts, peptide_count_cols = compute_peptide_counts(
-                df_filtered, peptide_cols_detected, id_col
-            )
-        
-        st.success(f"✅ Computed peptide counts for {len(peptide_count_cols)} samples")
-        st.session_state.peptide_count_cols = peptide_count_cols
-    else:
-        df_with_counts = df_filtered
-        st.session_state.peptide_count_cols = []
+    if not numeric_cols_final:
+        st.error("❌ Must have at least one numeric column")
+        return
     
-    # ========================================================================
-    # STEP 6: CONDITION MAPPING - VECTORIZED
-    # ========================================================================
-    
-    st.header("5️⃣  Condition Mapping")
-    
-    # VECTORIZED condition extraction using apply
+    # VECTORIZED condition mapping
     sample_to_condition = {
         col: extract_condition_from_sample(col)
-        for col in numeric_cols
+        for col in numeric_cols_final
     }
-    
-    st.session_state.sample_to_condition = sample_to_condition
     
     col1, col2 = st.columns(2)
     
@@ -420,20 +465,46 @@ def render():
         st.bar_chart(condition_counts)
     
     # ========================================================================
-    # STEP 7: SAVE & CONFIRM
+    # STEP 7: PEPTIDE COUNTS (if applicable)
     # ========================================================================
     
-    st.header("6️⃣  Confirm Upload")
+    st.header("6️⃣  Peptide Count Configuration")
     
-    col1, col2 = st.columns(2)
+    peptide_cols_detected = find_peptide_columns(list(df_filtered.columns), st.session_state.datatype)
+    
+    if peptide_cols_detected:
+        st.info(f"Found {len(peptide_cols_detected)} peptide-related columns")
+        
+        with st.spinner("Computing peptide counts..."):
+            df_with_counts, peptide_count_cols = compute_peptide_counts(
+                df_filtered, peptide_cols_detected, id_col
+            )
+        
+        st.success(f"✅ Computed peptide counts for {len(peptide_count_cols)} samples")
+        st.session_state.peptide_count_cols = peptide_count_cols
+    else:
+        df_with_counts = df_filtered
+        st.session_state.peptide_count_cols = []
+    
+    # ========================================================================
+    # STEP 8: SAVE & CONFIRM
+    # ========================================================================
+    
+    st.header("7️⃣  Confirm Upload")
+    
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         st.metric("Proteins/Peptides", f"{len(df_with_counts):,}")
-        st.metric("Samples", len(numeric_cols))
+        st.metric("Samples", len(numeric_cols_final))
     
     with col2:
         st.metric("Conditions", len(set(sample_to_condition.values())))
-        st.metric("Species Included", len(selected_species))
+        st.metric("Species", len(selected_species))
+    
+    with col3:
+        st.metric("Data Format", data_format)
+        st.metric("Columns Selected", len(selected_all_cols))
     
     confirm = st.checkbox(
         "✅ I confirm the settings and am ready to proceed",
@@ -442,19 +513,20 @@ def render():
     
     if confirm and st.button("Process & Save Data", type="primary", use_container_width=True):
         with st.spinner("Processing data..."):
-            # Save to session state
             st.session_state.df_raw = df_with_counts
-            st.session_state.numeric_cols = numeric_cols
+            st.session_state.numeric_cols = numeric_cols_final
             st.session_state.id_col = id_col
             st.session_state.species_col = "SPECIES"
             st.session_state.peptide_cols = peptide_cols_detected
+            st.session_state.sample_to_condition = sample_to_condition
+            st.session_state.selected_species = selected_species
+            st.session_state.data_format = data_format
             st.session_state.data_ready = True
             
             st.success("✅ Data loaded and ready for analysis!")
             st.balloons()
             st.info("👉 Proceed to **Visual EDA** page for initial exploration")
             
-            # Navigation hint
             st.markdown(
                 """
                 <div style="padding: 20px; background: #f0f2f6; border-radius: 10px;">
