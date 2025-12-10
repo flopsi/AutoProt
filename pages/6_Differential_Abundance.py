@@ -1,9 +1,6 @@
 """
 pages/6_Differential_Abundance.py
 Limma-style empirical Bayes DA with composition-based spike-in validation.
-- Comparison: A (reference) vs B (treatment)
-- Significance by p/FDR only (no FC cutoff)
-- MA/Volcano colored by species
 """
 
 from __future__ import annotations
@@ -436,28 +433,29 @@ if use_comp:
 
     st.markdown("**Expected log2FC from composition (A/B)**")
     st.dataframe(pd.DataFrame(rows), use_container_width=True)
+    
+    # SAVE TO SESSION STATE IMMEDIATELY
+    st.session_state.dea_theoretical_fc = theoretical_fc.copy()
 
     # single combined visualization
     st.markdown("### Composition Visualization")
-    l, r = st.columns(2)
-    with l:
-        plot_rows = []
-        for sp in species_values:
-            plot_rows.append(dict(Condition=ref_cond, Species=sp, Percentage=comp_a.get(sp, 0.0)))
-            plot_rows.append(dict(Condition=treat_cond, Species=sp, Percentage=comp_b.get(sp, 0.0)))
-        comp_df = pd.DataFrame(plot_rows)
-        figc = px.bar(
-            comp_df,
-            x="Condition",
-            y="Percentage",
-            color="Species",
-            barmode="stack",
-            labels={"Percentage": "Composition (%)"},
-            title="Percentage composition per condition",
-            height=450,
-        )
-        figc.update_yaxes(range=[0, 100])
-        st.plotly_chart(figc, use_container_width=True)
+    plot_rows = []
+    for sp in species_values:
+        plot_rows.append(dict(Condition=ref_cond, Species=sp, Percentage=comp_a.get(sp, 0.0)))
+        plot_rows.append(dict(Condition=treat_cond, Species=sp, Percentage=comp_b.get(sp, 0.0)))
+    comp_df = pd.DataFrame(plot_rows)
+    figc = px.bar(
+        comp_df,
+        x="Condition",
+        y="Percentage",
+        color="Species",
+        barmode="stack",
+        labels={"Percentage": "Composition (%)"},
+        title="Percentage composition per condition",
+        height=450,
+    )
+    figc.update_yaxes(range=[0, 100])
+    st.plotly_chart(figc, use_container_width=True)
 
 st.markdown("---")
 
@@ -526,7 +524,9 @@ if st.button("🚀 Run Analysis", type="primary"):
         st.session_state.dea_ref = ref_cond
         st.session_state.dea_treat = treat_cond
         st.session_state.dea_p_thr = p_thr
-        st.session_state.dea_theoretical_fc = theoretical_fc
+        # Keep theoretical_fc from section 2 if it exists
+        if 'dea_theoretical_fc' not in st.session_state:
+            st.session_state.dea_theoretical_fc = {}
 
     st.success("✅ Analysis finished.")
 
@@ -539,7 +539,7 @@ if "dea_results" in st.session_state:
     ref_cond = st.session_state.dea_ref
     treat_cond = st.session_state.dea_treat
     p_thr = st.session_state.dea_p_thr
-    theoretical_fc = st.session_state.dea_theoretical_fc
+    theoretical_fc = st.session_state.get('dea_theoretical_fc', {})
 
     st.markdown("---")
     st.subheader("5️⃣ Results Overview")
@@ -605,6 +605,8 @@ if "dea_results" in st.session_state:
     if theoretical_fc:
         st.markdown("---")
         st.subheader("6️⃣ Spike-in Validation Metrics")
+        
+        st.info(f"Using theoretical fold changes for {len(theoretical_fc)} species: {', '.join(theoretical_fc.keys())}")
 
         species_map = dict(zip(res.index.astype(str), res["species"].astype(str)))
 
@@ -625,7 +627,9 @@ if "dea_results" in st.session_state:
             )
             c2.metric("Stable Proteins", f"{ov_stab['Total_Stable']:,}")
             if not sp_stab.empty:
-                st.dataframe(sp_stab, use_container_width=True)
+                st.dataframe(sp_stab.round(3), use_container_width=True)
+        else:
+            st.warning("No stable proteome proteins found (|expected log2FC| < 0.5)")
 
         if ov_var:
             st.markdown("**Variable Proteome (Detection)**")
@@ -643,6 +647,10 @@ if "dea_results" in st.session_state:
             c3.metric("Precision", f"{ov_var['Precision']:.1%}")
             if not sp_var.empty:
                 st.dataframe(sp_var.round(3), use_container_width=True)
+        else:
+            st.warning("No variable proteome proteins found (|expected log2FC| >= 0.5)")
+    else:
+        st.info("💡 Enable spike-in composition in section 2 to see validation metrics")
 
     # -----------------------------------------------------------------
     # 7. EXPORT
