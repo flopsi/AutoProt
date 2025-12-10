@@ -1,6 +1,6 @@
 """
 pages/page_1_data_upload.py - OPTIMIZED Data Upload with Column Selection
-==========================================================================
+===========================================================================
 
 Key optimizations:
 1. Vectorized species inference (instead of row loops)
@@ -9,6 +9,8 @@ Key optimizations:
 4. Smart caching of computed peptide counts
 5. COLUMN DESELECTION UI - User can select/deselect columns not needed downstream
 6. WIDE & LONG FORMAT SUPPORT - Automatic format detection
+7. COLUMN RENAMING - Rename sample columns after selection
+8. SPECIES PRIORITY FIX - Check metadata columns FIRST before protein names
 """
 
 import streamlit as st
@@ -154,19 +156,28 @@ def compute_peptide_counts(
     return df_copy, count_cols
 
 def infer_species_vectorized(df: pd.DataFrame, metadata_cols: list, species_tags: list) -> pd.Series:
-    """VECTORIZED species inference using pandas apply - MAJOR OPTIMIZATION"""
+    """
+    VECTORIZED species inference - PRIORITY: Metadata columns FIRST
+    
+    FIXED: Now checks metadata columns with priority BEFORE falling back to other columns.
+    This prevents protein names (which may contain species tags) from being checked first.
+    Only metadata columns are used for species determination.
+    """
     species_list = pd.Series(['Other'] * len(df), index=df.index)
     
+    # Check metadata columns ONLY - prioritize first to last
     if len(metadata_cols) > 0:
+        # First metadata column
         species_list = df[metadata_cols[0]].apply(
             lambda x: infer_species_from_text(str(x), species_tags) if pd.notna(x) else 'Other'
         )
-    
-    for col in metadata_cols[1:]:
-        mask = species_list == 'Other'
-        species_list[mask] = df.loc[mask, col].apply(
-            lambda x: infer_species_from_text(str(x), species_tags) if pd.notna(x) else 'Other'
-        )
+        
+        # Only fill remaining "Other" values with subsequent columns
+        for col in metadata_cols[1:]:
+            mask = species_list == 'Other'
+            species_list[mask] = df.loc[mask, col].apply(
+                lambda x: infer_species_from_text(str(x), species_tags) if pd.notna(x) else 'Other'
+            )
     
     return species_list
 
@@ -180,8 +191,6 @@ def detect_data_format(df: pd.DataFrame, numeric_cols: list) -> str:
     n_rows = len(df)
     n_cols = len(numeric_cols)
     
-    # Heuristic: if more rows than numeric columns, likely WIDE format
-    # If numeric columns > rows, likely LONG format
     if n_cols > n_rows:
         return "LONG"
     else:
@@ -206,6 +215,9 @@ def render():
     
     if "selected_columns" not in st.session_state:
         st.session_state.selected_columns = None
+    
+    if "column_rename_mapping" not in st.session_state:
+        st.session_state.column_rename_mapping = {}
     
     # ========================================================================
     # STEP 1: DATA UPLOAD
@@ -300,7 +312,7 @@ def render():
     
     st.subheader("📋 Column Selection")
     
-    tab1, tab2 = st.tabs(["Select Columns", "Preview Data"])
+    tab1, tab2, tab3 = st.tabs(["Select Columns", "Rename Columns", "Preview Data"])
     
     with tab1:
         st.markdown("""
@@ -356,6 +368,43 @@ def render():
         st.success(f"✅ Keeping {len(selected_categorical)} metadata + {len(selected_numeric)} sample columns")
     
     with tab2:
+        st.subheader("✏️ Rename Sample Columns (Optional)")
+        st.markdown("Customize column names for easier interpretation downstream:")
+        
+        # Initialize rename mapping if not exists or columns changed
+        if 'column_rename_mapping' not in st.session_state or set(st.session_state.column_rename_mapping.keys()) != set(selected_numeric):
+            st.session_state.column_rename_mapping = {col: col for col in selected_numeric}
+        
+        # Create editable dataframe
+        rename_df = pd.DataFrame({
+            'Original Name': selected_numeric,
+            'New Name': [st.session_state.column_rename_mapping.get(col, col) for col in selected_numeric]
+        })
+        
+        # Data editor
+        edited_rename_df = st.data_editor(
+            rename_df,
+            key="rename_editor",
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Original Name": st.column_config.TextColumn("Original Name", disabled=True),
+                "New Name": st.column_config.TextColumn("New Name", help="Click to edit name")
+            }
+        )
+        
+        # Update mapping from editor
+        if edited_rename_df is not None:
+            for idx, row in edited_rename_df.iterrows():
+                original = rename_df.iloc[idx]['Original Name']
+                st.session_state.column_rename_mapping[original] = row['New Name']
+        
+        # Apply renaming
+        numeric_cols_renamed = [st.session_state.column_rename_mapping.get(col, col) for col in selected_numeric]
+        
+        st.info(f"✅ Sample columns will be renamed during processing")
+    
+    with tab3:
         st.subheader("Data Preview")
         st.dataframe(df_raw.head(10), use_container_width=True, height=400)
     
@@ -384,7 +433,7 @@ def render():
         return
     
     # ========================================================================
-    # STEP 5: SPECIES TAGGING - VECTORIZED & OPTIMIZED
+    # STEP 5: SPECIES TAGGING - VECTORIZED & OPTIMIZED (FIXED PRIORITY)
     # ========================================================================
     
     st.header("4️⃣  Species Configuration")
@@ -396,7 +445,7 @@ def render():
             "Species Tags (comma-separated)",
             value=", ".join(st.session_state.species_tags),
             height=100,
-            help="Tags to search for in metadata columns"
+            help="Tags to search for in metadata columns ONLY (not protein names)"
         )
     
     with col2:
@@ -406,7 +455,9 @@ def render():
             st.success(f"✅ Updated to {len(new_tags)} species tags")
             st.rerun()
     
-    # VECTORIZED species inference
+    st.info("ℹ️ Species detection now prioritizes metadata columns over protein names, preventing false positives.")
+    
+    # VECTORIZED species inference - NOW CHECKS METADATA FIRST (FIXED)
     metadata_cols = [c for c in selected_categorical if c != id_col]
     df_raw['SPECIES'] = infer_species_vectorized(df_raw, metadata_cols, st.session_state.species_tags)
     
@@ -443,9 +494,9 @@ def render():
         st.error("❌ Must have at least one numeric column")
         return
     
-    # VECTORIZED condition mapping
+    # VECTORIZED condition mapping - Use renamed names
     sample_to_condition = {
-        col: extract_condition_from_sample(col)
+        numeric_cols_renamed[selected_numeric.index(col)]: extract_condition_from_sample(col)
         for col in numeric_cols_final
     }
     
@@ -513,8 +564,13 @@ def render():
     
     if confirm and st.button("Process & Save Data", type="primary", use_container_width=True):
         with st.spinner("Processing data..."):
-            st.session_state.df_raw = df_with_counts
-            st.session_state.numeric_cols = numeric_cols_final
+            # Rename numeric columns in dataframe
+            df_renamed = df_with_counts.rename(
+                columns=st.session_state.column_rename_mapping
+            )
+            
+            st.session_state.df_raw = df_renamed
+            st.session_state.numeric_cols = numeric_cols_renamed
             st.session_state.id_col = id_col
             st.session_state.species_col = "SPECIES"
             st.session_state.peptide_cols = peptide_cols_detected
