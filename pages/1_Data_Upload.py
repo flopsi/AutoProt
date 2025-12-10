@@ -135,6 +135,57 @@ def find_peptide_columns(columns: list, data_type: str) -> list:
     
     return peptide_cols
 
+def compute_peptide_counts(df: pd.DataFrame, 
+                          peptide_cols: list, 
+                          id_col: str) -> tuple:
+    """
+    Compute peptide counts per protein per sample.
+    
+    Detects whether columns contain:
+    - Sequences (strings) → Count unique sequences
+    - Integers → Use directly
+    
+    Returns:
+        (df_with_counts, count_column_names)
+    """
+    df_copy = df.copy()
+    count_cols = []
+    
+    for col in peptide_cols:
+        # Check first non-null value to determine type
+        sample_values = df_copy[col].dropna()
+        
+        if len(sample_values) == 0:
+            continue
+            
+        first_val = sample_values.iloc[0]
+        
+        # Check if it's a sequence (string) or count (numeric)
+        if isinstance(first_val, str) and len(first_val) > 5:
+            # It's a peptide sequence - need to count per protein
+            count_col = f"{col}_Count"
+            
+            # For each protein, count unique sequences
+            # Sequences might be semicolon-separated
+            df_copy[count_col] = df_copy.apply(
+                lambda row: len(set(str(row[col]).split(';'))) if pd.notna(row[col]) and row[col] != '' else 0,
+                axis=1
+            )
+            count_cols.append(count_col)
+            
+        elif isinstance(first_val, (int, float)):
+            # Already a count - use directly
+            count_col = f"{col}_Count"
+            df_copy[count_col] = pd.to_numeric(df_copy[col], errors='coerce').fillna(0).astype(int)
+            count_cols.append(count_col)
+        else:
+            # Try to convert to numeric
+            count_col = f"{col}_Count"
+            df_copy[count_col] = pd.to_numeric(df_copy[col], errors='coerce').fillna(0).astype(int)
+            count_cols.append(count_col)
+    
+    return df_copy, count_cols
+
 # ============================================================================
 # SESSION STATE INITIALIZATION
 # ============================================================================
@@ -507,26 +558,33 @@ confirm = st.checkbox("✅ I confirm all settings are correct",
 
 if confirm:
     if st.button("🚀 Process Data", type="primary"):
-        # Create sample to condition mapping for EDA
-        sample_to_condition = {
-            renamed: extract_condition_from_sample(renamed) 
-            for renamed in numerical_cols_renamed
-        }
-        
-        st.session_state.df_raw = df_filtered
-        st.session_state.numeric_cols = numerical_cols_renamed
-        st.session_state.species_col = '__SPECIES__'
-        st.session_state.sample_to_condition = sample_to_condition
-        st.session_state.peptide_cols = peptide_cols_selection
-        st.session_state.data_ready = True
-        
-        st.success("✅ Data uploaded successfully! Proceed to **📊 Visual EDA**")
-        st.balloons()
+        with st.spinner("Processing peptide counts..."):
+            # Compute peptide counts (handles both sequences and integers)
+            df_with_counts, peptide_count_cols = compute_peptide_counts(
+                df_filtered, 
+                peptide_cols_selection,
+                id_col
+            )
+            
+            # Create sample to condition mapping for EDA
+            sample_to_condition = {
+                renamed: extract_condition_from_sample(renamed) 
+                for renamed in numerical_cols_renamed
+            }
+            
+            st.session_state.df_raw = df_with_counts  # Use version with counts
+            st.session_state.numeric_cols = numerical_cols_renamed
+            st.session_state.species_col = '__SPECIES__'
+            st.session_state.sample_to_condition = sample_to_condition
+            st.session_state.peptide_cols = peptide_cols_selection
+            st.session_state.peptide_count_cols = peptide_count_cols  # Count columns
+            st.session_state.data_ready = True
+            
+            st.success("✅ Data uploaded successfully! Proceed to **📊 Visual EDA**")
+            st.info(f"📊 Computed peptide counts for {len(peptide_count_cols)} sample(s)")
+            st.balloons()
 else:
     st.info("👆 Check the box to enable upload")
-
-st.markdown("---")
-st.markdown("---")
 
 # ============================================================================
 # RESET BUTTONS (BOTTOM)
