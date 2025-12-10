@@ -490,12 +490,12 @@ def theme_toggle() -> None:
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("☀️ Light Mode", use_container_width=True):
+        if st.button("☀️ Light Mode", width="stretch"):
             set_theme_mode("light")
             st.rerun()
     
     with col2:
-        if st.button("🌙 Dark Mode", use_container_width=True):
+        if st.button("🌙 Dark Mode", width="stretch"):
             set_theme_mode("dark")
             st.rerun()
 
