@@ -142,7 +142,7 @@ with st.sidebar:
 
 # Import pages only when needed (lazy loading)
 if page == "📤 Data Upload":
-    from pages.1_Upload import render
+    from pages.page_1_data_upload import render
     render()
 
 elif page == "📊 Visual EDA":
