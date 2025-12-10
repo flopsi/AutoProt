@@ -272,6 +272,8 @@ with st.expander("🏷️ Customize Species Tags", expanded=False):
 # ============================================================================
 st.subheader("8️⃣ Species Detection")
 
+st.subheader("8️⃣ Species Detection")
+
 # df_raw is a pandas DataFrame
 # SMART CONDITIONAL LOGIC: Check for dedicated Species column with data
 species_col_candidates = [col for col in metadata_cols if "species" in col.lower()]
@@ -305,6 +307,8 @@ if not all_species_set:
 
 species_list = sorted(list(all_species_set))
 
+species_list = sorted(list(all_species_set))
+
 
 st.info(f"🔍 Detected {len(species_list)} unique species/tags: {', '.join(species_list)}")
 
@@ -332,18 +336,18 @@ if not selected_species:
     st.stop()
 
 # Filter data by selected species
-df_pandas['__SPECIES__'] = df_pandas[metadata_cols[0]].apply(
+df_raw['__SPECIES__'] = df_raw[metadata_cols[0]].apply(
     lambda x: infer_species_from_text(x, st.session_state.species_tags)
 )
 
 for col in metadata_cols[1:]:
-    df_pandas['__SPECIES__'] = df_pandas.apply(
+    df_raw['__SPECIES__'] = df_raw.apply(
         lambda row: row['__SPECIES__'] if row['__SPECIES__'] != "Other"
         else infer_species_from_text(str(row[col]), st.session_state.species_tags),
         axis=1
     )
 
-df_filtered = df_pandas[df_pandas['__SPECIES__'].isin(selected_species)].copy()
+df_filtered = df_raw[df_raw['__SPECIES__'].isin(selected_species)].copy()
 
 # Rename numerical columns
 df_filtered = df_filtered.rename(columns=name_mapping)
