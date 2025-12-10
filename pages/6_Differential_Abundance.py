@@ -359,7 +359,7 @@ st.markdown(
 st.markdown("---")
 
 # ---------------------------------------------------------------------
-# 2. COMPOSITION-BASED EXPECTED FC
+# 2. COMPOSITION-BASED EXPECTED FC WITH EXPLICIT SAVE
 # ---------------------------------------------------------------------
 
 st.subheader("2️⃣ Spike-in Composition (optional)")
@@ -369,7 +369,7 @@ use_comp = st.checkbox(
     value=False,
 )
 
-theoretical_fc: Dict[str, float] = {}
+theoretical_fc_temp: Dict[str, float] = {}
 species_values = sorted([s for s in df[species_col].unique() if isinstance(s, str) and s != 'Unknown'])
 
 if use_comp:
@@ -421,7 +421,7 @@ if use_comp:
             log2fc = -10.0
         else:
             log2fc = float(np.log2(pa / pb))
-        theoretical_fc[sp] = log2fc
+        theoretical_fc_temp[sp] = log2fc
         rows.append(
             dict(
                 Species=sp,
@@ -432,10 +432,19 @@ if use_comp:
         )
 
     st.markdown("**Expected log2FC from composition (A/B)**")
-    st.dataframe(pd.DataFrame(rows), use_container_width=True)
+    st.dataframe(pd.DataFrame(rows), width="stretch")
     
-    # SAVE TO SESSION STATE IMMEDIATELY
-    st.session_state.dea_theoretical_fc = theoretical_fc.copy()
+    # EXPLICIT SAVE BUTTON
+    if st.button("💾 Save Expected Fold Changes for Validation", type="primary"):
+        st.session_state.dea_theoretical_fc = theoretical_fc_temp.copy()
+        st.success(f"✅ Saved expected fold changes for {len(theoretical_fc_temp)} species!")
+
+    # Show current saved status
+    saved_fc = st.session_state.get('dea_theoretical_fc', {})
+    if saved_fc:
+        st.info(f"✓ Currently saved: {', '.join(f'{k}={v:.2f}' for k, v in saved_fc.items())}")
+    else:
+        st.warning("⚠️ No expected fold changes saved yet. Click button above to save.")
 
     # single combined visualization
     st.markdown("### Composition Visualization")
@@ -455,7 +464,7 @@ if use_comp:
         height=450,
     )
     figc.update_yaxes(range=[0, 100])
-    st.plotly_chart(figc, use_container_width=True)
+    st.plotly_chart(figc, width="stretch")
 
 st.markdown("---")
 
@@ -524,14 +533,11 @@ if st.button("🚀 Run Analysis", type="primary"):
         st.session_state.dea_ref = ref_cond
         st.session_state.dea_treat = treat_cond
         st.session_state.dea_p_thr = p_thr
-        # Keep theoretical_fc from section 2 if it exists
-        if 'dea_theoretical_fc' not in st.session_state:
-            st.session_state.dea_theoretical_fc = {}
 
     st.success("✅ Analysis finished.")
 
 # ---------------------------------------------------------------------
-# 5. RESULTS: MA/VOLCANO COLORED BY SPECIES
+# 5. RESULTS: MA/VOLCANO COLORED BY SPECIES (FIXED VOLCANO)
 # ---------------------------------------------------------------------
 
 if "dea_results" in st.session_state:
@@ -554,59 +560,82 @@ if "dea_results" in st.session_state:
     m2.metric("Significant (p/FDR)", f"{n_sig:,}")
     m3.metric("Up / Down", f"{n_up} / {n_down}")
 
-    # Volcano (colored by species)
+    # Volcano (FIXED - colored by species, correct orientation)
     st.markdown("### 🌋 Volcano Plot (colored by species)")
     volc = res[res["regulation"] != "not_tested"].copy()
+    volc = volc.dropna(subset=['neg_log10_p', 'log2fc'])
+    
     fig_v = px.scatter(
         volc,
         x="log2fc",
-        y="neg_log10_p",
+        y="neg_log10_p",  # This is correct - more significant = higher y value
         color="species",
-        hover_data=["regulation"],
+        hover_data={"regulation": True, "species": True, "log2fc": ":.3f", "neg_log10_p": ":.2f"},
         labels={
-            "log2fc": f"log2FC (A/B = {ref_cond}/{treat_cond})",
-            "neg_log10_p": "-log10(FDR)" if use_fdr else "-log10(p)",
+            "log2fc": f"log2 FC ({ref_cond} / {treat_cond})",
+            "neg_log10_p": "-log10(FDR)" if use_fdr else "-log10(p-value)",
+            "species": "Species"
         },
         title="Volcano plot",
-        height=550,
+        height=600,
     )
-    fig_v.add_hline(y=-np.log10(p_thr), line_dash="dash", line_color="gray")
-    st.plotly_chart(fig_v, use_container_width=True)
+    # Add threshold line
+    fig_v.add_hline(
+        y=-np.log10(p_thr), 
+        line_dash="dash", 
+        line_color="gray",
+        annotation_text=f"FDR = {p_thr}",
+        annotation_position="right"
+    )
+    # Update layout for better visibility
+    fig_v.update_layout(
+        yaxis_title="-log10(FDR)" if use_fdr else "-log10(p-value)",
+        xaxis_title=f"log2 FC ({ref_cond} / {treat_cond})",
+        hovermode='closest'
+    )
+    st.plotly_chart(fig_v, width="stretch")
 
     # MA plot (colored by species)
     st.markdown("### 📈 MA Plot (colored by species)")
     ma = res[res["regulation"] != "not_tested"].copy()
     ma["A"] = (ma["mean_g1"] + ma["mean_g2"]) / 2
     ma["M"] = ma["log2fc"]
+    ma = ma.dropna(subset=['A', 'M'])
+    
     fig_ma = px.scatter(
         ma,
         x="A",
         y="M",
         color="species",
-        hover_data=["regulation"],
-        labels={"A": "Mean log2 intensity", "M": "log2FC (A/B)"},
+        hover_data={"regulation": True, "species": True, "A": ":.2f", "M": ":.3f"},
+        labels={
+            "A": "Mean log2 intensity", 
+            "M": f"log2 FC ({ref_cond} / {treat_cond})",
+            "species": "Species"
+        },
         title="MA plot",
-        height=550,
+        height=600,
     )
-    fig_ma.add_hline(y=0.0, line_color="red")
-    st.plotly_chart(fig_ma, use_container_width=True)
+    fig_ma.add_hline(y=0.0, line_color="red", line_dash="solid", opacity=0.5)
+    fig_ma.update_layout(hovermode='closest')
+    st.plotly_chart(fig_ma, width="stretch")
 
     # top table
     st.markdown("### 📋 Top Significant Proteins")
     top = res[res["regulation"].isin(["up", "down"])].sort_values("fdr").head(100)
     st.dataframe(
         top[["log2fc", "t_stat", "pvalue", "fdr", "regulation", "species"]].round(4),
-        use_container_width=True,
+        width="stretch",
     )
 
     # -----------------------------------------------------------------
-    # 6. VALIDATION METRICS (ONLY IF THEORETICAL FC GIVEN)
+    # 6. VALIDATION METRICS (ONLY IF THEORETICAL FC SAVED)
     # -----------------------------------------------------------------
     if theoretical_fc:
         st.markdown("---")
         st.subheader("6️⃣ Spike-in Validation Metrics")
         
-        st.info(f"Using theoretical fold changes for {len(theoretical_fc)} species: {', '.join(theoretical_fc.keys())}")
+        st.info(f"✓ Using saved expected fold changes for {len(theoretical_fc)} species: {', '.join(f'{k}={v:.2f}' for k, v in theoretical_fc.items())}")
 
         species_map = dict(zip(res.index.astype(str), res["species"].astype(str)))
 
@@ -627,7 +656,7 @@ if "dea_results" in st.session_state:
             )
             c2.metric("Stable Proteins", f"{ov_stab['Total_Stable']:,}")
             if not sp_stab.empty:
-                st.dataframe(sp_stab.round(3), use_container_width=True)
+                st.dataframe(sp_stab.round(3), width="stretch")
         else:
             st.warning("No stable proteome proteins found (|expected log2FC| < 0.5)")
 
@@ -646,11 +675,11 @@ if "dea_results" in st.session_state:
             )
             c3.metric("Precision", f"{ov_var['Precision']:.1%}")
             if not sp_var.empty:
-                st.dataframe(sp_var.round(3), use_container_width=True)
+                st.dataframe(sp_var.round(3), width="stretch")
         else:
             st.warning("No variable proteome proteins found (|expected log2FC| >= 0.5)")
     else:
-        st.info("💡 Enable spike-in composition in section 2 to see validation metrics")
+        st.info("💡 Define and save spike-in composition in section 2 to enable validation metrics")
 
     # -----------------------------------------------------------------
     # 7. EXPORT
