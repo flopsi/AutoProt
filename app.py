@@ -104,7 +104,7 @@ with st.sidebar:
                 st.metric("Columns", len(df.columns))
         
         # Reset Data Button
-        if st.button("🔄 Load New Data", use_container_width=True):
+        if st.button("🔄 Load New Data", width="stretch"):
             st.session_state.data_ready = False
             st.session_state.clear()
             st.rerun()
@@ -277,7 +277,7 @@ if page == "🏠 Home":
         if st.button(
             "📤 Go to Data Upload",
             type="primary",
-            use_container_width=True,
+            width="stretch",
             key="home_upload_btn"
         ):
             st.switch_page("pages/1_Data_Upload.py")
