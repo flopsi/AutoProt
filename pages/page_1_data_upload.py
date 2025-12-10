@@ -1,16 +1,17 @@
 """
-pages/page_1_data_upload.py - OPTIMIZED Data Upload with Column Selection
+pages/page_1_data_upload.py - OPTIMIZED Data Upload with ThermoFisher Theme
 ===========================================================================
 
-Key optimizations:
+Key features:
 1. Vectorized species inference (instead of row loops)
 2. Cached file loading with hash-based keys
 3. Efficient condition mapping (comprehensions not loops)
 4. Smart caching of computed peptide counts
-5. COLUMN DESELECTION UI - User can select/deselect columns not needed downstream
+5. COLUMN DESELECTION UI - User can select/deselect columns
 6. WIDE & LONG FORMAT SUPPORT - Automatic format detection
 7. COLUMN RENAMING - Rename sample columns after selection
-8. SPECIES PRIORITY FIX - Check metadata columns FIRST before protein names
+8. SPECIES PRIORITY FIX - Check metadata columns FIRST
+9. THERMOFISHER BRANDING - Professional design with ThermoFisher colors
 """
 
 import streamlit as st
@@ -23,6 +24,7 @@ import hashlib
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from helpers.io import detect_numeric_columns, convert_string_numbers_to_float
+from theme import apply_theme_css, get_theme_colors, PRIMARY_RED, ACCENT_GREEN, ACCENT_ORANGE
 
 # ============================================================================
 # CACHED FILE LOADING - OPTIMIZED with file hash
@@ -156,23 +158,14 @@ def compute_peptide_counts(
     return df_copy, count_cols
 
 def infer_species_vectorized(df: pd.DataFrame, metadata_cols: list, species_tags: list) -> pd.Series:
-    """
-    VECTORIZED species inference - PRIORITY: Metadata columns FIRST
-    
-    FIXED: Now checks metadata columns with priority BEFORE falling back to other columns.
-    This prevents protein names (which may contain species tags) from being checked first.
-    Only metadata columns are used for species determination.
-    """
+    """VECTORIZED species inference - PRIORITY: Metadata columns FIRST (FIXED)"""
     species_list = pd.Series(['Other'] * len(df), index=df.index)
     
-    # Check metadata columns ONLY - prioritize first to last
     if len(metadata_cols) > 0:
-        # First metadata column
         species_list = df[metadata_cols[0]].apply(
             lambda x: infer_species_from_text(str(x), species_tags) if pd.notna(x) else 'Other'
         )
         
-        # Only fill remaining "Other" values with subsequent columns
         for col in metadata_cols[1:]:
             mask = species_list == 'Other'
             species_list[mask] = df.loc[mask, col].apply(
@@ -182,12 +175,7 @@ def infer_species_vectorized(df: pd.DataFrame, metadata_cols: list, species_tags
     return species_list
 
 def detect_data_format(df: pd.DataFrame, numeric_cols: list) -> str:
-    """
-    Detect if data is in WIDE or LONG format.
-    
-    WIDE: Few columns (samples as columns), many rows (proteins)
-    LONG: Many columns, pivot-like structure
-    """
+    """Detect if data is in WIDE or LONG format."""
     n_rows = len(df)
     n_cols = len(numeric_cols)
     
@@ -201,11 +189,20 @@ def detect_data_format(df: pd.DataFrame, numeric_cols: list) -> str:
 # ============================================================================
 
 def render():
-    """Render Data Upload page"""
+    """Render Data Upload page with ThermoFisher theme"""
     st.set_page_config(page_title="Data Upload", page_icon="📤", layout="wide")
-    st.title("📤 Data Upload & Preprocessing")
-    st.markdown("Upload your proteomics data and configure basic settings.")
-    st.markdown("---")
+    
+    # Apply ThermoFisher theme
+    apply_theme_css()
+    colors = get_theme_colors()
+    
+    # Header with brand color
+    st.markdown(f"""
+    <div style="padding: 20px 0; border-bottom: 3px solid {PRIMARY_RED}; margin-bottom: 20px;">
+        <h1 style="color: {PRIMARY_RED}; margin: 0;">📤 Data Upload & Preprocessing</h1>
+        <p style="color: #54585A; margin: 8px 0 0 0;">Upload your proteomics data and configure basic settings</p>
+    </div>
+    """, unsafe_allow_html=True)
     
     if "datatype" not in st.session_state:
         st.session_state.datatype = "protein"
@@ -223,7 +220,7 @@ def render():
     # STEP 1: DATA UPLOAD
     # ========================================================================
     
-    st.header("1️⃣  Upload Data File")
+    st.header("1️⃣  Upload Data File", divider="red")
     
     col1, col2 = st.columns([2, 1])
     
@@ -264,16 +261,14 @@ def render():
     st.success(f"✅ Loaded {len(df_raw):,} rows × {len(df_raw.columns)} columns")
     
     # ========================================================================
-    # STEP 3: COLUMN DETECTION & DESELECTION - NEW FEATURE
+    # STEP 3: COLUMN DETECTION & DESELECTION
     # ========================================================================
     
-    st.header("2️⃣  Column Selection & Format Detection")
+    st.header("2️⃣  Column Selection & Format Detection", divider="red")
     
-    # VECTORIZED numeric column detection
     numeric_cols, categorical_cols = detect_numeric_columns(df_raw)
     df_raw = convert_string_numbers_to_float(df_raw, numeric_cols)
     
-    # Detect data format
     data_format = detect_data_format(df_raw, numeric_cols)
     
     col1, col2, col3, col4 = st.columns(4)
@@ -307,7 +302,7 @@ def render():
         )
     
     # ========================================================================
-    # STEP 3A: SELECT/DESELECT COLUMNS TO KEEP - NEW FEATURE
+    # STEP 3A: SELECT/DESELECT COLUMNS
     # ========================================================================
     
     st.subheader("📋 Column Selection")
@@ -344,7 +339,6 @@ def render():
                 help="Abundance data - select only samples you need"
             )
             
-            # Quick select/deselect buttons
             col_btn1, col_btn2, col_btn3 = st.columns(3)
             with col_btn1:
                 if st.button("✅ Select All", key="sel_all"):
@@ -359,10 +353,8 @@ def render():
                     st.session_state.num_cols = numeric_cols
                     st.rerun()
         
-        # Keep only selected columns
         selected_all_cols = selected_categorical + selected_numeric
         df_raw = df_raw[selected_all_cols].copy()
-        
         st.session_state.selected_columns = selected_all_cols
         
         st.success(f"✅ Keeping {len(selected_categorical)} metadata + {len(selected_numeric)} sample columns")
@@ -371,17 +363,14 @@ def render():
         st.subheader("✏️ Rename Sample Columns (Optional)")
         st.markdown("Customize column names for easier interpretation downstream:")
         
-        # Initialize rename mapping if not exists or columns changed
         if 'column_rename_mapping' not in st.session_state or set(st.session_state.column_rename_mapping.keys()) != set(selected_numeric):
             st.session_state.column_rename_mapping = {col: col for col in selected_numeric}
         
-        # Create editable dataframe
         rename_df = pd.DataFrame({
             'Original Name': selected_numeric,
             'New Name': [st.session_state.column_rename_mapping.get(col, col) for col in selected_numeric]
         })
         
-        # Data editor
         edited_rename_df = st.data_editor(
             rename_df,
             key="rename_editor",
@@ -393,15 +382,12 @@ def render():
             }
         )
         
-        # Update mapping from editor
         if edited_rename_df is not None:
             for idx, row in edited_rename_df.iterrows():
                 original = rename_df.iloc[idx]['Original Name']
                 st.session_state.column_rename_mapping[original] = row['New Name']
         
-        # Apply renaming
         numeric_cols_renamed = [st.session_state.column_rename_mapping.get(col, col) for col in selected_numeric]
-        
         st.info(f"✅ Sample columns will be renamed during processing")
     
     with tab3:
@@ -412,9 +398,8 @@ def render():
     # STEP 4: ID COLUMN SELECTION
     # ========================================================================
     
-    st.header("3️⃣  Configure ID & Metadata")
+    st.header("3️⃣  Configure ID & Metadata", divider="red")
     
-    # Filter to only selected categorical columns
     selected_categorical = [c for c in selected_categorical if c in df_raw.columns]
     
     if not selected_categorical:
@@ -433,10 +418,10 @@ def render():
         return
     
     # ========================================================================
-    # STEP 5: SPECIES TAGGING - VECTORIZED & OPTIMIZED (FIXED PRIORITY)
+    # STEP 5: SPECIES TAGGING (FIXED PRIORITY)
     # ========================================================================
     
-    st.header("4️⃣  Species Configuration")
+    st.header("4️⃣  Species Configuration", divider="red")
     
     col1, col2 = st.columns([2, 1])
     
@@ -457,7 +442,6 @@ def render():
     
     st.info("ℹ️ Species detection now prioritizes metadata columns over protein names, preventing false positives.")
     
-    # VECTORIZED species inference - NOW CHECKS METADATA FIRST (FIXED)
     metadata_cols = [c for c in selected_categorical if c != id_col]
     df_raw['SPECIES'] = infer_species_vectorized(df_raw, metadata_cols, st.session_state.species_tags)
     
@@ -485,16 +469,14 @@ def render():
     # STEP 6: NUMERIC COLUMNS & CONDITION MAPPING
     # ========================================================================
     
-    st.header("5️⃣  Sample Configuration")
+    st.header("5️⃣  Sample Configuration", divider="red")
     
-    # Get numeric columns from selected columns
     numeric_cols_final = [c for c in selected_numeric if c in df_raw.columns]
     
     if not numeric_cols_final:
         st.error("❌ Must have at least one numeric column")
         return
     
-    # VECTORIZED condition mapping - Use renamed names
     sample_to_condition = {
         numeric_cols_renamed[selected_numeric.index(col)]: extract_condition_from_sample(col)
         for col in numeric_cols_final
@@ -516,10 +498,10 @@ def render():
         st.bar_chart(condition_counts)
     
     # ========================================================================
-    # STEP 7: PEPTIDE COUNTS (if applicable)
+    # STEP 7: PEPTIDE COUNTS
     # ========================================================================
     
-    st.header("6️⃣  Peptide Count Configuration")
+    st.header("6️⃣  Peptide Count Configuration", divider="red")
     
     peptide_cols_detected = find_peptide_columns(list(df_filtered.columns), st.session_state.datatype)
     
@@ -541,7 +523,7 @@ def render():
     # STEP 8: SAVE & CONFIRM
     # ========================================================================
     
-    st.header("7️⃣  Confirm Upload")
+    st.header("7️⃣  Confirm Upload", divider="red")
     
     col1, col2, col3 = st.columns(3)
     
@@ -564,7 +546,6 @@ def render():
     
     if confirm and st.button("Process & Save Data", type="primary", use_container_width=True):
         with st.spinner("Processing data..."):
-            # Rename numeric columns in dataframe
             df_renamed = df_with_counts.rename(
                 columns=st.session_state.column_rename_mapping
             )
@@ -581,14 +562,10 @@ def render():
             
             st.success("✅ Data loaded and ready for analysis!")
             st.balloons()
-            st.info("👉 Proceed to **Visual EDA** page for initial exploration")
             
-            st.markdown(
-                """
-                <div style="padding: 20px; background: #f0f2f6; border-radius: 10px;">
-                <strong>Next Step:</strong> Go to the <strong>Visual EDA</strong> page to explore 
-                your data distribution and quality.
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+            st.markdown(f"""
+            <div style="padding: 20px; background: rgba(181, 189, 0, 0.1); border-left: 4px solid {ACCENT_GREEN}; border-radius: 8px; margin-top: 20px;">
+            <strong>Next Step:</strong> Go to the <strong>Visual EDA</strong> page to explore your data distribution and quality.
+            </div>
+            """, unsafe_allow_html=True)
+
