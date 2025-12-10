@@ -1,6 +1,6 @@
 """
 pages/page_1_data_upload.py - OPTIMIZED Data Upload with Column Selection
-===========================================================================
+==========================================================================
 
 Key optimizations:
 1. Vectorized species inference (instead of row loops)
