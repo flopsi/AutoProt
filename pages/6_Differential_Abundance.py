@@ -681,6 +681,38 @@ if "dea_results" in st.session_state:
     else:
         st.info("💡 Define and save spike-in composition in section 2 to enable validation metrics")
 
+    # Add this RIGHT AFTER section 6 starts to debug the issue
+
+if theoretical_fc:
+    st.markdown("---")
+    st.subheader("6️⃣ Spike-in Validation Metrics")
+    
+    st.info(f"✓ Using saved expected fold changes for {len(theoretical_fc)} species: {', '.join(f'{k}={v:.2f}' for k, v in theoretical_fc.items())}")
+    
+    # DEBUG: Check species mapping
+    with st.expander("🔍 Debug: Species Mapping Check"):
+        species_map = dict(zip(res.index.astype(str), res["species"].astype(str)))
+        
+        # Count proteins per species
+        species_counts = res["species"].value_counts()
+        st.write("**Proteins per species in results:**")
+        st.dataframe(species_counts)
+        
+        # Check if species names match theoretical_fc keys
+        species_in_results = set(res["species"].unique())
+        species_in_theoretical = set(theoretical_fc.keys())
+        
+        st.write(f"**Species in results**: {species_in_results}")
+        st.write(f"**Species in theoretical FC**: {species_in_theoretical}")
+        st.write(f"**Matching species**: {species_in_results & species_in_theoretical}")
+        st.write(f"**Missing from results**: {species_in_theoretical - species_in_results}")
+        st.write(f"**Unexpected in results**: {species_in_results - species_in_theoretical}")
+        
+        # Sample proteins with their species
+        sample_proteins = res[["species"]].head(20)
+        st.write("**Sample proteins with species:**")
+        st.dataframe(sample_proteins)
+
     # -----------------------------------------------------------------
     # 7. EXPORT
     # -----------------------------------------------------------------
