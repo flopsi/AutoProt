@@ -272,9 +272,6 @@ with st.expander("🏷️ Customize Species Tags", expanded=False):
 # ============================================================================
 st.subheader("8️⃣ Species Detection")
 
-st.subheader("8️⃣ Species Detection")
-
-# df_raw is a pandas DataFrame
 # SMART CONDITIONAL LOGIC: Check for dedicated Species column with data
 species_col_candidates = [col for col in metadata_cols if "species" in col.lower()]
 has_species_column_with_data = False
@@ -287,11 +284,12 @@ if species_col_candidates:
             break
 
 # If we have a dedicated species column with data, search only that
-# Otherwise, search all available columns (including protein names)
+# Otherwise, search all metadata columns INCLUDING the ID column
 if has_species_column_with_data:
     search_cols = species_col_candidates  # Only dedicated species columns
 else:
-    search_cols = metadata_cols  # Search ALL columns including protein names
+    # Search ALL metadata columns (includes id_col for protein names)
+    search_cols = metadata_cols
 
 all_species_set = set()
 for col in search_cols:
@@ -307,7 +305,6 @@ if not all_species_set:
 
 species_list = sorted(list(all_species_set))
 
-species_list = sorted(list(all_species_set))
 
 
 st.info(f"🔍 Detected {len(species_list)} unique species/tags: {', '.join(species_list)}")
