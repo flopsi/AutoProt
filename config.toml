@@ -1,0 +1,52 @@
+[theme]
+# ThermoFisher Scientific Brand Theme
+# Primary: Red (#E71316), Dark Gray (#54585A), White
+# Accents: Navy, Sky Blue, Green, Yellow, Orange, Dark Red
+
+# Primary colors
+primaryColor = "#E71316"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F5F5"
+textColor = "#54585A"
+
+# Accent colors for charts and visualizations
+# Chart sequence: Navy → Sky → Green → Yellow → Orange → Dark Red
+plotly_colorscales = [
+    ["#262262", "#9BD3DD", "#B5BD00", "#F1B434", "#EA7600", "#A6192E"]
+]
+
+# Font configuration
+font = "sans serif"
+
+# Sidebar
+[theme]
+sidebar_background_color = "#F5F5F5"
+
+# Dark theme variant
+[theme.dark]
+primaryColor = "#E71316"
+backgroundColor = "#1F2121"
+secondaryBackgroundColor = "#2A2D2F"
+textColor = "#E2E3E4"
+
+# Base colors - Light theme (default)
+[theme.light]
+primaryColor = "#E71316"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F5F5"
+textColor = "#54585A"
+
+# Chart colors
+[plotting]
+# ThermoFisher Scientific approved chart sequence
+theme = "plotly"
+backgroundColor = "rgba(0,0,0,0)"
+font_color = "#54585A"
+
+[client]
+# Show toolbar
+showSidebarNavigation = true
+showErrorDetails = true
+
+[logger]
+level = "info"
