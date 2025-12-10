@@ -21,6 +21,16 @@ from plotly.subplots import make_subplots
 sys.path.append(str(Path(__file__).parent.parent))
 
 # ---------------------------------------------------------------------
+# COLOR SCHEME
+# ---------------------------------------------------------------------
+
+SPECIES_COLORS = {
+    "HUMAN": "#2ecc71",  # Green
+    "YEAST": "#e67e22",  # Orange
+    "ECOLI": "#9b59b6",  # Purple
+}
+
+# ---------------------------------------------------------------------
 # STATISTICAL HELPERS
 # ---------------------------------------------------------------------
 
@@ -361,7 +371,7 @@ st.subheader("3️⃣ Statistical Settings")
 
 c1, c2 = st.columns(2)
 with c1:
-    p_thr = st.selectbox("FDR threshold", options=[0.001, 0.01, 0.05, 0.1], index=2, format_func=lambda x: f"{x*100:.1f} %")
+    p_thr = st.selectbox("FDR threshold", options=[0.01, 0.05], index=1, format_func=lambda x: f"{x*100:.0f}%")
 with c2:
     use_fdr = st.checkbox("Use FDR correction (BH)", value=True)
 
@@ -423,39 +433,43 @@ if "dea_results" in st.session_state:
     quant_rate = n_quant / n_total * 100 if n_total > 0 else 0
     n_ids = n_total
     
-    # Calculate true positives and deFDR
+    # Calculate validation metrics if theoretical FC available
+    sens_pct = 0.0
+    spec_pct = 0.0
+    true_positives = 0
+    de_fdr = 0.0
+    
     if theoretical_fc:
         species_series = df[species_col]
         res_temp = res.copy()
         res_temp["species"] = res_temp.index.map(species_series)
         res_temp["true_log2fc"] = res_temp["species"].map(theoretical_fc)
         res_temp = res_temp.dropna(subset=["true_log2fc"])
+        res_temp = res_temp[res_temp["regulation"] != "not_tested"]
         
         if not res_temp.empty:
             res_temp["true_regulated"] = np.abs(res_temp["true_log2fc"]) >= stable_thr
             res_temp["observed_regulated"] = res_temp["regulation"].isin(["up", "down"])
             
             tp = int((res_temp["true_regulated"] & res_temp["observed_regulated"]).sum())
+            fn = int((res_temp["true_regulated"] & ~res_temp["observed_regulated"]).sum())
+            tn = int((~res_temp["true_regulated"] & ~res_temp["observed_regulated"]).sum())
             fp = int((~res_temp["true_regulated"] & res_temp["observed_regulated"]).sum())
             
+            # Calculate metrics
+            sens_pct = tp / (tp + fn) * 100 if (tp + fn) > 0 else 0.0
+            spec_pct = tn / (tn + fp) * 100 if (tn + fp) > 0 else 0.0
             true_positives = tp
             de_fdr = fp / (tp + fp) * 100 if (tp + fp) > 0 else 0.0
-        else:
-            true_positives = 0
-            de_fdr = 0.0
-    else:
-        true_positives = 0
-        de_fdr = 0.0
     
     # Header with all stats
     st.markdown(
         f"**{n_quant:,} Quant. ({quant_rate:.0f}%), {n_ids:,} IDs**  \n"
-        f"**Sens. {0:.2f} %, Spec. {0:.2f} %**  \n"
+        f"**Sens. {sens_pct:.2f} %, Spec. {spec_pct:.2f} %**  \n"
         f"**{true_positives:,} true positives, {de_fdr:.2f}% deFDR**"
     )
     
     # Calculate asymmetry if theoretical FC available
-    asymmetry_text = ""
     if theoretical_fc:
         asym_dict = {}
         for sp in theoretical_fc.keys():
@@ -484,16 +498,16 @@ if "dea_results" in st.session_state:
         horizontal_spacing=0.05
     )
     
-    colors = px.colors.qualitative.Plotly
     for i, sp in enumerate(species_list, 1):
         sp_data = ma[ma["species"] == sp]
+        color = SPECIES_COLORS.get(sp, "#95a5a6")
         
         fig_facet.add_trace(
             go.Scatter(
                 x=sp_data["A"],
                 y=sp_data["log2fc"],
                 mode='markers',
-                marker=dict(size=3, color=colors[i-1], opacity=0.6),
+                marker=dict(size=3, color=color, opacity=0.6),
                 name=sp,
                 showlegend=False,
                 hovertemplate=f"{sp}<br>A=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
@@ -508,7 +522,7 @@ if "dea_results" in st.session_state:
                 fig_facet.add_hline(
                     y=expected_fc,
                     line_dash="dash",
-                    line_color=colors[i-1],
+                    line_color=color,
                     line_width=2,
                     row=1, col=i
                 )
@@ -521,7 +535,7 @@ if "dea_results" in st.session_state:
             go.Box(
                 y=sp_data["log2fc"],
                 name=sp,
-                marker_color=colors[i-1],
+                marker_color=color,
                 showlegend=False,
                 width=0.3,
                 boxmean='sd'
@@ -537,11 +551,15 @@ if "dea_results" in st.session_state:
     # === PLOT 2: REGULAR SCATTER (MA PLOT) ===
     st.markdown("### 📈 MA Plot (Combined)")
     
+    # Map colors to species
+    ma["color"] = ma["species"].map(SPECIES_COLORS)
+    
     fig_ma = px.scatter(
         ma,
         x="A",
         y="log2fc",
         color="species",
+        color_discrete_map=SPECIES_COLORS,
         hover_data=["regulation"],
         labels={"A": "log2(B)", "log2fc": f"log2({ref_cond}/{treat_cond})"},
         height=600,
@@ -556,6 +574,7 @@ if "dea_results" in st.session_state:
                     y=expected_fc,
                     line_dash="dot",
                     line_width=2,
+                    line_color=SPECIES_COLORS.get(species, "#95a5a6"),
                     opacity=0.7,
                     annotation_text=f"{species} (exp={expected_fc:.2f})",
                     annotation_position="right",
@@ -570,12 +589,9 @@ if "dea_results" in st.session_state:
     
     fig_density = go.Figure()
     
-    for i, sp in enumerate(sorted(density_data["species"].unique())):
+    for sp in sorted(density_data["species"].unique()):
         sp_data = density_data[density_data["species"] == sp]["log2fc"]
-        
-        # Create histogram for density
-        hist, bin_edges = np.histogram(sp_data, bins=50, density=True)
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        color = SPECIES_COLORS.get(sp, "#95a5a6")
         
         # Smooth with KDE
         from scipy.stats import gaussian_kde
@@ -590,7 +606,8 @@ if "dea_results" in st.session_state:
             name=sp,
             fill='tozeroy',
             opacity=0.6,
-            line=dict(width=2)
+            line=dict(width=2, color=color),
+            fillcolor=color
         ))
         
         # Add expected FC line
@@ -600,6 +617,7 @@ if "dea_results" in st.session_state:
                 x=expected_fc,
                 line_dash="dash",
                 line_width=2,
+                line_color=color,
                 annotation_text=f"{sp}",
                 annotation_position="top"
             )
@@ -622,6 +640,7 @@ if "dea_results" in st.session_state:
         x="log2fc",
         y="neg_log10_p",
         color="species",
+        color_discrete_map=SPECIES_COLORS,
         hover_data=["regulation"],
         labels={"log2fc": f"log2 FC ({ref_cond}/{treat_cond})", "neg_log10_p": "-log10(FDR)" if use_fdr else "-log10(p)"},
         height=600,
@@ -669,6 +688,7 @@ if "dea_results" in st.session_state:
             c3.metric("Precision", f"{var_ov['Precision']:.1%}")
             if not var_sp.empty:
                 st.dataframe(var_sp, use_container_width=True)
+                st.caption("**RMSE/MAE**: log2 units | **MAPE**: % error vs expected | **Bias**: systematic over/under-estimation")
     else:
         st.info("💡 Enable spike-in composition for validation")
     
