@@ -272,37 +272,39 @@ with st.expander("🏷️ Customize Species Tags", expanded=False):
 # ============================================================================
 st.subheader("8️⃣ Species Detection")
 
-# df_raw is a Polars DataFrame
+# df_raw is a pandas DataFrame
 # SMART CONDITIONAL LOGIC: Check for dedicated Species column with data
 species_col_candidates = [col for col in metadata_cols if "species" in col.lower()]
 has_species_column_with_data = False
 
 if species_col_candidates:
     for spec_col in species_col_candidates:
-        # any non-null values?
-        if df_raw.select(pl.col(spec_col).drop_nulls().len()).item() > 0:
+        # Check if column has any non-null values
+        if df_raw[spec_col].dropna().shape[0] > 0:
             has_species_column_with_data = True
             break
 
 # If we have a dedicated species column with data, search only that
-# Otherwise, search all available columns (including names)
+# Otherwise, search all available columns (including protein names)
 if has_species_column_with_data:
-    search_cols = species_col_candidates
+    search_cols = species_col_candidates  # Only dedicated species columns
 else:
-    search_cols = metadata_cols
+    search_cols = metadata_cols  # Search ALL columns including protein names
 
-all_species_set: set[str] = set()
+all_species_set = set()
 for col in search_cols:
-    # iterate over non‑null values in this column
-    for value in df_raw.select(pl.col(col).drop_nulls()).to_series().to_list():
+    # Iterate over non-null values in this column
+    for value in df_raw[col].dropna():
         species = infer_species_from_text(str(value), st.session_state.species_tags)
-        if species != "Other":
+        if species != "Other":  # Only add actual detected species
             all_species_set.add(species)
 
+# If no species found, add "Other"
 if not all_species_set:
     all_species_set.add("Other")
 
-species_list = sorted(all_species_set)
+species_list = sorted(list(all_species_set))
+
 
 st.info(f"🔍 Detected {len(species_list)} unique species/tags: {', '.join(species_list)}")
 
