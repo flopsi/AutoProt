@@ -1,6 +1,6 @@
 """
 pages/1_Data_Upload.py - DATA UPLOAD WITH SPECIES FILTER AND MANUAL RENAMING
-Manual renaming only for numerical columns
+Manual renaming only for numerical columns + Custom species tags
 """
 
 import streamlit as st
@@ -42,30 +42,49 @@ def load_excel_file(file_bytes: bytes) -> pl.DataFrame:
     import io
     return pl.read_excel(io.BytesIO(file_bytes), sheet_id=0)
 
-def infer_species_from_text(text: str) -> str:
+def get_default_species_tags() -> list:
+    """Return default species tags to search for"""
+    return [
+        "HUMAN",
+        "MOUSE", 
+        "YEAST",
+        "ECOLI",
+        "DROSOPHILA",
+        "ARABIDOPSIS",
+        "Contaminant"
+    ]
+
+def infer_species_from_text(text: str, species_tags: list) -> str:
+    """
+    Infer species from text based on user-defined species tags.
+    
+    Args:
+        text: Text to search for species identifiers
+        species_tags: List of species tags to search for (user-customizable)
+    
+    Returns:
+        Species tag if found, otherwise "Other"
+    """
     if pd.isna(text) or text is None:
         return "Other"
     
     s = str(text).upper()
     
-    if "HUMAN" in s:
-        return "HUMAN"
-    if "MOUSE" in s:
-        return "MOUSE"
-    if "YEAST" in s:
-        return "YEAST"
-    if "ECOLI" in s or "_ECOL" in s:
-        return "ECOLI"
-    if "DROSOPHILA" in s or "DROME" in s:
-        return "DROSOPHILA"
-    if "ARABIDOPSIS" in s or "ARATH" in s:
-        return "ARABIDOPSIS"
-    if "CONTA" in s:
-        return "Contaminant"
+    # Check each user-defined species tag
+    for tag in species_tags:
+        tag_upper = tag.upper()
+        if tag_upper in s:
+            return tag
     
+    # Additional pattern matching for UniProt-style suffixes
     if "_" in s:
         tail = s.split("_")[-1]
         if len(tail) >= 3 and tail.isalpha():
+            # Check if this tail matches any tag
+            for tag in species_tags:
+                if tail == tag.upper() or tag.upper() in tail:
+                    return tag
+            # Return the tail itself as a new species
             return tail
     
     return "Other"
@@ -122,6 +141,9 @@ def find_peptide_columns(columns: list, data_type: str) -> list:
 
 if 'data_type' not in st.session_state:
     st.session_state.data_type = 'protein'
+
+if 'species_tags' not in st.session_state:
+    st.session_state.species_tags = get_default_species_tags()
 
 # ============================================================================
 # FILE UPLOAD
@@ -372,18 +394,42 @@ if sequence_col:
 st.markdown("---")
 
 # ============================================================================
+# SPECIES TAGS CUSTOMIZATION
+# ============================================================================
+
+st.subheader("7️⃣ Species Tags & Filter")
+
+with st.expander("🏷️ Customize Species Tags", expanded=False):
+    st.markdown("**Default tags:** " + ", ".join(get_default_species_tags()))
+    st.markdown("Add custom species tags below (e.g., RAT, BOVIN, XENLA):")
+    
+    # Editable species tags
+    species_tags_input = st.text_area(
+        "Species tags (one per line):",
+        value="\n".join(st.session_state.species_tags),
+        height=150,
+        key="species_tags_input",
+        help="Enter species identifiers to search for in protein names. One per line."
+    )
+    
+    if st.button("Update Species Tags", key="update_species_tags"):
+        # Parse tags from text area
+        new_tags = [tag.strip().upper() for tag in species_tags_input.split('\n') if tag.strip()]
+        st.session_state.species_tags = new_tags
+        st.success(f"✅ Updated to {len(new_tags)} species tags")
+        st.rerun()
+
+# ============================================================================
 # SPECIES DETECTION & FILTER
 # ============================================================================
 
-st.subheader("7️⃣ Species Filter")
-
 df_pandas = df_raw.to_pandas()
 
-# Detect species across all metadata columns
+# Detect species across all metadata columns using current tags
 all_species_set = set()
 for col in metadata_cols:
     for value in df_pandas[col].dropna():
-        species = infer_species_from_text(str(value))
+        species = infer_species_from_text(str(value), st.session_state.species_tags)
         all_species_set.add(species)
 
 species_list = sorted(list(all_species_set))
@@ -414,11 +460,13 @@ if not selected_species:
     st.stop()
 
 # Filter data by selected species
-df_pandas['__SPECIES__'] = df_pandas[metadata_cols[0]].apply(infer_species_from_text)
+df_pandas['__SPECIES__'] = df_pandas[metadata_cols[0]].apply(
+    lambda x: infer_species_from_text(x, st.session_state.species_tags)
+)
 for col in metadata_cols[1:]:
     df_pandas['__SPECIES__'] = df_pandas.apply(
         lambda row: row['__SPECIES__'] if row['__SPECIES__'] != "Other" 
-        else infer_species_from_text(str(row[col])),
+        else infer_species_from_text(str(row[col]), st.session_state.species_tags),
         axis=1
     )
 
@@ -485,7 +533,7 @@ def reset_current_page():
         'file_hash', 'metadata_cols', 'numerical_cols', 'selected_species',
         'df_raw', 'numeric_cols', 'id_col', 'species_col', 'data_type',
         'replicates_per_condition', 'data_ready', 'manual_name_mapping',
-        'sample_to_condition', 'peptide_cols', 'sequence_col'
+        'sample_to_condition', 'peptide_cols', 'sequence_col', 'species_tags'
     ]
     for key in keys_to_delete:
         if key in st.session_state:
