@@ -308,87 +308,130 @@ for condition in conditions:
 all_data_combined = np.concatenate(list(all_intensities_by_condition.values()))
 
 # ============================================================================
-# DISTRIBUTION PLOTS
+# 2. INTENSITY DISTRIBUTION & NORMALITY ASSESSMENT
 # ============================================================================
 
-st.markdown("### 📊 Distribution Comparison")
+st.subheader("2️⃣ Distribution Quality Assessment")
 
-col1, col2 = st.columns(2)
+st.markdown("""
+**Comprehensive normality and variance stabilization testing**:
+- **Distributions**: Visualize intensity patterns by condition
+- **Q-Q Plots**: Assess deviation from normality
+- **Shapiro-Wilk Test**: Statistical normality test
+- **Mean-Variance Relationship**: Check homoscedasticity
+""")
 
-with col1:
-    st.markdown("**Histogram with KDE Overlay**")
-    fig_hist = go.Figure()
+# Prepare data
+all_intensities_by_condition = {}
+for condition in conditions:
+    condition_samples = [s for s in numeric_cols if sample_to_condition.get(s) == condition]
+    condition_data = df[condition_samples].values.flatten()
+    condition_data = condition_data[~np.isnan(condition_data) & (condition_data > 0)]
+    all_intensities_by_condition[condition] = np.log2(condition_data + 1)
+
+# Combine all data
+all_data_combined = np.concatenate(list(all_intensities_by_condition.values()))
+
+# ============================================================================
+# DISTRIBUTION PLOTS - PER CONDITION KDE
+# ============================================================================
+
+st.markdown("### 📊 Intensity Distribution (Per Condition)")
+
+st.markdown("**Kernel Density Estimation (KDE) by condition with individual histograms**")
+
+# Create subplots for each condition
+n_conditions = len(conditions)
+n_cols = min(3, n_conditions)
+n_rows = (n_conditions + n_cols - 1) // n_cols
+
+fig_dists = make_subplots(
+    rows=n_rows,
+    cols=n_cols,
+    subplot_titles=conditions,
+    specs=[[{'secondary_y': False}] * n_cols for _ in range(n_rows)]
+)
+
+colors = px.colors.qualitative.Set2[:n_conditions]
+
+for idx, condition in enumerate(conditions):
+    row = idx // n_cols + 1
+    col = idx % n_cols + 1
+    color = colors[idx % len(colors)]
     
-    for condition in conditions:
-        condition_data = all_intensities_by_condition[condition]
-        
-        fig_hist.add_trace(go.Histogram(
-            x=condition_data,
-            name=condition,
-            opacity=0.5,
-            nbinsx=50,
-            histnorm='probability density'
-        ))
+    condition_data = all_intensities_by_condition[condition]
+    
+    if len(condition_data) > 5:
+        # Add histogram
+        fig_dists.add_trace(
+            go.Histogram(
+                x=condition_data,
+                name=condition,
+                nbinsx=40,
+                opacity=0.5,
+                marker_color=color,
+                histnorm='probability density',
+                showlegend=False,
+                hovertemplate='Bin: %{x:.2f}<br>Density: %{y:.4f}<extra></extra>'
+            ),
+            row=row, col=col
+        )
         
         # Add KDE overlay
-        if len(condition_data) > 10:
+        try:
             kde = gaussian_kde(condition_data)
             x_range = np.linspace(condition_data.min(), condition_data.max(), 200)
             
-            fig_hist.add_trace(go.Scatter(
-                x=x_range,
-                y=kde(x_range),
-                mode='lines',
-                name=f'{condition} (KDE)',
-                line=dict(width=3)
-            ))
-    
-    fig_hist.update_layout(
-        title='Log2(Intensity) Distribution',
-        xaxis_title='Log2(Intensity + 1)',
-        yaxis_title='Density',
-        barmode='overlay',
-        height=450,
-        hovermode='x unified'
-    )
-    st.plotly_chart(fig_hist, use_container_width=True)
+            fig_dists.add_trace(
+                go.Scatter(
+                    x=x_range,
+                    y=kde(x_range),
+                    mode='lines',
+                    name=f'{condition} (KDE)',
+                    line=dict(color=color, width=3),
+                    showlegend=False,
+                    hovertemplate='Intensity: %{x:.2f}<br>Density: %{y:.4f}<extra></extra>'
+                ),
+                row=row, col=col
+            )
+        except Exception as e:
+            st.warning(f"⚠️ Could not compute KDE for {condition}: {str(e)}")
+    else:
+        st.warning(f"⚠️ Insufficient data for {condition}: {len(condition_data)} points")
 
-with col2:
-    st.markdown("**Q-Q Plot (Combined Data)**")
+# Update layout
+fig_dists.update_xaxes(title_text="Log2(Intensity + 1)")
+fig_dists.update_yaxes(title_text="Density")
+fig_dists.update_layout(
+    title_text='Intensity Distribution by Condition (Histogram + KDE)',
+    height=400 * n_rows,
+    showlegend=False,
+    hovermode='closest'
+)
+
+st.plotly_chart(fig_dists, use_container_width=True)
+
+# Summary statistics per condition
+st.markdown("**Summary Statistics by Condition**")
+
+summary_stats = []
+for condition in conditions:
+    condition_data = all_intensities_by_condition[condition]
     
-    # Generate Q-Q plot using scipy.stats.probplot (CORRECT implementation)
-    theoretical_q, sample_q = stats.probplot(all_data_combined, dist='norm')[0]
-    
-    fig_qq = go.Figure()
-    
-    # Add scatter
-    fig_qq.add_trace(go.Scatter(
-        x=theoretical_q,
-        y=sample_q,
-        mode='markers',
-        marker=dict(size=4, opacity=0.5, color='steelblue'),
-        name='Data',
-        hovertemplate='Theoretical: %{x:.2f}<br>Sample: %{y:.2f}<extra></extra>'
-    ))
-    
-    # Add reference line (y=x)
-    min_val = min(theoretical_q.min(), sample_q.min())
-    max_val = max(theoretical_q.max(), sample_q.max())
-    fig_qq.add_trace(go.Scatter(
-        x=[min_val, max_val],
-        y=[min_val, max_val],
-        mode='lines',
-        line=dict(color='red', dash='dash', width=2),
-        name='Perfect Normal'
-    ))
-    
-    fig_qq.update_layout(
-        title='Q-Q Plot (All Data)',
-        xaxis_title='Theoretical Quantiles',
-        yaxis_title='Sample Quantiles',
-        height=450
-    )
-    st.plotly_chart(fig_qq, use_container_width=True)
+    summary_stats.append({
+        'Condition': condition,
+        'n': len(condition_data),
+        'Mean': f"{condition_data.mean():.2f}",
+        'Median': f"{np.median(condition_data):.2f}",
+        'Std Dev': f"{condition_data.std():.2f}",
+        'Min': f"{condition_data.min():.2f}",
+        'Max': f"{condition_data.max():.2f}",
+        'Skewness': f"{stats.skew(condition_data):.3f}",
+        'Kurtosis': f"{stats.kurtosis(condition_data):.3f}"
+    })
+
+summary_stats_df = pd.DataFrame(summary_stats)
+st.dataframe(summary_stats_df, hide_index=True, use_container_width=True)
 
 # ============================================================================
 # Q-Q PLOTS BY CONDITION
