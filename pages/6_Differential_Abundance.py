@@ -501,18 +501,11 @@ if "dea_results" in st.session_state:
         sp_data = ma[ma["species"] == sp]
         color = SPECIES_COLORS.get(sp, "#95a5a6")
         
-        # Calculate mean and std for outlier detection
-        mean_fc = sp_data["log2fc"].mean()
-        std_fc = sp_data["log2fc"].std()
-        
-        # Filter outliers: only show points within ±2 SD
-        outlier_mask = np.abs(sp_data["log2fc"] - mean_fc) <= 2 * std_fc
-        sp_data_filtered = sp_data[outlier_mask]
-        
+        # Show ALL scatter points
         fig_facet.add_trace(
             go.Scatter(
-                x=sp_data_filtered["A"],
-                y=sp_data_filtered["log2fc"],
+                x=sp_data["A"],
+                y=sp_data["log2fc"],
                 mode='markers',
                 marker=dict(size=3, color=color, opacity=0.6),
                 name=sp,
@@ -537,16 +530,31 @@ if "dea_results" in st.session_state:
         # Zero line
         fig_facet.add_hline(y=0, line_color="red", line_width=1, opacity=0.5, row=1, col=i)
         
-        # Add boxplot showing only ±2 SD range
+        # Add boxplot - but ONLY show outliers beyond ±2 SD
+        mean_fc = sp_data["log2fc"].mean()
+        std_fc = sp_data["log2fc"].std()
+        lower_bound = mean_fc - 2 * std_fc
+        upper_bound = mean_fc + 2 * std_fc
+        
+        # Only show outlier points beyond ±2 SD
+        outliers = sp_data[(sp_data["log2fc"] < lower_bound) | (sp_data["log2fc"] > upper_bound)]
+        
         fig_facet.add_trace(
             go.Box(
-                y=sp_data_filtered["log2fc"],
+                y=sp_data["log2fc"],
                 name=sp,
                 marker_color=color,
                 showlegend=False,
                 width=0.3,
                 boxmean='sd',
-                boxpoints=False  # Don't show individual outlier points
+                boxpoints='outliers',  # Show outlier points
+                marker=dict(
+                    outliercolor=color,
+                    line=dict(outliercolor=color, outlierwidth=2)
+                ),
+                # Custom outlier definition: beyond ±2 SD
+                y0=lower_bound,
+                dy=upper_bound - lower_bound
             ),
             row=1, col=i
         )
