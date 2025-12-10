@@ -291,13 +291,16 @@ st.markdown("---")
 
 st.subheader("4️⃣ Peptides/Precursors per Protein Column")
 
-# Auto-detect peptide columns
-all_cols = list(metadata_cols) + list(numerical_cols)
-auto_peptide_cols = find_peptide_columns(all_cols, st.session_state.data_type)
+# Auto-detect peptide columns from ORIGINAL columns (before renaming)
+all_cols_original = list(metadata_cols) + list(numerical_cols)
+auto_peptide_cols = find_peptide_columns(all_cols_original, st.session_state.data_type)
 
-# Determine default selection (cached or auto-detected)
+# Check if we have cached peptide columns and validate they still exist
 if 'peptide_cols' in st.session_state:
-    default_peptide_cols = st.session_state.peptide_cols
+    # Filter cached columns to only those that still exist in original columns
+    default_peptide_cols = [col for col in st.session_state.peptide_cols if col in all_cols_original]
+    if not default_peptide_cols:
+        default_peptide_cols = auto_peptide_cols
 else:
     default_peptide_cols = auto_peptide_cols
 
@@ -308,11 +311,11 @@ if auto_peptide_cols:
 else:
     st.info("📝 No peptide/precursor columns auto-detected. Select manually below.")
 
-# Allow user to select peptide columns
+# Allow user to select peptide columns (using ORIGINAL names, not renamed)
 peptide_cols_selection = st.multiselect(
     f"Select column(s) with peptide/precursor info per protein per run:",
-    options=all_cols,
-    default=default_peptide_cols,  # Use cached or auto-detected
+    options=all_cols_original,
+    default=default_peptide_cols,
     key="peptide_cols_select",
     help="For peptide data: NrOfStrippedSequencesIdentified columns | For protein data: single column with integer count"
 )
@@ -333,6 +336,7 @@ else:
     st.stop()
 
 st.markdown("---")
+
 
 
 # ============================================================================
