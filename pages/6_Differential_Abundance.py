@@ -481,10 +481,11 @@ if "dea_results" in st.session_state:
             asymmetry_text = ", ".join([f"Asym. {k} {v:.2f}" for k, v in asym_dict.items()])
             st.markdown(f"**{asymmetry_text}**")
     
-    # === PLOT 1: FACETED SCATTER (MA PLOT) ===
+    # === PLOT 1: FACETED SCATTER (MA PLOT) - SIGNIFICANT ONLY ===
     st.markdown("### 📊 MA Plot (Faceted by Species)")
     
-    ma = res[res["regulation"] != "not_tested"].copy()
+    # Filter for SIGNIFICANT proteins only
+    ma = res[res["regulation"].isin(["up", "down"])].copy()
     ma["A"] = (ma["mean_g1"] + ma["mean_g2"]) / 2
     ma = ma.dropna(subset=['A', 'log2fc', 'species'])
     
@@ -501,7 +502,7 @@ if "dea_results" in st.session_state:
         sp_data = ma[ma["species"] == sp]
         color = SPECIES_COLORS.get(sp, "#95a5a6")
         
-        # Show ALL scatter points
+        # Show ALL significant scatter points
         fig_facet.add_trace(
             go.Scatter(
                 x=sp_data["A"],
@@ -530,13 +531,13 @@ if "dea_results" in st.session_state:
         # Zero line
         fig_facet.add_hline(y=0, line_color="red", line_width=1, opacity=0.5, row=1, col=i)
         
-        # Add boxplot - but ONLY show outliers beyond ±2 SD
+        # Add boxplot - only show outliers beyond ±2 SD
         mean_fc = sp_data["log2fc"].mean()
         std_fc = sp_data["log2fc"].std()
         lower_bound = mean_fc - 2 * std_fc
         upper_bound = mean_fc + 2 * std_fc
         
-        # Only show outlier points beyond ±2 SD
+        # Filter for outlier points
         outliers = sp_data[(sp_data["log2fc"] < lower_bound) | (sp_data["log2fc"] > upper_bound)]
         
         fig_facet.add_trace(
@@ -547,14 +548,11 @@ if "dea_results" in st.session_state:
                 showlegend=False,
                 width=0.3,
                 boxmean='sd',
-                boxpoints='outliers',  # Show outlier points
+                boxpoints='outliers' if len(outliers) > 0 else False,
                 marker=dict(
                     outliercolor=color,
                     line=dict(outliercolor=color, outlierwidth=2)
-                ),
-                # Custom outlier definition: beyond ±2 SD
-                y0=lower_bound,
-                dy=upper_bound - lower_bound
+                )
             ),
             row=1, col=i
         )
@@ -564,7 +562,7 @@ if "dea_results" in st.session_state:
     fig_facet.update_layout(height=500, title_text="", showlegend=False)
     st.plotly_chart(fig_facet, use_container_width=True)
     
-    # === PLOT 2: REGULAR SCATTER (MA PLOT) ===
+    # === PLOT 2: REGULAR SCATTER (MA PLOT) - SIGNIFICANT ONLY ===
     st.markdown("### 📈 MA Plot (Combined)")
     
     fig_ma = px.scatter(
@@ -595,7 +593,7 @@ if "dea_results" in st.session_state:
     
     st.plotly_chart(fig_ma, use_container_width=True)
     
-    # === PLOT 3: DENSITY PLOT ===
+    # === PLOT 3: DENSITY PLOT - ALL TESTED ===
     st.markdown("### 📊 Density Plot")
     
     density_data = res[res["regulation"] != "not_tested"].dropna(subset=["log2fc", "species"])
