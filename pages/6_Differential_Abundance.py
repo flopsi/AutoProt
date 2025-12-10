@@ -1,11 +1,11 @@
- """pages/6_Differential_Abundance.py - CORRECTED & SIMPLIFIED
+"""pages/6_Differential_Abundance.py - CORRECTED & SIMPLIFIED
 Comprehensive Differential Abundance Analysis (DEA)
 - Welch's t-test with proper log2 fold-change calculation
 - FDR correction (Benjamini-Hochberg)
 - ROC and precision-recall curves
 - Per-species error metrics
 - Spike-in validation
- """
+"""
 
 from __future__ import annotations
 
