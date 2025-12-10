@@ -281,7 +281,6 @@ species_summary.columns = ['Species', 'Total', 'Mean per Sample', 'Std Dev']
 st.dataframe(species_summary.round(0), use_container_width=True)
 
 st.markdown("---")
-
 # ============================================================================
 # 2. INTENSITY DISTRIBUTION & NORMALITY ASSESSMENT
 # ============================================================================
@@ -293,32 +292,7 @@ st.markdown("""
 - **Distributions**: Visualize intensity patterns by condition
 - **Q-Q Plots**: Assess deviation from normality
 - **Shapiro-Wilk Test**: Statistical normality test
-- **Mean-Variance Relationship**: Check homoscedasticity
-""")
-
-# Prepare data
-all_intensities_by_condition = {}
-for condition in conditions:
-    condition_samples = [s for s in numeric_cols if sample_to_condition.get(s) == condition]
-    condition_data = df[condition_samples].values.flatten()
-    condition_data = condition_data[~np.isnan(condition_data) & (condition_data > 0)]
-    all_intensities_by_condition[condition] = np.log2(condition_data + 1)
-
-# Combine all data
-all_data_combined = np.concatenate(list(all_intensities_by_condition.values()))
-
-# ============================================================================
-# 2. INTENSITY DISTRIBUTION & NORMALITY ASSESSMENT
-# ============================================================================
-
-st.subheader("2️⃣ Distribution Quality Assessment")
-
-st.markdown("""
-**Comprehensive normality and variance stabilization testing**:
-- **Distributions**: Visualize intensity patterns by condition
-- **Q-Q Plots**: Assess deviation from normality
-- **Shapiro-Wilk Test**: Statistical normality test
-- **Mean-Variance Relationship**: Check homoscedasticity
+- **Mean-Variance Relationship**: Check homoscedasticity per condition
 """)
 
 # Prepare data
@@ -434,10 +408,10 @@ summary_stats_df = pd.DataFrame(summary_stats)
 st.dataframe(summary_stats_df, hide_index=True, use_container_width=True)
 
 # ============================================================================
-# Q-Q PLOTS BY CONDITION
+# Q-Q PLOTS BY CONDITION (CORRECTLY SCALED)
 # ============================================================================
 
-st.markdown("### Q-Q Plots by Condition")
+st.markdown("### Q-Q Plots by Condition (Normality Assessment)")
 
 n_conditions = len(conditions)
 n_cols = min(3, n_conditions)
@@ -456,14 +430,24 @@ for idx, condition in enumerate(conditions):
     condition_data = all_intensities_by_condition[condition]
     
     if len(condition_data) >= 3:
-        # CORRECT: Use scipy.stats.probplot
-        theoretical_q, sample_q = stats.probplot(condition_data, dist='norm')[0]
+        # ✅ CORRECT: Manual scaling approach
+        sorted_data = np.sort(condition_data)
+        n = len(sorted_data)
+        
+        # Van der Waerden percentiles
+        percentiles = (np.arange(1, n + 1) - 0.5) / n
+        theoretical_quantiles = stats.norm.ppf(percentiles)
+        
+        # Scale to match data distribution
+        mu = sorted_data.mean()
+        sigma = sorted_data.std()
+        theoretical_quantiles_scaled = mu + sigma * theoretical_quantiles
         
         # Add scatter
         fig_qq_multi.add_trace(
             go.Scatter(
-                x=theoretical_q,
-                y=sample_q,
+                x=theoretical_quantiles_scaled,
+                y=sorted_data,
                 mode='markers',
                 marker=dict(size=4, opacity=0.6, color='steelblue'),
                 showlegend=False,
@@ -472,9 +456,9 @@ for idx, condition in enumerate(conditions):
             row=row, col=col
         )
         
-        # Add reference line
-        min_val = min(theoretical_q.min(), sample_q.min())
-        max_val = max(theoretical_q.max(), sample_q.max())
+        # Add reference line (diagonal)
+        min_val = min(theoretical_quantiles_scaled.min(), sorted_data.min())
+        max_val = max(theoretical_quantiles_scaled.max(), sorted_data.max())
         
         fig_qq_multi.add_trace(
             go.Scatter(
@@ -501,7 +485,7 @@ st.plotly_chart(fig_qq_multi, use_container_width=True)
 # STATISTICAL NORMALITY TESTS
 # ============================================================================
 
-st.markdown("### 📋 Normality Tests")
+st.markdown("### 📋 Normality Tests (Shapiro-Wilk, K-S, D'Agostino)")
 
 normality_results = []
 
@@ -538,89 +522,129 @@ normality_df = pd.DataFrame(normality_results)
 st.dataframe(normality_df, hide_index=True, use_container_width=True)
 
 # ============================================================================
-# MEAN-VARIANCE RELATIONSHIP
+# MEAN-VARIANCE RELATIONSHIP (PER CONDITION)
 # ============================================================================
 
-st.markdown("### 📈 Mean-Variance Relationship (Homoscedasticity)")
+st.markdown("### 📈 Mean-Variance Relationship (Homoscedasticity) - Per Condition")
 
 st.markdown("""
-**Variance stabilization assessment**:
+**Variance stabilization assessment per condition**:
 - Proteomics data typically shows mean-variance dependence
 - **Good transformation**: Low correlation (r < 0.3)
 - **Poor transformation**: High correlation (r > 0.6)
 """)
 
-# Calculate per-protein statistics
-protein_means = df[numeric_cols].mean(axis=1)
-protein_vars = df[numeric_cols].var(axis=1)
+# Create subplots for mean-variance plots per condition
+n_conditions = len(conditions)
+n_cols = min(3, n_conditions)
+n_rows = (n_conditions + n_cols - 1) // n_cols
 
-# Remove invalid values
-valid_mask = ~(np.isnan(protein_means) | np.isnan(protein_vars) | (protein_means == 0) | (protein_vars == 0))
-means_clean = protein_means[valid_mask].values
-vars_clean = protein_vars[valid_mask].values
+fig_mv_multi = make_subplots(
+    rows=n_rows,
+    cols=n_cols,
+    subplot_titles=conditions,
+    specs=[[{'type': 'scatter'} for _ in range(n_cols)] for _ in range(n_rows)]
+)
 
-if len(means_clean) > 2:
-    # Calculate correlation
-    mean_var_corr = np.corrcoef(means_clean, vars_clean)[0, 1]
+mean_var_corr_dict = {}
+
+for idx, condition in enumerate(conditions):
+    row = idx // n_cols + 1
+    col = idx % n_cols + 1
     
-    # Create scatter plot
-    fig_mv = go.Figure()
+    # Get samples for this condition
+    condition_samples = [s for s in numeric_cols if sample_to_condition.get(s) == condition]
     
-    fig_mv.add_trace(go.Scatter(
-        x=means_clean,
-        y=vars_clean,
-        mode='markers',
-        marker=dict(size=3, opacity=0.3, color='steelblue'),
-        name='Proteins',
-        hovertemplate='Mean: %{x:.2f}<br>Variance: %{y:.2f}<extra></extra>'
-    ))
-    
-    # Add trend line (log-log)
-    z = np.polyfit(np.log10(means_clean), np.log10(vars_clean), 1)
-    p = np.poly1d(z)
-    x_trend = np.logspace(np.log10(means_clean.min()), np.log10(means_clean.max()), 100)
-    y_trend = 10 ** p(np.log10(x_trend))
-    
-    fig_mv.add_trace(go.Scatter(
-        x=x_trend,
-        y=y_trend,
-        mode='lines',
-        line=dict(color='red', width=2, dash='dash'),
-        name=f'Trend (r={mean_var_corr:.3f})'
-    ))
-    
-    fig_mv.update_layout(
-        title='Mean-Variance Relationship',
-        xaxis_title='Mean Intensity',
-        yaxis_title='Variance',
-        xaxis_type='log',
-        yaxis_type='log',
-        height=500
-    )
-    
-    st.plotly_chart(fig_mv, use_container_width=True)
-    
-    # Interpretation
-    if abs(mean_var_corr) < 0.3:
-        st.success(f"""
-        ✅ **Excellent variance stabilization** (r = {mean_var_corr:.3f})
+    if len(condition_samples) >= 2:
+        # Calculate per-protein mean and variance for this condition
+        condition_df = df[condition_samples].copy()
+        protein_means_cond = condition_df.mean(axis=1)
+        protein_vars_cond = condition_df.var(axis=1)
         
-        Low correlation indicates homoscedasticity. Ideal for parametric tests.
-        """)
-    elif abs(mean_var_corr) < 0.6:
-        st.info(f"""
-        ⚠️ **Moderate variance stabilization** (r = {mean_var_corr:.3f})
+        # Remove invalid values
+        valid_mask = ~(np.isnan(protein_means_cond) | np.isnan(protein_vars_cond) | 
+                       (protein_means_cond == 0) | (protein_vars_cond == 0))
+        means_clean = protein_means_cond[valid_mask].values
+        vars_clean = protein_vars_cond[valid_mask].values
         
-        Consider variance-stabilizing transformation or robust methods.
-        """)
-    else:
-        st.warning(f"""
-        ❌ **Poor variance stabilization** (r = {mean_var_corr:.3f})
+        if len(means_clean) > 2:
+            # Calculate correlation
+            mean_var_corr = np.corrcoef(means_clean, vars_clean)[0, 1]
+            mean_var_corr_dict[condition] = mean_var_corr
+            
+            # Add scatter plot
+            fig_mv_multi.add_trace(
+                go.Scatter(
+                    x=means_clean,
+                    y=vars_clean,
+                    mode='markers',
+                    marker=dict(size=3, opacity=0.3, color='steelblue'),
+                    name=condition,
+                    showlegend=False,
+                    hovertemplate='Mean: %{x:.2f}<br>Variance: %{y:.2f}<extra></extra>'
+                ),
+                row=row, col=col
+            )
+            
+            # Add trend line (log-log)
+            try:
+                z = np.polyfit(np.log10(means_clean), np.log10(vars_clean), 1)
+                p = np.poly1d(z)
+                x_trend = np.logspace(np.log10(means_clean.min()), np.log10(means_clean.max()), 100)
+                y_trend = 10 ** p(np.log10(x_trend))
+                
+                fig_mv_multi.add_trace(
+                    go.Scatter(
+                        x=x_trend,
+                        y=y_trend,
+                        mode='lines',
+                        line=dict(color='red', width=2, dash='dash'),
+                        name=f'{condition} Trend',
+                        showlegend=False
+                    ),
+                    row=row, col=col
+                )
+            except:
+                pass
+
+# Update axes
+fig_mv_multi.update_xaxes(title_text="Mean Intensity", type='log')
+fig_mv_multi.update_yaxes(title_text="Variance", type='log')
+fig_mv_multi.update_layout(
+    title_text='Mean-Variance Relationship by Condition (Log-Log Scale)',
+    height=400 * n_rows,
+    showlegend=False,
+    hovermode='closest'
+)
+
+st.plotly_chart(fig_mv_multi, use_container_width=True)
+
+# Summary interpretation
+st.markdown("**Mean-Variance Correlation Summary**")
+
+mv_summary = []
+for condition in conditions:
+    if condition in mean_var_corr_dict:
+        corr = mean_var_corr_dict[condition]
         
-        Apply VSN or use non-parametric tests.
-        """)
-else:
-    st.warning("⚠️ Insufficient data for mean-variance analysis")
+        if abs(corr) < 0.3:
+            status = "✅ Excellent"
+        elif abs(corr) < 0.6:
+            status = "⚠️ Moderate"
+        else:
+            status = "❌ Poor"
+        
+        mv_summary.append({
+            'Condition': condition,
+            'Correlation': f"{corr:.3f}",
+            'Status': status,
+            'Interpretation': 'Homoscedasticity achieved' if abs(corr) < 0.3 else 
+                            'Consider robust methods' if abs(corr) < 0.6 else 
+                            'Variance stabilization needed'
+        })
+
+mv_summary_df = pd.DataFrame(mv_summary)
+st.dataframe(mv_summary_df, hide_index=True, use_container_width=True)
 
 st.markdown("---")
 
