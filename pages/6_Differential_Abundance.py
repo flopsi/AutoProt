@@ -392,7 +392,7 @@ def compute_species_metrics(
     if not var_df.empty:
         for sp in var_df["species"].unique():
             sp_df = var_df[var_df["species"] == sp].copy()
-            sp_df["significant"] = sp_df["pvalue"] < p_threshold
+            sp_df["significant"] = sp_df[test_col] < p_threshold
             sp_df["outside_tolerance"] = np.abs(sp_df["log2fc"] - sp_df["true_log2fc"]) > fc_tolerance
             
             fp_s = int((sp_df["significant"] & sp_df["outside_tolerance"]).sum())
@@ -1081,7 +1081,7 @@ if "dea_results" in st.session_state:
         fc_tolerance = 0.58
         
         var_ov, var_sp, stab_ov, stab_sp, asym_dict, error_dict, fp_var_sp = compute_species_metrics(
-            res, theoretical_fc, species_series, stable_thr, fc_tolerance, p_thr
+            res, theoretical_fc, species_series, stable_thr, fc_tolerance, p_thr, test_col
         )
         
         # Validation metrics table
