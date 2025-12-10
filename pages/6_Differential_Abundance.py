@@ -1,6 +1,6 @@
 """
 pages/6_Differential_Abundance.py
-Limma-style empirical Bayes DA with composition-based spike-in validation.
+Welch's t-test DA with composition-based spike-in validation.
 """
 
 from __future__ import annotations
@@ -82,14 +82,11 @@ def perform_ttest(
         ranks = np.arange(1, n + 1)
         fdr_vals = pvals.values * n / ranks
         fdr_vals = np.minimum.accumulate(fdr_vals[::-1])[::-1]
+        fdr_vals = np.minimum(fdr_vals, 1.0)
         fdr_dict = dict(zip(pvals.index, fdr_vals))
         results_df["fdr"] = results_df.index.map(fdr_dict)
     else:
         results_df["fdr"] = np.nan
-    
-    results_df["neg_log10_pval"] = -np.log10(
-        results_df["pvalue"].replace(0, 1e-300)
-    )
     
     return results_df
 
@@ -381,6 +378,24 @@ if use_comp:
     else:
         st.warning("⚠️ No expected FC saved yet.")
 
+    # Composition plot
+    plot_rows = []
+    for sp in species_values:
+        plot_rows.append({"Condition": ref_cond, "Species": sp, "Percentage": comp_a.get(sp, 0.0)})
+        plot_rows.append({"Condition": treat_cond, "Species": sp, "Percentage": comp_b.get(sp, 0.0)})
+    comp_df = pd.DataFrame(plot_rows)
+    figc = px.bar(
+        comp_df,
+        x="Condition",
+        y="Percentage",
+        color="Species",
+        barmode="stack",
+        title="Composition per condition",
+        height=400,
+    )
+    figc.update_yaxes(range=[0, 100])
+    st.plotly_chart(figc, use_container_width=True)
+
 st.markdown("---")
 
 # ---------------------------------------------------------------------
@@ -430,6 +445,9 @@ if st.button("🚀 Run Welch's t-test", type="primary"):
             axis=1,
         )
         
+        # Add -log10(p) for plotting
+        results["neg_log10_p"] = -np.log10(results[test_col].replace(0, 1e-300))
+        
         results["species"] = results.index.map(df[species_col])
 
         st.session_state.dea_results = results
@@ -466,17 +484,17 @@ if "dea_results" in st.session_state:
 
     # Volcano
     st.markdown("### 🌋 Volcano Plot")
-    volc = res[res["regulation"] != "not_tested"].dropna(subset=['neg_log10_pval', 'log2fc'])
+    volc = res[res["regulation"] != "not_tested"].dropna(subset=['neg_log10_p', 'log2fc'])
     
     fig_v = px.scatter(
         volc,
         x="log2fc",
-        y="neg_log10_pval",
+        y="neg_log10_p",
         color="species",
         hover_data=["regulation"],
         labels={
             "log2fc": f"log2 FC ({ref_cond}/{treat_cond})",
-            "neg_log10_pval": "-log10(FDR)" if use_fdr else "-log10(p)",
+            "neg_log10_p": "-log10(FDR)" if use_fdr else "-log10(p)",
         },
         height=600,
     )
