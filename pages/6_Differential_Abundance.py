@@ -790,56 +790,7 @@ if "dea_results" in st.session_state:
     
     st.plotly_chart(fig_v, use_container_width=True)
     
-       # === TABLE: ALL RESULTS IN ONE TABLE ===
-    st.markdown("### 📋 All Results Summary")
-    st.caption("Complete results table with all proteins tested")
     
-    # Prepare comprehensive table
-    results_table = res.copy()
-    results_table["species"] = results_table.index.map(df[species_col])
-    results_table = results_table.reset_index()
-    results_table = results_table.rename(columns={"protein_id": "Protein_ID"})
-    
-    # Round numeric columns
-    results_table = results_table.round({
-        "log2fc": 3,
-        "pvalue": 6,
-        "fdr": 6,
-        "mean_g1": 2,
-        "mean_g2": 2,
-        "neg_log10_p": 2
-    })
-    
-    # Reorder columns
-    display_cols = [
-        "Protein_ID", "species", "log2fc", "pvalue", "fdr", 
-        "mean_g1", "mean_g2", "regulation", "neg_log10_p", "n_g1", "n_g2"
-    ]
-    
-    results_table = results_table[[c for c in display_cols if c in results_table.columns]]
-    
-    # Display with sorting/filtering
-    st.dataframe(
-        results_table,
-        use_container_width=True,
-        height=600,
-        column_config={
-            "Protein_ID": st.column_config.TextColumn(width=100),
-            "species": st.column_config.TextColumn(width=80),
-            "log2fc": st.column_config.NumberColumn(format="%.3f"),
-            "pvalue": st.column_config.NumberColumn(format="%.2e"),
-            "fdr": st.column_config.NumberColumn(format="%.2e"),
-            "regulation": st.column_config.TextColumn(width=80),
-        }
-    )
-    
-    # Download button
-    st.download_button(
-        "📥 Download Full Results",
-        data=results_table.to_csv(index=False).encode("utf-8"),
-        file_name=f"dea_all_results_{ref_cond}_vs_{treat_cond}.csv",
-        mime="text/csv",
-    )
     
     # ===== VALIDATION SECTION =====
     if theoretical_fc:
