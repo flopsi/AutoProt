@@ -284,6 +284,10 @@ def compute_species_metrics(
     res["true_log2fc"] = res["species"].map(true_fc_dict)
     res["pvalue"] = res[test_col].fillna(1.0)  # Unified pvalue column with NaN safety
     
+    # BUGFIX: Add regulation column if not present
+    if "regulation" not in res.columns:
+        res["regulation"] = "not_tested"
+    
     res = res[res["regulation"] != "not_tested"].copy()
     res = res.dropna(subset=["true_log2fc", "species"])
     
@@ -520,15 +524,20 @@ use_spike_in = st.sidebar.checkbox("✓ Spike-in Validation", value=False)
 
 if use_spike_in:
     st.sidebar.markdown("**Spike-in Composition**")
-    species_values = sorted([s for s in df[species_col].unique() if isinstance(s, str) and s.strip()])
+    # BUGFIX: Handle empty species values safely
+    species_values = sorted([s for s in df[species_col].unique() if isinstance(s, str) and s.strip() and pd.notna(s)])
     
-    theoretical_fc_sidebar: Dict[str, float] = {}
-    for sp in species_values:
-        comp_a = st.sidebar.slider(f"{sp} in {ref_cond} (%)", 0.0, 100.0, 100.0/max(len(species_values),1), 5.0, key=f"sidebar_a_{sp}")
-        comp_b = st.sidebar.slider(f"{sp} in {treat_cond} (%)", 0.0, 100.0, 100.0/max(len(species_values),1), 5.0, key=f"sidebar_b_{sp}")
-        
-        if comp_a > 0 and comp_b > 0:
-            theoretical_fc_sidebar[sp] = np.log2(comp_a / comp_b)
+    if not species_values:
+        st.sidebar.warning("⚠️ No valid species found in data")
+        theoretical_fc_sidebar: Dict[str, float] = {}
+    else:
+        theoretical_fc_sidebar: Dict[str, float] = {}
+        for sp in species_values:
+            comp_a = st.sidebar.slider(f"{sp} in {ref_cond} (%)", 0.0, 100.0, 100.0/max(len(species_values),1), 5.0, key=f"sidebar_a_{sp}")
+            comp_b = st.sidebar.slider(f"{sp} in {treat_cond} (%)", 0.0, 100.0, 100.0/max(len(species_values),1), 5.0, key=f"sidebar_b_{sp}")
+            
+            if comp_a > 0 and comp_b > 0:
+                theoretical_fc_sidebar[sp] = np.log2(comp_a / comp_b)
     
     if st.sidebar.button("💾 Save Spike-in FC"):
         st.session_state.dea_theoretical_fc = theoretical_fc_sidebar.copy()
@@ -541,7 +550,7 @@ st.sidebar.markdown("---")
 # ============================================================================
 
 st.subheader("1️⃣ Running Analysis")    
-if st.button("🚀 Run DEA", type="primary", width='stretch'):
+if st.button("🚀 Run DEA", type="primary", use_container_width=True):  # BUGFIX: Changed width to use_container_width
     with st.spinner("⏳ Processing..."):
         # Log2 transform
         df_num = df[numeric_cols]
@@ -728,7 +737,7 @@ if "dea_results" in st.session_state:
         ma = res[res["regulation"] != "not_tested"].copy()
         ma = ma.dropna(subset=['log2fc', 'species'])
         
-        species_list = sorted(ma["species"].unique())
+        species_list = sorted([s for s in ma["species"].unique() if pd.notna(s)])  # BUGFIX: Filter out NaN species
         
         # BUGFIX: Check if species_list is empty
         if len(species_list) > 0:
@@ -868,7 +877,9 @@ if "dea_results" in st.session_state:
         if len(density_data) > 0:
             fig_density = go.Figure()
             
-            for sp in sorted(density_data["species"].unique()):
+            valid_species = [s for s in sorted(density_data["species"].unique()) if pd.notna(s)]  # BUGFIX: Filter NaN
+            
+            for sp in valid_species:
                 sp_data = density_data[density_data["species"] == sp]["log2fc"]
                 if len(sp_data) > 1:
                     color = SPECIES_COLORS.get(sp, "#95a5a6")
@@ -996,7 +1007,7 @@ if "dea_results" in st.session_state:
             fig_cohens = px.histogram(
                 cohens_data,
                 x='cohens_d',
-                nbinsx=50,
+                nbins=50,
                 title="Cohen's d Distribution",
                 labels={'cohens_d': "Cohen's d"},
                 height=500
@@ -1019,7 +1030,7 @@ if "dea_results" in st.session_state:
             fig_pval = px.histogram(
                 pval_data,
                 x=test_col,
-                nbinsx=50,
+                nbins=50,
                 title=f"{test_label} P-value Distribution",
                 labels={test_col: "P-value" if not use_fdr else "FDR (q-value)"},
                 height=500
