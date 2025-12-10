@@ -1,6 +1,7 @@
 """
 pages/6_Differential_Abundance.py
 Welch's t-test DA with comprehensive visualization and spike-in validation.
+Unified FP definition: p<0.01 AND |log2fc - expected| > ±0.58 for all species
 """
 
 from __future__ import annotations
@@ -135,14 +136,17 @@ def compute_species_metrics(
     species_col_series: pd.Series,
     stable_thr: float = 0.5,
     fc_tolerance: float = 0.58,
-) -> Tuple[Dict, pd.DataFrame, Dict, pd.DataFrame, Dict]:
+    p_threshold: float = 0.01,
+) -> Tuple[Dict, pd.DataFrame, Dict, pd.DataFrame, Dict, Dict, pd.DataFrame]:
     """
     Calculate metrics for variable and stable proteomes + asymmetry.
     
-    False positives = proteins within ±fc_tolerance of theoretical FC that are called significant.
+    False Positives (ALL SPECIES): p<p_threshold AND |log2fc - expected| > fc_tolerance
+                                    (called significant but OUTSIDE ±0.58 from theoretical)
     
     Returns:
-        (variable_overall, variable_per_species, stable_overall, stable_per_species, asymmetry_dict)
+        (variable_overall, variable_per_species, stable_overall, stable_per_species, 
+         asymmetry_dict, error_dict, fp_var_per_species)
     """
     res = results_df.copy()
     res["species"] = res.index.map(species_col_series)
@@ -152,7 +156,7 @@ def compute_species_metrics(
     res = res.dropna(subset=["true_log2fc", "species"])
     
     if res.empty:
-        return {}, pd.DataFrame(), {}, pd.DataFrame(), {}
+        return {}, pd.DataFrame(), {}, pd.DataFrame(), {}, {}, pd.DataFrame()
     
     # === ASYMMETRY CALCULATION ===
     asymmetry_dict = {}
@@ -163,6 +167,9 @@ def compute_species_metrics(
             asym = calculate_asymmetry(sp_df["log2fc"].values, expected_fc)
             asymmetry_dict[sp] = asym
     
+    # === ERROR TRACKING ===
+    error_dict = {}
+    
     # === VARIABLE PROTEOME (|expected FC| >= stable_thr) ===
     var_df = res[np.abs(res["true_log2fc"]) >= stable_thr].copy()
     
@@ -172,6 +179,8 @@ def compute_species_metrics(
     if not var_df.empty:
         var_df["observed_regulated"] = var_df["regulation"].isin(["up", "down"])
         var_df["true_regulated"] = np.abs(var_df["true_log2fc"]) >= stable_thr
+        var_df["significant"] = var_df["pvalue"] < p_threshold
+        var_df["within_tolerance"] = np.abs(var_df["log2fc"] - var_df["true_log2fc"]) <= fc_tolerance
         
         tp = int((var_df["true_regulated"] & var_df["observed_regulated"]).sum())
         fn = int((var_df["true_regulated"] & ~var_df["observed_regulated"]).sum())
@@ -214,35 +223,34 @@ def compute_species_metrics(
             })
     
     # === STABLE PROTEOME (|expected FC| < stable_thr) ===
-    # False positives: proteins within ±fc_tolerance of theoretical FC that are called significant
     stab_df = res[np.abs(res["true_log2fc"]) < stable_thr].copy()
     
     stab_overall = {}
     stab_species_rows = []
     
     if not stab_df.empty:
-        stab_df["observed_regulated"] = stab_df["regulation"].isin(["up", "down"])
+        stab_df["significant"] = stab_df["pvalue"] < p_threshold
+        stab_df["outside_tolerance"] = np.abs(stab_df["log2fc"] - stab_df["true_log2fc"]) > fc_tolerance
         
-        # Within tolerance window = false positives (should not be called)
-        stab_df["within_tolerance"] = np.abs(stab_df["log2fc"] - stab_df["true_log2fc"]) <= fc_tolerance
+        # True FP: p<threshold AND |error| > ±0.58 (significant but wrong magnitude)
+        true_fp = int((stab_df["significant"] & stab_df["outside_tolerance"]).sum())
         
-        # FP: called regulated AND within tolerance
-        fp = int((stab_df["observed_regulated"] & stab_df["within_tolerance"]).sum())
-        
-        # TN: called non-regulated
-        tn = int((~stab_df["observed_regulated"]).sum())
+        # Correct TN: not significant OR within ±0.58
+        tn = int((~stab_df["significant"] | ~stab_df["outside_tolerance"]).sum())
         
         total = len(stab_df)
-        fpr = fp / total if total > 0 else 0.0
+        fpr = true_fp / total if total > 0 else 0.0
         
-        stab_overall = {"Total": total, "FP": fp, "TN": tn, "FPR": fpr}
+        stab_overall = {"Total": total, "FP": true_fp, "TN": tn, "FPR": fpr}
         
         for sp in stab_df["species"].unique():
             sp_df = stab_df[stab_df["species"] == sp].copy()
-            sp_df["within_tolerance"] = np.abs(sp_df["log2fc"] - sp_df["true_log2fc"]) <= fc_tolerance
+            sp_df["significant"] = sp_df["pvalue"] < p_threshold
+            sp_df["outside_tolerance"] = np.abs(sp_df["log2fc"] - sp_df["true_log2fc"]) > fc_tolerance
             
-            fp_s = int((sp_df["observed_regulated"] & sp_df["within_tolerance"]).sum())
-            tn_s = int((~sp_df["observed_regulated"]).sum())
+            # True FP for this species
+            fp_s = int((sp_df["significant"] & sp_df["outside_tolerance"]).sum())
+            tn_s = int((~sp_df["significant"] | ~sp_df["outside_tolerance"]).sum())
             mae_log2 = sp_df["log2fc"].abs().mean()
             
             stab_species_rows.append({
@@ -253,6 +261,34 @@ def compute_species_metrics(
                 "FPR_%": f"{fp_s/len(sp_df)*100:.1f}" if len(sp_df) > 0 else "0.0",
                 "MAE": f"{mae_log2:.3f}",
             })
+            
+            error_dict[f"FP_{sp}"] = fp_s
+    
+    # === FALSE POSITIVES IN VARIABLE PROTEOME (p<threshold but wrong magnitude) ===
+    # For ECOLI/YEAST: p<p_threshold BUT |log2fc - expected| > fc_tolerance
+    fp_var_species_rows = []
+    
+    if not var_df.empty:
+        for sp in var_df["species"].unique():
+            if sp != "HUMAN":  # Only for variable species
+                sp_df = var_df[var_df["species"] == sp].copy()
+                sp_df["significant"] = sp_df["pvalue"] < p_threshold
+                sp_df["outside_tolerance"] = np.abs(sp_df["log2fc"] - sp_df["true_log2fc"]) > fc_tolerance
+                
+                # FP: p<threshold AND outside ±0.58 (wrong magnitude)
+                fp_s = int((sp_df["significant"] & sp_df["outside_tolerance"]).sum())
+                accurate_s = int((sp_df["significant"] & ~sp_df["outside_tolerance"]).sum())
+                total_var_s = len(sp_df)
+                
+                fp_var_species_rows.append({
+                    "Species": sp,
+                    "Total_Detected": total_var_s,
+                    "Accurate": accurate_s,
+                    "FP_Wrong_Mag": fp_s,
+                    "Accuracy_%": f"{accurate_s/total_var_s*100:.1f}" if total_var_s > 0 else "0.0",
+                })
+                
+                error_dict[f"FP_{sp}"] = fp_s
     
     return (
         var_overall,
@@ -260,6 +296,8 @@ def compute_species_metrics(
         stab_overall,
         pd.DataFrame(stab_species_rows),
         asymmetry_dict,
+        error_dict,
+        pd.DataFrame(fp_var_species_rows),
     )
 
 
@@ -389,8 +427,8 @@ with c2:
     use_fdr = st.checkbox("Use FDR correction (BH)", value=True)
 
 stable_thr = 0.5
-fc_tolerance = 0.58  # False positive window: ±0.58 log2FC
-st.caption(f"Stable: |expected log2FC| < {stable_thr} · FP window: ±{fc_tolerance} log2FC · Errors on log2 scale")
+fc_tolerance = 0.58  # FP window
+st.caption(f"Stable: |expected log2FC| < {stable_thr} · FP definition: p<0.01 AND |log2fc - expected| > ±{fc_tolerance}")
 st.markdown("---")
 
 # ---------------------------------------------------------------------
@@ -496,7 +534,7 @@ if "dea_results" in st.session_state:
             asymmetry_text = ", ".join([f"Asym. {k} {v:.2f}" for k, v in asym_dict.items()])
             st.markdown(f"**{asymmetry_text}**")
     
-    # === PLOT 1: FACETED SCATTER (MA PLOT) - EVERYTHING ===
+    # === PLOT 1: FACETED SCATTER (MA PLOT) ===
     st.markdown("### 📊 MA Plot (Faceted by Species)")
     
     ma = res[res["regulation"] != "not_tested"].copy()
@@ -688,7 +726,7 @@ if "dea_results" in st.session_state:
     
     st.plotly_chart(fig_density, use_container_width=True)
     
-    # Volcano
+    # === PLOT 4: VOLCANO ===
     st.markdown("### 🌋 Volcano Plot")
     volc = res[res["regulation"] != "not_tested"].dropna(subset=['neg_log10_p', 'log2fc'])
     
@@ -705,8 +743,8 @@ if "dea_results" in st.session_state:
     fig_v.add_hline(y=-np.log10(p_thr), line_dash="dash", line_color="gray")
     st.plotly_chart(fig_v, use_container_width=True)
     
-    # Top table
-    st.markdown("### 📋 Top Significant")
+    # === TABLE: TOP SIGNIFICANT ===
+    st.markdown("### 📋 Top Significant Proteins")
     top = res[res["regulation"].isin(["up", "down"])].sort_values("fdr").head(50)
     st.dataframe(top[["log2fc", "pvalue", "fdr", "regulation", "species"]].round(4), use_container_width=True)
     
@@ -718,10 +756,12 @@ if "dea_results" in st.session_state:
         st.subheader("6️⃣ Spike-in Validation")
         
         st.info(f"✓ Using: {', '.join(f'{k}={v:.2f}' for k,v in theoretical_fc.items())}")
-        st.caption(f"FP window: proteins within ±{fc_tolerance} log2FC of expected value")
+        st.caption(f"FP definition (all species): p<{p_thr} AND |log2fc - expected| > ±{fc_tolerance}")
         
         species_series = df[species_col]
-        var_ov, var_sp, stab_ov, stab_sp, asym_dict = compute_species_metrics(res, theoretical_fc, species_series, stable_thr, fc_tolerance)
+        var_ov, var_sp, stab_ov, stab_sp, asym_dict, error_dict, fp_var_sp = compute_species_metrics(
+            res, theoretical_fc, species_series, stable_thr, fc_tolerance, p_thr
+        )
         
         # Display asymmetry
         if asym_dict:
@@ -730,15 +770,38 @@ if "dea_results" in st.session_state:
             for i, (sp, asym) in enumerate(asym_dict.items()):
                 asym_cols[i].metric(sp, f"{asym:.2f}")
         
+        # === ERROR BREAKDOWN ===
+        st.markdown("---")
+        st.markdown("**False Positives (p<0.01 & Outside ±0.58)**")
+        
+        error_cols = st.columns(3)
+        fp_human = error_dict.get("FP_HUMAN", 0)
+        fp_ecoli = error_dict.get("FP_ECOLI", 0)
+        fp_yeast = error_dict.get("FP_YEAST", 0)
+        
+        error_cols[0].metric("HUMAN", f"{fp_human:,}")
+        error_cols[1].metric("ECOLI", f"{fp_ecoli:,}")
+        error_cols[2].metric("YEAST", f"{fp_yeast:,}")
+        
+        total_fp = fp_human + fp_ecoli + fp_yeast
+        
+        if true_positives > 0 and total_fp > 0:
+            defdr = total_fp / (true_positives + total_fp) * 100
+            st.markdown(f"**Overall deFDR: {defdr:.2f}%** ({total_fp:,} FP / {true_positives:,} TP)")
+        
+        st.markdown("---")
+        
         if stab_ov:
-            st.markdown("**Stable Proteome (False Positive Analysis)**")
+            st.markdown("**Stable Proteome (HUMAN)**")
+            st.caption("FP = p<0.01 AND |log2fc| > ±0.58 (false alarms in stable proteins)")
             c1, c2 = st.columns(2)
             c1.metric("False Positive Rate", f"{stab_ov['FPR']:.1%}")
-            c2.metric("Stable Proteins", f"{stab_ov['Total']:,}")
+            c2.metric("Stable Proteins Tested", f"{stab_ov['Total']:,}")
             if not stab_sp.empty:
                 st.dataframe(stab_sp, use_container_width=True)
         
         if var_ov:
+            st.markdown("---")
             st.markdown("**Variable Proteome (Detection & Accuracy)**")
             c1, c2, c3 = st.columns(3)
             c1.metric("Sensitivity", f"{var_ov['Sensitivity']:.1%}")
@@ -746,14 +809,22 @@ if "dea_results" in st.session_state:
             c3.metric("Precision", f"{var_ov['Precision']:.1%}")
             if not var_sp.empty:
                 st.dataframe(var_sp, use_container_width=True)
-                st.caption("**RMSE/MAE**: log2 units | **MAPE**: % error vs expected | **Bias**: systematic over/under-estimation")
+                st.caption("**RMSE/MAE**: log2 units | **MAPE**: % error vs expected | **Bias**: systematic over/under-estimation | **Detection %**: sensitivity within variable proteome")
+            
+            # Variable proteome FP details (ECOLI/YEAST)
+            if not fp_var_sp.empty:
+                st.markdown("---")
+                st.markdown("**False Positives in Variable Proteome (ECOLI & YEAST)**")
+                st.caption("FP = p<0.01 AND |log2fc - expected| > ±0.58 (detected but wrong magnitude)")
+                st.dataframe(fp_var_sp, use_container_width=True)
     else:
         st.info("💡 Enable spike-in composition for validation")
     
-    # Export
+    # === EXPORT ===
     st.markdown("---")
+    st.markdown("### 📥 Export Results")
     st.download_button(
-        "📥 Download Results",
+        "Download Results CSV",
         data=res.to_csv().encode("utf-8"),
         file_name=f"dea_{ref_cond}_vs_{treat_cond}.csv",
         mime="text/csv",
