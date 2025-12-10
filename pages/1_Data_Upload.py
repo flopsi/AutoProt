@@ -1,17 +1,15 @@
 """
-pages/1_Data_Upload.py - DATA UPLOAD WITH SPECIES FILTER AND RENAMING
-Fixed manual renaming with proper condition extraction
+pages/1_Data_Upload.py - DATA UPLOAD WITH SPECIES FILTER AND MANUAL RENAMING
+Manual renaming only for numerical columns
 """
 
 import streamlit as st
 import polars as pl
 import pandas as pd
 from pathlib import Path
-from typing import Dict
 import sys
 import re
 sys.path.append(str(Path(__file__).parent.parent))
-from helpers.naming import standardize_condition_names
 
 # ============================================================================
 # PAGE CONFIG
@@ -218,89 +216,47 @@ else:
 st.markdown("---")
 
 # ============================================================================
-# RENAME NUMERICAL COLUMNS
+# RENAME NUMERICAL COLUMNS (MANUAL ONLY)
 # ============================================================================
 
 st.subheader("3️⃣ Rename Sample Columns")
 
-rename_style = st.selectbox(
-    "Renaming strategy:",
-    options=["none", "smart", "manual"],
-    format_func=lambda x: {
-        "none": "Keep original names",
-        "smart": "Auto-detect condition/replicate (e.g., CondA_R1)",
-        "manual": "Manual override (edit below)"
-    }[x],
-    index=st.session_state.get('rename_style_index', 0),
-    key="rename_style_select",
-    help="Smart: Auto-detects patterns | Manual: Edit each name individually"
+# Initialize manual mapping if not exists OR if columns changed
+if 'manual_name_mapping' not in st.session_state or set(st.session_state.manual_name_mapping.keys()) != set(numerical_cols):
+    st.session_state.manual_name_mapping = {col: col for col in numerical_cols}
+
+# Create editable dataframe from session state
+edit_df = pd.DataFrame({
+    'Original': list(numerical_cols),
+    'New Name': [st.session_state.manual_name_mapping[col] for col in numerical_cols]
+})
+
+# Use on_change callback to persist changes immediately
+def update_manual_mapping():
+    """Callback to update mapping when data_editor changes"""
+    if 'name_editor' in st.session_state:
+        edited = st.session_state['name_editor']
+        if 'edited_rows' in edited and edited['edited_rows']:
+            for idx, changes in edited['edited_rows'].items():
+                if 'New Name' in changes:
+                    original = edit_df.iloc[idx]['Original']
+                    st.session_state.manual_name_mapping[original] = changes['New Name']
+
+edited_df = st.data_editor(
+    edit_df,
+    key="name_editor",
+    hide_index=True,
+    use_container_width=True,
+    on_change=update_manual_mapping,
+    column_config={
+        "Original": st.column_config.TextColumn("Original", disabled=True),
+        "New Name": st.column_config.TextColumn("New Name", help="Edit to rename")
+    }
 )
 
-# Store index for persistence
-rename_options = ["none", "smart", "manual"]
-st.session_state.rename_style_index = rename_options.index(rename_style)
-st.session_state.rename_style = rename_style
-
-if rename_style == "smart":
-    # Auto-generate mapping
-    name_mapping = standardize_condition_names(list(numerical_cols))
-    numerical_cols_renamed = [name_mapping[col] for col in numerical_cols]
-    
-    # Show preview
-    st.markdown("**Auto-detected names:**")
-    preview_df = pd.DataFrame({
-        'Original': list(numerical_cols)[:10],
-        'Renamed': [name_mapping[col] for col in list(numerical_cols)[:10]]
-    })
-    st.dataframe(preview_df, hide_index=True)
-    
-    if len(numerical_cols) > 10:
-        st.caption(f"... and {len(numerical_cols) - 10} more")
-
-elif rename_style == "manual":
-    # Manual editing with proper persistence
-    st.markdown("**Edit sample names:**")
-    
-    # Initialize manual mapping if not exists OR if columns changed
-    if 'manual_name_mapping' not in st.session_state or set(st.session_state.manual_name_mapping.keys()) != set(numerical_cols):
-        st.session_state.manual_name_mapping = {col: col for col in numerical_cols}
-    
-    # Create editable dataframe from session state
-    edit_df = pd.DataFrame({
-        'Original': list(numerical_cols),
-        'New Name': [st.session_state.manual_name_mapping[col] for col in numerical_cols]
-    })
-    
-    # Use on_change callback to persist changes immediately
-    def update_manual_mapping():
-        """Callback to update mapping when data_editor changes"""
-        if 'name_editor' in st.session_state:
-            edited = st.session_state['name_editor']
-            if 'edited_rows' in edited and edited['edited_rows']:
-                for idx, changes in edited['edited_rows'].items():
-                    if 'New Name' in changes:
-                        original = edit_df.iloc[idx]['Original']
-                        st.session_state.manual_name_mapping[original] = changes['New Name']
-    
-    edited_df = st.data_editor(
-        edit_df,
-        key="name_editor",
-        hide_index=True,
-        use_container_width=True,
-        on_change=update_manual_mapping,
-        column_config={
-            "Original": st.column_config.TextColumn("Original", disabled=True),
-            "New Name": st.column_config.TextColumn("New Name", help="Edit to rename")
-        }
-    )
-    
-    # Get final mapping from session state (not from edited_df)
-    name_mapping = st.session_state.manual_name_mapping
-    numerical_cols_renamed = [name_mapping[col] for col in numerical_cols]
-
-else:  # "none"
-    name_mapping = {col: col for col in numerical_cols}
-    numerical_cols_renamed = list(numerical_cols)
+# Get final mapping from session state
+name_mapping = st.session_state.manual_name_mapping
+numerical_cols_renamed = [name_mapping[col] for col in numerical_cols]
 
 st.session_state.name_mapping = name_mapping
 st.session_state.numerical_cols_renamed = numerical_cols_renamed
@@ -528,9 +484,8 @@ def reset_current_page():
     keys_to_delete = [
         'file_hash', 'metadata_cols', 'numerical_cols', 'selected_species',
         'df_raw', 'numeric_cols', 'id_col', 'species_col', 'data_type',
-        'replicates_per_condition', 'data_ready', 'rename_style', 
-        'manual_name_mapping', 'rename_style_index', 'sample_to_condition',
-        'peptide_cols', 'sequence_col'
+        'replicates_per_condition', 'data_ready', 'manual_name_mapping',
+        'sample_to_condition', 'peptide_cols', 'sequence_col'
     ]
     for key in keys_to_delete:
         if key in st.session_state:
