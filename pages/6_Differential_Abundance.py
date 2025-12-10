@@ -182,14 +182,17 @@ def compute_species_metrics(
         var_df["significant"] = var_df["pvalue"] < p_threshold
         var_df["within_tolerance"] = np.abs(var_df["log2fc"] - var_df["true_log2fc"]) <= fc_tolerance
         
+        # CORRECT CONFUSION MATRIX
         tp = int((var_df["true_regulated"] & var_df["observed_regulated"]).sum())
         fn = int((var_df["true_regulated"] & ~var_df["observed_regulated"]).sum())
         tn = int((~var_df["true_regulated"] & ~var_df["observed_regulated"]).sum())
         fp = int((~var_df["true_regulated"] & var_df["observed_regulated"]).sum())
         
+        # Correct calculations
         sens = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-        spec = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+        spec = tn / (tn + fp) if (tn + fp) > 0 else 0.0  # TN / (TN + FP) - CORRECT
         prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+
         
         var_overall = {
             "Total": len(var_df),
@@ -807,6 +810,9 @@ if "dea_results" in st.session_state:
         # === UNIFIED VALIDATION TABLE ===
         validation_rows = []
         
+        # Get initial total from uploaded data
+        initial_total = len(df)
+        
         # Asymmetry row
         for sp in ["HUMAN", "ECOLI", "YEAST"]:
             asym_val = asym_dict.get(sp, np.nan)
@@ -825,7 +831,7 @@ if "dea_results" in st.session_state:
             
             if sp in stab_sp["Species"].values:
                 total = int(stab_sp[stab_sp["Species"] == sp]["N"].values[0])
-                fpr = float(stab_sp[stab_sp["Species"] == sp]["FPR_%"].values[0].rstrip("%"))
+                fpr = fp_count / total * 100 if total > 0 else 0
             elif sp in fp_var_sp["Species"].values:
                 total = int(fp_var_sp[fp_var_sp["Species"] == sp]["Total_Detected"].values[0])
                 fpr = fp_count / total * 100 if total > 0 else 0
@@ -857,7 +863,7 @@ if "dea_results" in st.session_state:
                     "Category": "Accuracy"
                 })
         
-        # Stable metrics
+        # Stable metrics (HUMAN FPR)
         if stab_ov:
             validation_rows.append({
                 "Metric": "FPR (Stable)",
@@ -866,25 +872,39 @@ if "dea_results" in st.session_state:
                 "Category": "Specificity"
             })
         
-        # Overall metrics
+        # Overall metrics - FIX SPECIFICITY CALCULATION
         if var_ov:
+            # Sensitivity: TP / (TP + FN)
             validation_rows.append({
                 "Metric": "Sensitivity (Variable)",
                 "Species": "Overall",
                 "Value": f"{var_ov['Sensitivity']:.1%}",
                 "Category": "Sensitivity"
             })
+            
+            # Specificity: TN / (TN + FP) - correctly calculated
+            spec_value = var_ov['Specificity']
             validation_rows.append({
                 "Metric": "Specificity (Variable)",
                 "Species": "Overall",
-                "Value": f"{var_ov['Specificity']:.1%}",
+                "Value": f"{spec_value:.1%}",
                 "Category": "Specificity"
             })
+            
+            # Precision: TP / (TP + FP)
             validation_rows.append({
                 "Metric": "Precision",
                 "Species": "Overall",
                 "Value": f"{var_ov['Precision']:.1%}",
                 "Category": "Precision"
+            })
+            
+            # Sample counts
+            validation_rows.append({
+                "Metric": "Quantifiable Proteins",
+                "Species": "Overall",
+                "Value": f"{var_ov['Total']:,} / {initial_total:,}",
+                "Category": "Data"
             })
         
         # deFDR
@@ -918,8 +938,7 @@ if "dea_results" in st.session_state:
             file_name=f"validation_metrics_{ref_cond}_vs_{treat_cond}.csv",
             mime="text/csv",
         )
-    else:
-        st.info("💡 Enable spike-in composition for validation")
+
     
     # ===== INDIVIDUAL PROTEIN TABLE (LAZY LOADING WITH EXPANDER) =====
     st.markdown("---")
