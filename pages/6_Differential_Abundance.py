@@ -122,7 +122,6 @@ def calculate_asymmetry(values: np.ndarray, expected: float) -> float:
     """
     Calculate asymmetry around expected value.
     Asymmetry = median(observed) / expected
-    Value close to 1.0 = symmetric around expected
     """
     if len(values) == 0 or expected == 0:
         return np.nan
@@ -157,7 +156,7 @@ def compute_species_metrics(
     for sp in res["species"].unique():
         sp_df = res[res["species"] == sp].copy()
         expected_fc = true_fc_dict.get(sp, 0.0)
-        if abs(expected_fc) >= stable_thr:  # Only for variable proteome
+        if abs(expected_fc) >= stable_thr:
             asym = calculate_asymmetry(sp_df["log2fc"].values, expected_fc)
             asymmetry_dict[sp] = asym
     
@@ -424,16 +423,11 @@ if "dea_results" in st.session_state:
     st.subheader("5️⃣ Results Overview")
     
     n_total = len(res)
-    n_up = int((res["regulation"] == "up").sum())
-    n_down = int((res["regulation"] == "down").sum())
-    n_sig = n_up + n_down
-    
-    # Calculate quantification rate and IDs
     n_quant = int((res["regulation"] != "not_tested").sum())
     quant_rate = n_quant / n_total * 100 if n_total > 0 else 0
     n_ids = n_total
     
-    # Calculate validation metrics if theoretical FC available
+    # Calculate validation metrics across ALL species if theoretical FC available
     sens_pct = 0.0
     spec_pct = 0.0
     true_positives = 0
@@ -441,20 +435,25 @@ if "dea_results" in st.session_state:
     
     if theoretical_fc:
         species_series = df[species_col]
-        res_temp = res.copy()
-        res_temp["species"] = res_temp.index.map(species_series)
-        res_temp["true_log2fc"] = res_temp["species"].map(theoretical_fc)
-        res_temp = res_temp.dropna(subset=["true_log2fc"])
-        res_temp = res_temp[res_temp["regulation"] != "not_tested"]
         
-        if not res_temp.empty:
-            res_temp["true_regulated"] = np.abs(res_temp["true_log2fc"]) >= stable_thr
-            res_temp["observed_regulated"] = res_temp["regulation"].isin(["up", "down"])
+        # Get ALL tested proteins with species info
+        res_all = res[res["regulation"] != "not_tested"].copy()
+        res_all["species"] = res_all.index.map(species_series)
+        res_all["true_log2fc"] = res_all["species"].map(theoretical_fc)
+        
+        # Only keep proteins with valid theoretical FC
+        res_all = res_all.dropna(subset=["true_log2fc"])
+        
+        if not res_all.empty:
+            # Classify based on theoretical FC
+            res_all["true_regulated"] = np.abs(res_all["true_log2fc"]) >= stable_thr
+            res_all["observed_regulated"] = res_all["regulation"].isin(["up", "down"])
             
-            tp = int((res_temp["true_regulated"] & res_temp["observed_regulated"]).sum())
-            fn = int((res_temp["true_regulated"] & ~res_temp["observed_regulated"]).sum())
-            tn = int((~res_temp["true_regulated"] & ~res_temp["observed_regulated"]).sum())
-            fp = int((~res_temp["true_regulated"] & res_temp["observed_regulated"]).sum())
+            # Calculate confusion matrix across ALL species
+            tp = int((res_all["true_regulated"] & res_all["observed_regulated"]).sum())
+            fn = int((res_all["true_regulated"] & ~res_all["observed_regulated"]).sum())
+            tn = int((~res_all["true_regulated"] & ~res_all["observed_regulated"]).sum())
+            fp = int((~res_all["true_regulated"] & res_all["observed_regulated"]).sum())
             
             # Calculate metrics
             sens_pct = tp / (tp + fn) * 100 if (tp + fn) > 0 else 0.0
@@ -502,10 +501,18 @@ if "dea_results" in st.session_state:
         sp_data = ma[ma["species"] == sp]
         color = SPECIES_COLORS.get(sp, "#95a5a6")
         
+        # Calculate mean and std for outlier detection
+        mean_fc = sp_data["log2fc"].mean()
+        std_fc = sp_data["log2fc"].std()
+        
+        # Filter outliers: only show points within ±2 SD
+        outlier_mask = np.abs(sp_data["log2fc"] - mean_fc) <= 2 * std_fc
+        sp_data_filtered = sp_data[outlier_mask]
+        
         fig_facet.add_trace(
             go.Scatter(
-                x=sp_data["A"],
-                y=sp_data["log2fc"],
+                x=sp_data_filtered["A"],
+                y=sp_data_filtered["log2fc"],
                 mode='markers',
                 marker=dict(size=3, color=color, opacity=0.6),
                 name=sp,
@@ -530,15 +537,16 @@ if "dea_results" in st.session_state:
         # Zero line
         fig_facet.add_hline(y=0, line_color="red", line_width=1, opacity=0.5, row=1, col=i)
         
-        # Add boxplot on right side
+        # Add boxplot showing only ±2 SD range
         fig_facet.add_trace(
             go.Box(
-                y=sp_data["log2fc"],
+                y=sp_data_filtered["log2fc"],
                 name=sp,
                 marker_color=color,
                 showlegend=False,
                 width=0.3,
-                boxmean='sd'
+                boxmean='sd',
+                boxpoints=False  # Don't show individual outlier points
             ),
             row=1, col=i
         )
@@ -550,9 +558,6 @@ if "dea_results" in st.session_state:
     
     # === PLOT 2: REGULAR SCATTER (MA PLOT) ===
     st.markdown("### 📈 MA Plot (Combined)")
-    
-    # Map colors to species
-    ma["color"] = ma["species"].map(SPECIES_COLORS)
     
     fig_ma = px.scatter(
         ma,
