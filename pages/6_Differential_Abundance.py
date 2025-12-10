@@ -1,7 +1,8 @@
 """
 pages/6_Differential_Abundance.py
-Welch's t-test + Limma-style EB with comprehensive visualization and spike-in validation.
+Limma-style empirical Bayes moderated t-test with comprehensive validation.
 Unified FP definition: p<0.01 AND |log2fc - expected| > ±0.58 for all species
+Production-ready with spike-in validation and misregulation tracking
 """
 
 from __future__ import annotations
@@ -10,10 +11,10 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 import sys
 from scipy import stats
-from scipy.stats import ttest_ind, mannwhitneyu, gaussian_kde
+from scipy.stats import t as t_dist, ttest_ind
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -25,192 +26,229 @@ sys.path.append(str(Path(__file__).parent.parent))
 # ============================================================================
 
 SPECIES_COLORS = {
-    "HUMAN": "#2ecc71",  # Green
-    "YEAST": "#e67e22",  # Orange
-    "ECOLI": "#9b59b6",  # Purple
+    "HUMAN": "#2ecc71",   # Green
+    "YEAST": "#e67e22",   # Orange
+    "ECOLI": "#9b59b6",   # Purple
 }
 
 # ============================================================================
-# LIMMA-STYLE EMPIRICAL BAYES
+# LIMMA-STYLE EMPIRICAL BAYES MODERATION
 # ============================================================================
 
-def limma_EB_fit(variances: np.ndarray) -> Tuple[float, float]:
-    """
-    Fit empirical Bayes hyperparameters (d0, s02) to variance estimates.
-    Simplified approach: method of moments.
-    
-    Returns: (d0, s02) where posterior variance = (d0*s02 + n*sample_var) / (d0 + n)
-    """
-    if len(variances) < 2:
-        return 10.0, np.median(variances) if len(variances) > 0 else 1.0
-    
-    mean_var = np.mean(variances)
-    var_of_vars = np.var(variances)
-    
-    # Method of moments: fit prior variance and degrees of freedom
-    # d0: prior degrees of freedom (higher = more shrinkage)
-    # s02: prior variance
-    
-    if var_of_vars > 0:
-        d0 = 2 * mean_var**2 / var_of_vars  # Prior df
-        s02 = mean_var
-    else:
-        d0 = 10.0
-        s02 = mean_var
-    
-    d0 = max(1.0, d0)  # Ensure positive
-    s02 = max(1e-6, s02)
-    
-    return d0, s02
-
-
-def limma_moderated_ttest(
-    group1: np.ndarray,
-    group2: np.ndarray,
-    all_variances: np.ndarray,
-    d0: float = 10.0,
-    s02: float = 1.0,
+def fit_limma_empirical_bayes(
+    variances: np.ndarray,
+    df_residual: int,
+    proportion: float = 0.01
 ) -> Tuple[float, float]:
     """
-    Limma-style moderated t-test with empirical Bayes shrinkage.
-    Shrinks sample variances toward global estimate using EB hyperparameters.
+    Fit limma-style empirical Bayes prior for variance moderation.
     
-    Returns: (t_stat, p_value)
+    Args:
+        variances: Array of protein-wise variances
+        df_residual: Residual degrees of freedom per protein
+        proportion: Proportion of genes expected to be differentially expressed
+    
+    Returns:
+        (s0_squared, df_prior): Prior variance and prior degrees of freedom
     """
-    n1, n2 = len(group1), len(group2)
-    if n1 < 2 or n2 < 2:
-        return np.nan, 1.0
+    variances = variances[~np.isnan(variances)]
     
-    mean1, mean2 = np.mean(group1), np.mean(group2)
-    var1 = np.var(group1, ddof=1)
-    var2 = np.var(group2, ddof=1)
+    if len(variances) < 2:
+        return 0.0, 0.0
     
-    # Pooled sample variance
-    sp2 = ((n1 - 1) * var1 + (n2 - 1) * var2) / (n1 + n2 - 2)
+    # Trim extreme values (winsorize at 1% and 99%)
+    var_sorted = np.sort(variances)
+    n = len(var_sorted)
+    lower_idx = int(n * 0.01)
+    upper_idx = int(n * 0.99)
+    var_trimmed = var_sorted[lower_idx:upper_idx]
     
-    # EB shrinkage: moderated pooled variance
-    # s2_star = (d0*s02 + df*sp2) / (d0 + df)
-    df = n1 + n2 - 2
-    sp2_moderated = (d0 * s02 + df * sp2) / (d0 + df)
+    # Estimate prior variance (s0^2) as median of trimmed variances
+    s0_squared = np.median(var_trimmed)
     
-    # Standard error with moderated variance
-    se = np.sqrt(sp2_moderated * (1/n1 + 1/n2))
-    if se == 0:
-        return np.nan, 1.0
+    # Estimate prior degrees of freedom using method of moments
+    # Var(s^2) = 2*s0^4 / (df + df_prior)
+    var_of_vars = np.var(var_trimmed)
     
-    # t-statistic
-    t_stat = (mean1 - mean2) / se
+    if var_of_vars > 0 and s0_squared > 0:
+        df_prior = max(1.0, (2 * s0_squared**2 / var_of_vars) - df_residual)
+    else:
+        df_prior = 1.0
     
-    # Degrees of freedom: moderated df
-    df_moderated = d0 + df
-    
-    # p-value from moderated t-distribution
-    p_val = 2 * (1 - stats.t.cdf(abs(t_stat), df_moderated))
-    
-    return t_stat, p_val
+    return s0_squared, df_prior
 
 
-def perform_dea(
+def moderate_tstatistics(
+    log2fc: np.ndarray,
+    variances: np.ndarray,
+    n1: int,
+    n2: int,
+    s0_squared: float,
+    df_prior: float
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Calculate moderated t-statistics using empirical Bayes.
+    
+    Args:
+        log2fc: Log2 fold-changes
+        variances: Pooled variances per protein
+        n1, n2: Sample sizes
+        s0_squared: Prior variance
+        df_prior: Prior degrees of freedom
+    
+    Returns:
+        (moderated_t, moderated_p, moderated_df): Arrays of moderated statistics
+    """
+    # Degrees of freedom
+    df_residual = n1 + n2 - 2
+    df_total = df_residual + df_prior
+    
+    # Moderated variance (shrink towards prior)
+    s_moderated_squared = (df_residual * variances + df_prior * s0_squared) / df_total
+    
+    # Standard error of log2fc
+    se = np.sqrt(s_moderated_squared * (1/n1 + 1/n2))
+    
+    # Moderated t-statistic
+    moderated_t = log2fc / se
+    
+    # P-values from t-distribution with moderated df
+    moderated_p = 2 * (1 - t_dist.cdf(np.abs(moderated_t), df_total))
+    
+    moderated_df = np.full_like(moderated_t, df_total)
+    
+    return moderated_t, moderated_p, moderated_df
+
+
+# ============================================================================
+# STATISTICAL HELPERS
+# ============================================================================
+
+def perform_limma_test(
     df: pd.DataFrame,
     group1_cols: List[str],
     group2_cols: List[str],
-    use_limma: bool = True,
     min_valid: int = 2,
 ) -> pd.DataFrame:
     """
-    Perform differential expression analysis with optional Limma-style EB.
-    Log2FC = mean(group1) - mean(group2) (Limma convention)
+    Perform Limma-style moderated t-test with empirical Bayes.
+    Convention: log2FC = mean(group1) - mean(group2)
     """
     results = []
-    variances_all = []
+    variances_list = []
+    log2fc_list = []
+    protein_ids = []
     
-    # First pass: collect all variances for EB fitting
+    n1 = len(group1_cols)
+    n2 = len(group2_cols)
+    
+    # First pass: collect statistics
     for protein_id in df.index:
         row = df.loc[protein_id]
-        g1_vals = row[group1_cols].dropna().values
-        g2_vals = row[group2_cols].dropna().values
-        
-        if len(g1_vals) >= min_valid:
-            variances_all.append(np.var(g1_vals, ddof=1))
-        if len(g2_vals) >= min_valid:
-            variances_all.append(np.var(g2_vals, ddof=1))
-    
-    # Fit EB hyperparameters
-    if use_limma and len(variances_all) > 10:
-        d0, s02 = limma_EB_fit(np.array(variances_all))
-    else:
-        d0, s02 = 10.0, np.median(variances_all) if variances_all else 1.0
-    
-    # Second pass: compute statistics
-    for protein_id in df.index:
-        row = df.loc[protein_id]
-        g1_vals = row[group1_cols].dropna().values
-        g2_vals = row[group2_cols].dropna().values
+        g1_vals = row[group1_cols].dropna()
+        g2_vals = row[group2_cols].dropna()
         
         if len(g1_vals) < min_valid or len(g2_vals) < min_valid:
-            results.append({
-                "protein_id": protein_id,
-                "log2fc": np.nan,
-                "pvalue": np.nan,
-                "t_stat": np.nan,
-                "mean_g1": np.nan,
-                "mean_g2": np.nan,
-                "n_g1": len(g1_vals),
-                "n_g2": len(g2_vals),
-                "var_g1": np.nan,
-                "var_g2": np.nan,
-            })
             continue
         
-        mean_g1 = np.mean(g1_vals)
-        mean_g2 = np.mean(g2_vals)
+        mean_g1 = g1_vals.mean()
+        mean_g2 = g2_vals.mean()
         log2fc = mean_g1 - mean_g2
         
-        # Standard t-test
-        t_stat_std, p_std = ttest_ind(g1_vals, g2_vals, equal_var=False)
+        # Pooled variance
+        var_g1 = g1_vals.var(ddof=1) if len(g1_vals) > 1 else 0
+        var_g2 = g2_vals.var(ddof=1) if len(g2_vals) > 1 else 0
         
-        # Limma moderated t-test
-        if use_limma:
-            t_stat, p_val = limma_moderated_ttest(
-                g1_vals, g2_vals, np.array(variances_all), d0, s02
-            )
+        n1_actual = len(g1_vals)
+        n2_actual = len(g2_vals)
+        
+        if n1_actual + n2_actual > 2:
+            pooled_var = ((n1_actual - 1) * var_g1 + (n2_actual - 1) * var_g2) / (n1_actual + n2_actual - 2)
         else:
-            t_stat, p_val = t_stat_std, p_std
+            pooled_var = 0
         
-        var_g1 = np.var(g1_vals, ddof=1)
-        var_g2 = np.var(g2_vals, ddof=1)
+        variances_list.append(pooled_var)
+        log2fc_list.append(log2fc)
+        protein_ids.append(protein_id)
         
         results.append({
             "protein_id": protein_id,
             "log2fc": log2fc,
-            "pvalue": p_val,
-            "t_stat": t_stat,
             "mean_g1": mean_g1,
             "mean_g2": mean_g2,
-            "n_g1": len(g1_vals),
-            "n_g2": len(g2_vals),
-            "var_g1": var_g1,
-            "var_g2": var_g2,
+            "variance": pooled_var,
+            "n_g1": n1_actual,
+            "n_g2": n2_actual,
         })
+    
+    if len(results) == 0:
+        return pd.DataFrame()
     
     results_df = pd.DataFrame(results).set_index("protein_id")
     
-    # FDR Correction (Benjamini-Hochberg)
-    pvals = results_df["pvalue"].dropna().values
-    n_tests = len(pvals)
+    # Fit empirical Bayes prior
+    variances_array = np.array(variances_list)
+    log2fc_array = np.array(log2fc_list)
     
-    if n_tests > 0:
-        sorted_idx = np.argsort(pvals)
-        sorted_p = pvals[sorted_idx]
-        ranks = np.arange(1, n_tests + 1)
-        fdr_vals = sorted_p * n_tests / ranks
+    df_residual = n1 + n2 - 2
+    s0_squared, df_prior = fit_limma_empirical_bayes(variances_array, df_residual)
+    
+    # Calculate moderated statistics
+    moderated_t, moderated_p, moderated_df = moderate_tstatistics(
+        log2fc_array,
+        variances_array,
+        n1, n2,
+        s0_squared,
+        df_prior
+    )
+    
+    # Add moderated statistics
+    results_df["moderated_t"] = moderated_t
+    results_df["pvalue"] = moderated_p
+    results_df["moderated_df"] = moderated_df
+    results_df["s0_squared"] = s0_squared
+    results_df["df_prior"] = df_prior
+    
+    # Also calculate regular Welch's t-test for comparison
+    welch_pvals = []
+    for protein_id in results_df.index:
+        row = df.loc[protein_id]
+        g1_vals = row[group1_cols].dropna()
+        g2_vals = row[group2_cols].dropna()
+        
+        try:
+            _, p_welch = ttest_ind(g1_vals, g2_vals, equal_var=False)
+            welch_pvals.append(p_welch)
+        except:
+            welch_pvals.append(np.nan)
+    
+    results_df["pvalue_welch"] = welch_pvals
+    
+    # FDR correction (Benjamini-Hochberg)
+    pvals = results_df["pvalue"].dropna().sort_values()
+    n = len(pvals)
+    
+    if n > 0:
+        ranks = np.arange(1, n + 1)
+        fdr_vals = pvals.values * n / ranks
         fdr_vals = np.minimum.accumulate(fdr_vals[::-1])[::-1]
         fdr_vals = np.minimum(fdr_vals, 1.0)
-        
-        fdr_dict = dict(zip(results_df["pvalue"].dropna().index, fdr_vals))
-        results_df["fdr"] = results_df["pvalue"].map(fdr_dict)
+        fdr_dict = dict(zip(pvals.index, fdr_vals))
+        results_df["fdr"] = results_df.index.map(fdr_dict)
     else:
         results_df["fdr"] = np.nan
+    
+    # FDR for Welch (for comparison)
+    pvals_welch = results_df["pvalue_welch"].dropna().sort_values()
+    if len(pvals_welch) > 0:
+        ranks_welch = np.arange(1, len(pvals_welch) + 1)
+        fdr_welch = pvals_welch.values * len(pvals_welch) / ranks_welch
+        fdr_welch = np.minimum.accumulate(fdr_welch[::-1])[::-1]
+        fdr_welch = np.minimum(fdr_welch, 1.0)
+        fdr_welch_dict = dict(zip(pvals_welch.index, fdr_welch))
+        results_df["fdr_welch"] = results_df.index.map(fdr_welch_dict)
+    else:
+        results_df["fdr_welch"] = np.nan
     
     return results_df
 
@@ -235,7 +273,10 @@ def classify_regulation(
 
 
 def calculate_asymmetry(values: np.ndarray, expected: float) -> float:
-    """Calculate asymmetry: median(observed) / expected"""
+    """
+    Calculate asymmetry around expected value.
+    Asymmetry = median(observed) / expected
+    """
     if len(values) == 0 or expected == 0:
         return np.nan
     median_obs = np.median(values)
@@ -253,7 +294,13 @@ def compute_species_metrics(
     """
     Calculate metrics for variable and stable proteomes + asymmetry.
     
-    Unified FP definition (ALL SPECIES): p<p_threshold AND |log2fc - expected| > fc_tolerance
+    FALSE POSITIVES (UNIFIED DEFINITION FOR ALL SPECIES):
+    FP = p < p_threshold AND |log2fc - expected| > fc_tolerance
+         (called significant but OUTSIDE ±0.58 from theoretical)
+    
+    Returns:
+        (variable_overall, variable_per_species, stable_overall, stable_per_species,
+         asymmetry_dict, error_dict, fp_var_per_species)
     """
     res = results_df.copy()
     res["species"] = res.index.map(species_col_series)
@@ -274,6 +321,7 @@ def compute_species_metrics(
             asym = calculate_asymmetry(sp_df["log2fc"].values, expected_fc)
             asymmetry_dict[sp] = asym
     
+    # === ERROR TRACKING ===
     error_dict = {}
     
     # === VARIABLE PROTEOME (|expected FC| >= stable_thr) ===
@@ -288,12 +336,13 @@ def compute_species_metrics(
         var_df["significant"] = var_df["pvalue"] < p_threshold
         var_df["within_tolerance"] = np.abs(var_df["log2fc"] - var_df["true_log2fc"]) <= fc_tolerance
         
-        # Confusion matrix
+        # CONFUSION MATRIX (for variable species)
         tp = int((var_df["true_regulated"] & var_df["observed_regulated"]).sum())
         fn = int((var_df["true_regulated"] & ~var_df["observed_regulated"]).sum())
         tn = int((~var_df["true_regulated"] & ~var_df["observed_regulated"]).sum())
         fp = int((~var_df["true_regulated"] & var_df["observed_regulated"]).sum())
         
+        # Metrics
         sens = tp / (tp + fn) if (tp + fn) > 0 else 0.0
         spec = tn / (tn + fp) if (tn + fp) > 0 else 0.0
         prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
@@ -302,11 +351,14 @@ def compute_species_metrics(
             "Total": len(var_df),
             "TP": tp,
             "FN": fn,
+            "TN": tn,
+            "FP": fp,
             "Sensitivity": sens,
             "Specificity": spec,
             "Precision": prec,
         }
         
+        # Per-species metrics (variable)
         for sp in var_df["species"].unique():
             sp_df = var_df[var_df["species"] == sp].copy()
             theo = true_fc_dict.get(sp, 0.0)
@@ -339,7 +391,7 @@ def compute_species_metrics(
         stab_df["significant"] = stab_df["pvalue"] < p_threshold
         stab_df["outside_tolerance"] = np.abs(stab_df["log2fc"] - stab_df["true_log2fc"]) > fc_tolerance
         
-        # True FP: p<threshold AND |error| > ±0.58
+        # UNIFIED FP: p<threshold AND |error| > ±fc_tolerance
         true_fp = int((stab_df["significant"] & stab_df["outside_tolerance"]).sum())
         tn = int((~stab_df["significant"] | ~stab_df["outside_tolerance"]).sum())
         
@@ -348,6 +400,7 @@ def compute_species_metrics(
         
         stab_overall = {"Total": total, "FP": true_fp, "TN": tn, "FPR": fpr}
         
+        # Per-species metrics (stable)
         for sp in stab_df["species"].unique():
             sp_df = stab_df[stab_df["species"] == sp].copy()
             sp_df["significant"] = sp_df["pvalue"] < p_threshold
@@ -368,29 +421,30 @@ def compute_species_metrics(
             
             error_dict[f"FP_{sp}"] = fp_s
     
-    # === FALSE POSITIVES IN VARIABLE PROTEOME ===
+    # === MISREGULATED PROTEINS (Variable species with wrong magnitude) ===
     fp_var_species_rows = []
     
     if not var_df.empty:
         for sp in var_df["species"].unique():
-            sp_df = var_df[var_df["species"] == sp].copy()
-            sp_df["significant"] = sp_df["pvalue"] < p_threshold
-            sp_df["outside_tolerance"] = np.abs(sp_df["log2fc"] - sp_df["true_log2fc"]) > fc_tolerance
-            
-            # FP: p<threshold AND outside ±0.58
-            fp_s = int((sp_df["significant"] & sp_df["outside_tolerance"]).sum())
-            accurate_s = int((sp_df["significant"] & ~sp_df["outside_tolerance"]).sum())
-            total_var_s = len(sp_df)
-            
-            fp_var_species_rows.append({
-                "Species": sp,
-                "Total_Detected": total_var_s,
-                "Accurate": accurate_s,
-                "FP_Wrong_Mag": fp_s,
-                "Accuracy_%": f"{accurate_s/total_var_s*100:.1f}" if total_var_s > 0 else "0.0",
-            })
-            
-            error_dict[f"FP_{sp}"] = fp_s
+            if sp != "HUMAN":  # Only for variable species
+                sp_df = var_df[var_df["species"] == sp].copy()
+                sp_df["significant"] = sp_df["pvalue"] < p_threshold
+                sp_df["outside_tolerance"] = np.abs(sp_df["log2fc"] - sp_df["true_log2fc"]) > fc_tolerance
+                
+                # MISREGULATED: p<threshold AND outside ±fc_tolerance (wrong magnitude)
+                misreg_s = int((sp_df["significant"] & sp_df["outside_tolerance"]).sum())
+                accurate_s = int((sp_df["significant"] & ~sp_df["outside_tolerance"]).sum())
+                total_var_s = len(sp_df)
+                
+                fp_var_species_rows.append({
+                    "Species": sp,
+                    "Total_Proteins": total_var_s,
+                    "Accurate": accurate_s,
+                    "Misregulated": misreg_s,
+                    "Accuracy_%": f"{accurate_s/total_var_s*100:.1f}" if total_var_s > 0 else "0.0",
+                })
+                
+                error_dict[f"Misreg_{sp}"] = misreg_s
     
     return (
         var_overall,
@@ -408,16 +462,16 @@ def compute_species_metrics(
 # ============================================================================
 
 st.set_page_config(page_title="Differential Abundance", page_icon="🔬", layout="wide")
-st.title("🔬 Differential Abundance Analysis (DEA)")
-st.markdown("Welch's t-test + Limma-style EB with spike-in validation")
+st.title("🔬 Differential Abundance Analysis (Limma-Style)")
+st.markdown("Empirical Bayes moderated t-test with spike-in validation")
 st.markdown("---")
 
 # ============================================================================
-# DATA
+# DATA VALIDATION
 # ============================================================================
 
 if "df_imputed" not in st.session_state or st.session_state.df_imputed is None:
-    st.error("❌ No imputed data. Complete **📊 Post-Imputation EDA** first.")
+    st.error("❌ No imputed data. Complete **Missing Value Imputation** first.")
     st.stop()
 
 df = st.session_state.df_imputed.copy()
@@ -431,19 +485,24 @@ for s, c in sample_to_condition.items():
     if s in numeric_cols:
         cond_samples.setdefault(c, []).append(s)
 
-st.info(f"📊 **Data**: {df.shape[0]:,} proteins × {len(numeric_cols)} samples · **Conditions**: {', '.join(conditions)}")
+st.info(f"📊 **Data**: {df.shape[0]:,} proteins × {len(numeric_cols)} samples | **Conditions**: {', '.join(conditions)}")
 
 # ============================================================================
 # 1. COMPARISON SETUP
 # ============================================================================
 
-st.subheader("1️⃣ Comparison Setup (A vs B)")
+st.subheader("1️⃣ Comparison Setup")
 
 col1, col2 = st.columns(2)
 with col1:
     ref_cond = st.selectbox("Condition A (reference)", options=conditions, index=0)
 with col2:
-    treat_cond = st.selectbox("Condition B (treatment)", options=[c for c in conditions if c != ref_cond], index=0 if len(conditions) > 1 else 0)
+    available_treat = [c for c in conditions if c != ref_cond]
+    treat_cond = st.selectbox(
+        "Condition B (treatment)",
+        options=available_treat,
+        index=0 if len(available_treat) > 0 else 0
+    )
 
 if ref_cond == treat_cond:
     st.error("❌ Choose two different conditions.")
@@ -452,7 +511,7 @@ if ref_cond == treat_cond:
 ref_samples = cond_samples[ref_cond]
 treat_samples = cond_samples[treat_cond]
 
-st.markdown(f"- **Log2FC** = {ref_cond} - {treat_cond} (positive = higher in {ref_cond})")
+st.markdown(f"**Log2FC convention**: log2({ref_cond} / {treat_cond}) — positive = higher in {ref_cond}")
 st.markdown("---")
 
 # ============================================================================
@@ -461,13 +520,13 @@ st.markdown("---")
 
 st.subheader("2️⃣ Spike-in Composition (Optional)")
 
-use_comp = st.checkbox("✓ Provide % composition per species", value=False)
+use_comp = st.checkbox("Provide % composition per species", value=False)
 
 theoretical_fc_temp: Dict[str, float] = {}
-species_values = sorted([s for s in df[species_col].unique() if isinstance(s, str) and s.strip()])
+species_values = sorted([s for s in df[species_col].unique() if isinstance(s, str) and s != 'Unknown'])
 
 if use_comp:
-    st.markdown("Enter **% composition** (auto-normalized to 100% per condition)")
+    st.markdown("Enter % composition (auto-normalized to 100% per condition)")
     
     c1, c2 = st.columns(2)
     with c1:
@@ -475,36 +534,37 @@ if use_comp:
         comp_a = {}
         for sp in species_values:
             val = st.number_input(
-                f"{sp} (%)",
+                f"{sp} (%) in {ref_cond}",
                 min_value=0.0,
                 max_value=100.0,
-                value=100.0 / max(len(species_values), 1),
+                value=100.0/max(len(species_values), 1),
                 step=5.0,
                 key=f"a_{sp}"
             )
             comp_a[sp] = val
         ta = sum(comp_a.values()) or 1.0
-        comp_a = {k: v * 100 / ta for k, v in comp_a.items()}
+        comp_a = {k: v*100/ta for k, v in comp_a.items()}
     
     with c2:
         st.markdown(f"**{treat_cond} (B)**")
         comp_b = {}
         for sp in species_values:
             val = st.number_input(
-                f"{sp} (%)",
+                f"{sp} (%) in {treat_cond}",
                 min_value=0.0,
                 max_value=100.0,
-                value=100.0 / max(len(species_values), 1),
+                value=100.0/max(len(species_values), 1),
                 step=5.0,
                 key=f"b_{sp}"
             )
             comp_b[sp] = val
         tb = sum(comp_b.values()) or 1.0
-        comp_b = {k: v * 100 / tb for k, v in comp_b.items()}
+        comp_b = {k: v*100/tb for k, v in comp_b.items()}
     
     rows = []
     for sp in species_values:
         pa, pb = comp_a.get(sp, 0.0), comp_b.get(sp, 0.0)
+        
         if pa == 0 and pb == 0:
             log2fc = 0.0
         elif pb == 0:
@@ -512,7 +572,8 @@ if use_comp:
         elif pa == 0:
             log2fc = -10.0
         else:
-            log2fc = float(np.log2(pa / pb))
+            log2fc = float(np.log2(pa/pb))
+        
         theoretical_fc_temp[sp] = log2fc
         rows.append({
             "Species": sp,
@@ -522,7 +583,7 @@ if use_comp:
             "Linear_FC": f"{2**log2fc:.2f}x"
         })
     
-    st.dataframe(pd.DataFrame(rows), use_container_width=True)
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     
     if st.button("💾 Save Expected FC", type="primary"):
         st.session_state.dea_theoretical_fc = theoretical_fc_temp.copy()
@@ -532,7 +593,7 @@ if use_comp:
     if saved_fc:
         st.info(f"✓ **Saved**: {', '.join(f'{k}={v:.2f}' for k, v in saved_fc.items())}")
     else:
-        st.warning("⚠️ Not saved yet")
+        st.warning("⚠️ Not saved yet.")
 
 st.markdown("---")
 
@@ -543,21 +604,32 @@ st.markdown("---")
 st.subheader("3️⃣ Statistical Settings")
 
 c1, c2, c3 = st.columns(3)
+
 with c1:
-    use_limma = st.checkbox("✓ Use Limma-style EB", value=True, help="Empirical Bayes shrinkage of variances")
+    p_thr = st.selectbox(
+        "Significance threshold",
+        options=[0.001, 0.01, 0.05],
+        index=1,
+        format_func=lambda x: f"p < {x}"
+    )
+
 with c2:
-    use_fdr = st.checkbox("✓ Use FDR correction (BH)", value=True)
+    use_fdr = st.checkbox("Use FDR correction (BH)", value=True)
+
 with c3:
-    p_thr = st.selectbox("P-value threshold", options=[0.01, 0.05, 0.1], index=0)
+    test_method = st.selectbox(
+        "Test method",
+        options=["Limma (EB)", "Welch's t-test", "Both"],
+        index=0
+    )
 
 stable_thr = 0.5
 fc_tolerance = 0.58
 
 st.caption(
-    f"**Stable proteome**: |expected log2FC| < {stable_thr}  \n"
-    f"**FP definition (unified)**: p < {p_thr} AND |log2fc - expected| > ±{fc_tolerance}"
+    f"**Definitions**: Stable = |expected log2FC| < {stable_thr} · "
+    f"**FP (unified)** = p < {p_thr} AND |log2fc - expected| > ±{fc_tolerance}"
 )
-
 st.markdown("---")
 
 # ============================================================================
@@ -566,38 +638,47 @@ st.markdown("---")
 
 st.subheader("4️⃣ Run Analysis")
 
-if st.button("🚀 Run DEA (Welch's t-test + Limma EB)", type="primary"):
-    with st.spinner("⏳ Running analysis..."):
+if st.button("🚀 Run Differential Abundance Test", type="primary"):
+    with st.spinner("⏳ Running Limma-style moderated t-test..."):
+        
         # Log2 transform if needed
         df_num = df[numeric_cols]
         if (df_num > 50).any().any():
-            df_test = np.log2(df_num + 1.0)
+            df_log2 = np.log2(df_num + 1.0)
         else:
-            df_test = df_num.copy()
+            df_log2 = df_num.copy()
         
-        # Run DEA
-        results = perform_dea(df_test, ref_samples, treat_samples, use_limma=use_limma)
+        # Run Limma test
+        results = perform_limma_test(df_log2, ref_samples, treat_samples)
         
-        # Classify regulation
+        if len(results) == 0:
+            st.error("❌ No proteins passed filtering.")
+            st.stop()
+        
+        # Choose test column
         test_col = "fdr" if use_fdr else "pvalue"
+        
+        # Classification
         results["regulation"] = results.apply(
             lambda row: classify_regulation(row["log2fc"], row[test_col], 0.0, p_thr),
             axis=1
         )
+        
         results["neg_log10_p"] = -np.log10(results[test_col].replace(0, 1e-300))
         results["species"] = results.index.map(df[species_col])
         
+        # Save to session state
         st.session_state.dea_results = results
         st.session_state.dea_ref = ref_cond
         st.session_state.dea_treat = treat_cond
         st.session_state.dea_p_thr = p_thr
         st.session_state.dea_use_fdr = use_fdr
-        st.session_state.dea_use_limma = use_limma
+        st.session_state.dea_test_method = test_method
     
     st.success("✅ Analysis complete!")
 
 # ============================================================================
-# 5. RESULTS DISPLAY
+# 5. RESULTS
 # ============================================================================
 
 if "dea_results" in st.session_state:
@@ -606,28 +687,26 @@ if "dea_results" in st.session_state:
     treat_cond = st.session_state.dea_treat
     p_thr = st.session_state.dea_p_thr
     use_fdr = st.session_state.get('dea_use_fdr', True)
-    use_limma_flag = st.session_state.get('dea_use_limma', True)
+    test_method = st.session_state.get('dea_test_method', 'Limma (EB)')
     theoretical_fc = st.session_state.get('dea_theoretical_fc', {})
     
     st.markdown("---")
     st.subheader("5️⃣ Results Overview")
     
+    # Basic stats
     n_total = len(res)
     n_quant = int((res["regulation"] != "not_tested").sum())
     quant_rate = n_quant / n_total * 100 if n_total > 0 else 0
     
-    test_col = "fdr" if use_fdr else "pvalue"
-    test_label = "FDR" if use_fdr else "p-value"
-    
-    # Validation metrics
+    # Calculate validation metrics
     sens_pct = 0.0
     spec_pct = 0.0
     true_positives = 0
     de_fdr = 0.0
-    total_fp = 0
     
     if theoretical_fc:
         species_series = df[species_col]
+        
         res_all = res[res["regulation"] != "not_tested"].copy()
         res_all["species"] = res_all.index.map(species_series)
         res_all["true_log2fc"] = res_all["species"].map(theoretical_fc)
@@ -647,40 +726,45 @@ if "dea_results" in st.session_state:
             true_positives = tp
             de_fdr = fp / (tp + fp) * 100 if (tp + fp) > 0 else 0.0
     
-    # Summary metrics
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1:
-        st.metric("Quantified", f"{n_quant:,}")
-    with col2:
-        st.metric("Quant. Rate", f"{quant_rate:.0f}%")
-    with col3:
-        st.metric("Method", "Limma+EB" if use_limma_flag else "Welch")
-    with col4:
-        st.metric("Threshold", f"p={p_thr}")
-    with col5:
-        st.metric("Test", test_label)
+    # Display summary metrics
+    col1, col2, col3, col4 = st.columns(4)
     
+    with col1:
+        st.metric("Quantifiable Proteins", f"{n_quant:,}")
+        st.caption(f"{quant_rate:.1f}% of total")
+    
+    with col2:
+        st.metric("Sensitivity", f"{sens_pct:.1f}%")
+        st.caption("Detection rate")
+    
+    with col3:
+        st.metric("Specificity", f"{spec_pct:.1f}%")
+        st.caption("True negative rate")
+    
+    with col4:
+        st.metric("True Positives", f"{true_positives:,}")
+        st.caption(f"deFDR: {de_fdr:.2f}%")
+    
+    # Asymmetry metrics
     if theoretical_fc:
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Sensitivity", f"{sens_pct:.1f}%")
-        with col2:
-            st.metric("Specificity", f"{spec_pct:.1f}%")
-        with col3:
-            st.metric("True Positives", true_positives)
-        with col4:
-            st.metric("deFDR", f"{de_fdr:.2f}%")
+        asym_dict = {}
+        for sp in theoretical_fc.keys():
+            sp_df = res[res["species"] == sp].dropna(subset=["log2fc"])
+            if len(sp_df) > 0 and abs(theoretical_fc[sp]) >= stable_thr:
+                asym = calculate_asymmetry(sp_df["log2fc"].values, theoretical_fc[sp])
+                asym_dict[sp] = asym
+        
+        if asym_dict:
+            st.markdown("**Asymmetry**: " + ", ".join([f"{k} {v:.2f}" for k, v in asym_dict.items()]))
     
     st.markdown("---")
     
-    # ============================================================================
-    # PLOTS
-    # ============================================================================
-    
-    st.subheader("📊 Visualizations")
+    # ========================================================================
+    # VISUALIZATIONS
+    # ========================================================================
     
     # === PLOT 1: FACETED MA PLOT ===
-    st.markdown("### 1️⃣ MA Plot (Faceted by Species)")
+    st.markdown("### 📊 MA Plot (Faceted by Species)")
     
     ma = res[res["regulation"] != "not_tested"].copy()
     ma["A"] = (ma["mean_g1"] + ma["mean_g2"]) / 2
@@ -688,7 +772,8 @@ if "dea_results" in st.session_state:
     
     species_list = sorted(ma["species"].unique())
     fig_facet = make_subplots(
-        rows=1, cols=len(species_list),
+        rows=1,
+        cols=len(species_list),
         subplot_titles=species_list,
         shared_yaxes=True,
         horizontal_spacing=0.05
@@ -701,50 +786,51 @@ if "dea_results" in st.session_state:
         sp_sig = sp_data[sp_data["regulation"] != "not_significant"]
         sp_nonsig = sp_data[sp_data["regulation"] == "not_significant"]
         
-        # Non-sig (grayed)
+        # Non-significant (grayed)
         fig_facet.add_trace(
             go.Scatter(
                 x=sp_nonsig["A"],
                 y=sp_nonsig["log2fc"],
                 mode='markers',
                 marker=dict(size=3, color="lightgray", opacity=0.3),
+                name=f"{sp} (ns)",
                 showlegend=False,
                 hovertemplate=f"{sp} (ns)<br>A=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
             ),
             row=1, col=i
         )
         
-        # Up-regulated
+        # Significant
         sp_up = sp_sig[sp_sig["regulation"] == "up"]
+        sp_down = sp_sig[sp_sig["regulation"] == "down"]
+        
         fig_facet.add_trace(
             go.Scatter(
                 x=sp_up["A"],
                 y=sp_up["log2fc"],
                 mode='markers',
                 marker=dict(size=4, color=color, opacity=0.8, symbol='circle'),
-                showlegend=(i==1),
                 name=f"{sp} (↑)",
+                showlegend=(i == 1),
                 hovertemplate=f"{sp} ↑<br>A=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
             ),
             row=1, col=i
         )
         
-        # Down-regulated
-        sp_down = sp_sig[sp_sig["regulation"] == "down"]
         fig_facet.add_trace(
             go.Scatter(
                 x=sp_down["A"],
                 y=sp_down["log2fc"],
                 mode='markers',
                 marker=dict(size=4, color=color, opacity=0.8, symbol='diamond'),
-                showlegend=(i==1),
                 name=f"{sp} (↓)",
+                showlegend=(i == 1),
                 hovertemplate=f"{sp} ↓<br>A=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
             ),
             row=1, col=i
         )
         
-        # Expected FC line + tolerance band
+        # Expected FC lines
         if theoretical_fc and sp in theoretical_fc:
             expected_fc = theoretical_fc[sp]
             
@@ -776,13 +862,14 @@ if "dea_results" in st.session_state:
         # Zero line
         fig_facet.add_hline(y=0, line_color="red", line_width=1, opacity=0.5, row=1, col=i)
     
-    fig_facet.update_xaxes(title_text="log2(Mean Intensity)", row=1, col=1)
-    fig_facet.update_yaxes(title_text=f"log2FC ({ref_cond}/{treat_cond})", row=1, col=1)
-    fig_facet.update_layout(height=500, showlegend=True)
+    fig_facet.update_xaxes(title_text="Mean Intensity", row=1, col=2)
+    fig_facet.update_yaxes(title_text=f"log2({ref_cond}:{treat_cond})", row=1, col=1)
+    fig_facet.update_layout(height=500, showlegend=False)
+    
     st.plotly_chart(fig_facet, use_container_width=True)
     
-    # === PLOT 2: REGULAR MA PLOT ===
-    st.markdown("### 2️⃣ MA Plot (Combined)")
+    # === PLOT 2: COMBINED MA PLOT ===
+    st.markdown("### 📈 MA Plot (Combined)")
     
     ma_plot_data = ma.copy()
     ma_plot_data["Status"] = ma_plot_data.apply(
@@ -799,12 +886,13 @@ if "dea_results" in st.session_state:
         color_discrete_map=SPECIES_COLORS,
         category_orders={"Status": ["Not Sig.", "↓ Down", "↑ Up"]},
         opacity=0.7,
-        labels={"A": "log2(Mean Intensity)", "log2fc": f"log2FC ({ref_cond}/{treat_cond})"},
+        labels={"A": "Mean Intensity", "log2fc": f"log2({ref_cond}:{treat_cond})"},
         height=600,
     )
     
+    # Gray out non-significant
     for trace in fig_ma.data:
-        if trace.name == "Not Sig.":
+        if "Not Sig." in trace.name:
             trace.marker.opacity = 0.2
             trace.marker.color = "lightgray"
     
@@ -824,62 +912,51 @@ if "dea_results" in st.session_state:
                 annotation_position="right",
             )
             
-            fig_ma.add_hline(
-                y=expected_fc + fc_tolerance,
-                line_dash="dot",
-                line_width=1,
-                line_color=color,
-                opacity=0.2,
-            )
-            fig_ma.add_hline(
-                y=expected_fc - fc_tolerance,
-                line_dash="dot",
-                line_width=1,
-                line_color=color,
-                opacity=0.2,
-            )
+            fig_ma.add_hline(y=expected_fc + fc_tolerance, line_dash="dot", line_width=1, line_color=color, opacity=0.2)
+            fig_ma.add_hline(y=expected_fc - fc_tolerance, line_dash="dot", line_width=1, line_color=color, opacity=0.2)
     
     st.plotly_chart(fig_ma, use_container_width=True)
     
     # === PLOT 3: DENSITY PLOT ===
-    st.markdown("### 3️⃣ Density Plot (Log2FC Distribution)")
+    st.markdown("### 📊 Log2FC Density Plot")
     
     density_data = res[res["regulation"] != "not_tested"].dropna(subset=["log2fc", "species"])
     
     fig_density = go.Figure()
     
     for sp in sorted(density_data["species"].unique()):
-        sp_data = density_data[density_data["species"] == sp]["log2fc"].values
+        sp_data = density_data[density_data["species"] == sp]["log2fc"]
         color = SPECIES_COLORS.get(sp, "#95a5a6")
         
-        if len(sp_data) > 2:
-            kde = gaussian_kde(sp_data)
-            x_range = np.linspace(sp_data.min(), sp_data.max(), 200)
-            density = kde(x_range)
-            
-            fig_density.add_trace(go.Scatter(
-                x=x_range,
-                y=density,
-                mode='lines',
-                name=sp,
-                fill='tozeroy',
-                opacity=0.6,
-                line=dict(width=2, color=color),
-                fillcolor=color
-            ))
-            
-            if theoretical_fc and sp in theoretical_fc:
-                expected_fc = theoretical_fc[sp]
-                fig_density.add_vline(
-                    x=expected_fc,
-                    line_dash="dash",
-                    line_width=2,
-                    line_color=color,
-                    annotation_text=f"{sp}: {expected_fc:.2f}"
-                )
+        from scipy.stats import gaussian_kde
+        kde = gaussian_kde(sp_data)
+        x_range = np.linspace(sp_data.min(), sp_data.max(), 200)
+        density = kde(x_range)
+        
+        fig_density.add_trace(go.Scatter(
+            x=x_range,
+            y=density,
+            mode='lines',
+            name=sp,
+            fill='tozeroy',
+            opacity=0.6,
+            line=dict(width=2, color=color),
+            fillcolor=color
+        ))
+        
+        if theoretical_fc and sp in theoretical_fc:
+            expected_fc = theoretical_fc[sp]
+            fig_density.add_vline(
+                x=expected_fc,
+                line_dash="dash",
+                line_width=2,
+                line_color=color,
+                annotation_text=f"{sp}",
+                annotation_position="top"
+            )
     
     fig_density.update_layout(
-        xaxis_title=f"log2FC ({ref_cond}/{treat_cond})",
+        xaxis_title=f"log2({ref_cond}:{treat_cond})",
         yaxis_title="Density",
         height=500,
         showlegend=True
@@ -888,7 +965,7 @@ if "dea_results" in st.session_state:
     st.plotly_chart(fig_density, use_container_width=True)
     
     # === PLOT 4: VOLCANO PLOT ===
-    st.markdown("### 4️⃣ Volcano Plot")
+    st.markdown("### 🌋 Volcano Plot")
     
     volc = res[res["regulation"] != "not_tested"].dropna(subset=['neg_log10_p', 'log2fc'])
     volc["Status"] = volc.apply(
@@ -903,79 +980,56 @@ if "dea_results" in st.session_state:
         color="species",
         opacity=0.7,
         color_discrete_map=SPECIES_COLORS,
-        labels={"log2fc": f"log2FC ({ref_cond}/{treat_cond})", "neg_log10_p": f"-log10({test_label})"},
+        labels={
+            "log2fc": f"log2({ref_cond}:{treat_cond})",
+            "neg_log10_p": "-log10(FDR)" if use_fdr else "-log10(p)"
+        },
         height=600,
     )
     
-    for trace in fig_v.data:
+    # Gray out non-significant
+    for i, trace in enumerate(fig_v.data):
         mask = volc[volc["species"] == trace.name]["Status"] == "Not Significant"
         if mask.any():
             trace.marker.opacity = np.where(mask, 0.15, 0.7)
     
-    fig_v.add_hline(y=-np.log10(p_thr), line_dash="dash", line_color="gray", line_width=2, annotation_text=f"p={p_thr}")
+    fig_v.add_hline(
+        y=-np.log10(p_thr),
+        line_dash="dash",
+        line_color="gray",
+        line_width=2,
+        annotation_text=f"p={p_thr}"
+    )
     
     if theoretical_fc:
-        fig_v.add_vline(x=fc_tolerance, line_dash="dot", line_color="gray", line_width=1, opacity=0.5, annotation_text=f"±{fc_tolerance}")
+        fig_v.add_vline(x=fc_tolerance, line_dash="dot", line_color="gray", line_width=1, opacity=0.5)
         fig_v.add_vline(x=-fc_tolerance, line_dash="dot", line_color="gray", line_width=1, opacity=0.5)
     
     st.plotly_chart(fig_v, use_container_width=True)
     
-    # === PLOT 5: EFFECT SIZE DISTRIBUTION ===
-    st.markdown("### 5️⃣ Effect Size (Log2FC) Distribution")
-    
-    fig_effect = px.histogram(
-        res[res["regulation"] != "not_tested"].dropna(subset=['log2fc']),
-        x='log2fc',
-        color='species',
-        color_discrete_map=SPECIES_COLORS,
-        nbinsx=50,
-        title='Log2FC Distribution',
-        labels={'log2fc': f'log2FC ({ref_cond}/{treat_cond})'},
-        height=500,
-    )
-    
-    fig_effect.add_vline(x=0, line_color="red", line_width=2)
-    
-    st.plotly_chart(fig_effect, use_container_width=True)
-    
-    # === PLOT 6: P-VALUE DISTRIBUTION ===
-    st.markdown("### 6️⃣ P-Value Distribution")
-    
-    fig_pval = px.histogram(
-        res[res["regulation"] != "not_tested"].dropna(subset=[test_col]),
-        x=test_col,
-        nbinsx=50,
-        title=f'{test_label} Distribution',
-        labels={test_col: test_label},
-        height=500,
-    )
-    
-    fig_pval.add_vline(x=p_thr, line_dash="dash", line_color="red", line_width=2, annotation_text=f"{test_label}={p_thr}")
-    
-    st.plotly_chart(fig_pval, use_container_width=True)
-    
-    # ============================================================================
-    # VALIDATION METRICS (IF SPIKE-IN PROVIDED)
-    # ============================================================================
+    # ========================================================================
+    # VALIDATION SECTION
+    # ========================================================================
     
     if theoretical_fc:
         st.markdown("---")
-        st.subheader("6️⃣ Spike-in Validation Metrics")
+        st.subheader("6️⃣ Spike-in Validation")
         
-        st.info(f"**Theoretical FC**: {', '.join(f'{k}={v:.2f}' for k, v in theoretical_fc.items())}")
-        st.caption(f"**Unified FP definition**: p<{p_thr} AND |log2fc - expected| > ±{fc_tolerance}")
+        st.info(f"✓ **Using theoretical FC**: {', '.join(f'{k}={v:.2f}' for k, v in theoretical_fc.items())}")
+        st.caption(f"**FP definition (unified)**: p < {p_thr} AND |log2fc - expected| > ±{fc_tolerance}")
         
         species_series = df[species_col]
         var_ov, var_sp, stab_ov, stab_sp, asym_dict, error_dict, fp_var_sp = compute_species_metrics(
             res, theoretical_fc, species_series, stable_thr, fc_tolerance, p_thr
         )
         
-        # Build validation table
+        # === VALIDATION TABLE ===
         validation_rows = []
+        
         initial_total = len(df)
         
         # Asymmetry
-        for sp in ["HUMAN", "YEAST", "ECOLI"]:
+        for sp in ["HUMAN", "ECOLI", "YEAST"]:
             asym_val = asym_dict.get(sp, np.nan)
             validation_rows.append({
                 "Metric": "Asymmetry",
@@ -984,29 +1038,35 @@ if "dea_results" in st.session_state:
                 "Category": "Quality"
             })
         
-        # FP metrics
-        for sp in ["HUMAN", "YEAST", "ECOLI"]:
+        # False Positives
+        for sp in ["HUMAN", "ECOLI", "YEAST"]:
             fp_count = error_dict.get(f"FP_{sp}", 0)
+            misreg_count = error_dict.get(f"Misreg_{sp}", 0)
+            
             total = 0
+            fpr = 0
             
             if sp in stab_sp["Species"].values:
                 total = int(stab_sp[stab_sp["Species"] == sp]["N"].values[0])
+                fpr = fp_count / total * 100 if total > 0 else 0
             elif sp in fp_var_sp["Species"].values:
-                total = int(fp_var_sp[fp_var_sp["Species"] == sp]["Total_Detected"].values[0])
+                total = int(fp_var_sp[fp_var_sp["Species"] == sp]["Total_Proteins"].values[0])
+                fpr = fp_count / total * 100 if total > 0 else 0
             
             if total > 0:
-                fpr = fp_count / total * 100
                 validation_rows.append({
-                    "Metric": "False Positives",
+                    "Metric": "False Positives" if sp == "HUMAN" else "Misregulated",
                     "Species": sp,
-                    "Value": f"{fp_count:,} / {total:,} ({fpr:.1f}%)",
+                    "Value": f"{fp_count + misreg_count:,} / {total:,} ({fpr:.1f}%)",
                     "Category": "Error"
                 })
         
-        # Detection (variable species)
-        for sp in ["YEAST", "ECOLI"]:
+        # Detection/Accuracy (variable species)
+        for sp in ["ECOLI", "YEAST"]:
             if sp in var_sp["Species"].values:
                 det_pct = float(var_sp[var_sp["Species"] == sp]["Detection_%"].values[0].rstrip("%"))
+                mae = float(var_sp[var_sp["Species"] == sp]["MAE"].values[0])
+                
                 validation_rows.append({
                     "Metric": "Detection",
                     "Species": sp,
@@ -1014,7 +1074,6 @@ if "dea_results" in st.session_state:
                     "Category": "Sensitivity"
                 })
                 
-                mae = float(var_sp[var_sp["Species"] == sp]["MAE"].values[0])
                 validation_rows.append({
                     "Metric": "MAE (log2)",
                     "Species": sp,
@@ -1025,14 +1084,14 @@ if "dea_results" in st.session_state:
         # Overall metrics
         if var_ov:
             validation_rows.append({
-                "Metric": "Sensitivity",
+                "Metric": "Sensitivity (Variable)",
                 "Species": "Overall",
                 "Value": f"{var_ov['Sensitivity']:.1%}",
                 "Category": "Sensitivity"
             })
             
             validation_rows.append({
-                "Metric": "Specificity",
+                "Metric": "Specificity (Variable)",
                 "Species": "Overall",
                 "Value": f"{var_ov['Specificity']:.1%}",
                 "Category": "Specificity"
@@ -1048,62 +1107,140 @@ if "dea_results" in st.session_state:
         if stab_ov:
             validation_rows.append({
                 "Metric": "FPR (Stable)",
-                "Species": "Overall",
+                "Species": "HUMAN",
                 "Value": f"{stab_ov['FPR']:.1%}",
                 "Category": "Specificity"
             })
         
+        # deFDR
+        if true_positives > 0:
+            validation_rows.append({
+                "Metric": "deFDR",
+                "Species": "Overall",
+                "Value": f"{de_fdr:.2f}%",
+                "Category": "Error"
+            })
+        
         validation_df = pd.DataFrame(validation_rows)
         
-        st.markdown("### Validation Metrics Table")
-        st.dataframe(validation_df, use_container_width=True, hide_index=True)
+        st.markdown("### 📊 Validation Metrics")
+        st.dataframe(
+            validation_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Metric": st.column_config.TextColumn(width=150),
+                "Species": st.column_config.TextColumn(width=100),
+                "Value": st.column_config.TextColumn(width=150),
+                "Category": st.column_config.TextColumn(width=100),
+            }
+        )
         
         st.download_button(
             "📥 Download Validation Metrics",
             data=validation_df.to_csv(index=False).encode("utf-8"),
-            file_name=f"validation_{ref_cond}_vs_{treat_cond}.csv",
+            file_name=f"validation_metrics_{ref_cond}_vs_{treat_cond}.csv",
             mime="text/csv",
         )
     
-    # ============================================================================
-    # INDIVIDUAL PROTEIN RESULTS
-    # ============================================================================
+    # ========================================================================
+    # METHOD COMPARISON (if Both selected)
+    # ========================================================================
+    
+    if test_method == "Both":
+        st.markdown("---")
+        st.subheader("7️⃣ Method Comparison: Limma vs Welch")
+        
+        comparison_df = res[["pvalue", "pvalue_welch", "fdr", "fdr_welch", "log2fc"]].copy()
+        comparison_df = comparison_df.dropna()
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            corr_p = comparison_df["pvalue"].corr(comparison_df["pvalue_welch"])
+            st.metric("P-value Correlation", f"{corr_p:.3f}")
+        
+        with col2:
+            corr_fdr = comparison_df["fdr"].corr(comparison_df["fdr_welch"])
+            st.metric("FDR Correlation", f"{corr_fdr:.3f}")
+        
+        # Scatter plot
+        fig_comp = px.scatter(
+            comparison_df,
+            x="pvalue_welch",
+            y="pvalue",
+            hover_data=["log2fc"],
+            labels={"pvalue_welch": "Welch p-value", "pvalue": "Limma p-value"},
+            title="P-value Comparison",
+            height=500
+        )
+        fig_comp.update_xaxes(type="log")
+        fig_comp.update_yaxes(type="log")
+        
+        st.plotly_chart(fig_comp, use_container_width=True)
+    
+    # ========================================================================
+    # INDIVIDUAL PROTEIN TABLE
+    # ========================================================================
     
     st.markdown("---")
     
     with st.expander("🔬 View Individual Protein Results", expanded=False):
-        st.markdown("### Detailed Results Table")
+        st.markdown("### Individual Protein Data")
+        st.caption(f"Complete results for all {len(res):,} proteins")
         
-        results_table = res.copy().reset_index()
-        results_table = results_table.rename(columns={"protein_id": "Protein"})
+        results_table = res.copy()
+        results_table["species"] = results_table.index.map(df[species_col])
+        results_table = results_table.reset_index()
+        results_table = results_table.rename(columns={"protein_id": "Protein_ID"})
         
         results_table = results_table.round({
             "log2fc": 3,
             "pvalue": 6,
             "fdr": 6,
+            "pvalue_welch": 6,
+            "fdr_welch": 6,
             "mean_g1": 2,
             "mean_g2": 2,
-            "neg_log10_p": 2
+            "neg_log10_p": 2,
+            "moderated_t": 3,
         })
         
         display_cols = [
-            "Protein", "species", "log2fc", "pvalue", "fdr",
-            "mean_g1", "mean_g2", "regulation", "neg_log10_p", "n_g1", "n_g2"
+            "Protein_ID", "species", "log2fc", "pvalue", "fdr",
+            "mean_g1", "mean_g2", "regulation", "moderated_t", "moderated_df"
         ]
+        
+        if test_method == "Both":
+            display_cols.extend(["pvalue_welch", "fdr_welch"])
         
         results_table = results_table[[c for c in display_cols if c in results_table.columns]]
         
-        st.dataframe(results_table, use_container_width=True, height=600)
+        st.dataframe(
+            results_table,
+            use_container_width=True,
+            height=600,
+            column_config={
+                "Protein_ID": st.column_config.TextColumn(width=100),
+                "species": st.column_config.TextColumn(width=80),
+                "log2fc": st.column_config.NumberColumn(format="%.3f"),
+                "pvalue": st.column_config.NumberColumn(format="%.2e"),
+                "fdr": st.column_config.NumberColumn(format="%.2e"),
+                "regulation": st.column_config.TextColumn(width=80),
+            }
+        )
         
         st.download_button(
-            "📥 Download Individual Results (CSV)",
+            "📥 Download Individual Proteins (CSV)",
             data=results_table.to_csv(index=False).encode("utf-8"),
             file_name=f"dea_proteins_{ref_cond}_vs_{treat_cond}.csv",
             mime="text/csv",
+            key="individual_download"
         )
-    
-    st.markdown("---")
-    st.success("✅ Differential Abundance Analysis Complete!")
 
 else:
-    st.info("👆 Configure comparison and run analysis")
+    st.info("👆 Configure settings and run analysis above")
+
+st.markdown("---")
+st.success("✅ **Limma-style differential abundance testing** with empirical Bayes moderation")
+st.caption("Unified FP definition applied across all species for robust validation")
