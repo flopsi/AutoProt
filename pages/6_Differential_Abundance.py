@@ -1,11 +1,7 @@
 """
-pages/6_Differential_Abundance.py - FIXED
-Comprehensive Differential Abundance Analysis (DEA)
-- Welch's t-test + Limma-style Empirical Bayes
-- Parametric & non-parametric tests
-- Spike-in validation with unified FP definition
-- Effect sizes, visualizations, interpretation
-- BUGFIX: Empty species handling + deprecated Streamlit warnings
+pages/6_Differential_Abundance.py
+Welch's t-test + Limma-style EB with comprehensive visualization and spike-in validation.
+Unified FP definition: p<0.01 AND |log2fc - expected| > ±0.58 for all species
 """
 
 from __future__ import annotations
@@ -17,7 +13,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 import sys
 from scipy import stats
-from scipy.stats import ttest_ind, mannwhitneyu, gaussian_kde, t as t_dist
+from scipy.stats import ttest_ind, mannwhitneyu, gaussian_kde
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -29,9 +25,9 @@ sys.path.append(str(Path(__file__).parent.parent))
 # ============================================================================
 
 SPECIES_COLORS = {
-    "HUMAN": "#2ecc71",    # Green
-    "YEAST": "#e67e22",    # Orange
-    "ECOLI": "#9b59b6",    # Purple
+    "HUMAN": "#2ecc71",  # Green
+    "YEAST": "#e67e22",  # Orange
+    "ECOLI": "#9b59b6",  # Purple
 }
 
 # ============================================================================
@@ -41,7 +37,7 @@ SPECIES_COLORS = {
 def limma_EB_fit(variances: np.ndarray) -> Tuple[float, float]:
     """
     Fit empirical Bayes hyperparameters (d0, s02) to variance estimates.
-    Simplified method of moments approach.
+    Simplified approach: method of moments.
     
     Returns: (d0, s02) where posterior variance = (d0*s02 + n*sample_var) / (d0 + n)
     """
@@ -51,14 +47,18 @@ def limma_EB_fit(variances: np.ndarray) -> Tuple[float, float]:
     mean_var = np.mean(variances)
     var_of_vars = np.var(variances)
     
+    # Method of moments: fit prior variance and degrees of freedom
+    # d0: prior degrees of freedom (higher = more shrinkage)
+    # s02: prior variance
+    
     if var_of_vars > 0:
-        d0 = 2 * mean_var**2 / var_of_vars
+        d0 = 2 * mean_var**2 / var_of_vars  # Prior df
         s02 = mean_var
     else:
         d0 = 10.0
         s02 = mean_var
     
-    d0 = max(1.0, d0)
+    d0 = max(1.0, d0)  # Ensure positive
     s02 = max(1e-6, s02)
     
     return d0, s02
@@ -85,51 +85,29 @@ def limma_moderated_ttest(
     var1 = np.var(group1, ddof=1)
     var2 = np.var(group2, ddof=1)
     
+    # Pooled sample variance
     sp2 = ((n1 - 1) * var1 + (n2 - 1) * var2) / (n1 + n2 - 2)
     
+    # EB shrinkage: moderated pooled variance
+    # s2_star = (d0*s02 + df*sp2) / (d0 + df)
     df = n1 + n2 - 2
     sp2_moderated = (d0 * s02 + df * sp2) / (d0 + df)
     
+    # Standard error with moderated variance
     se = np.sqrt(sp2_moderated * (1/n1 + 1/n2))
     if se == 0:
         return np.nan, 1.0
     
+    # t-statistic
     t_stat = (mean1 - mean2) / se
+    
+    # Degrees of freedom: moderated df
     df_moderated = d0 + df
+    
+    # p-value from moderated t-distribution
     p_val = 2 * (1 - stats.t.cdf(abs(t_stat), df_moderated))
     
     return t_stat, p_val
-
-
-def benjamini_hochberg(pvalues: np.ndarray) -> np.ndarray:
-    """Calculate Benjamini-Hochberg FDR correction"""
-    n = len(pvalues)
-    sorted_idx = np.argsort(pvalues)
-    sorted_p = pvalues[sorted_idx]
-    
-    adjusted_p = np.zeros(n)
-    adjusted_p[sorted_idx] = sorted_p * n / (np.arange(1, n + 1))
-    
-    for i in range(n - 2, -1, -1):
-        adjusted_p[i] = min(adjusted_p[i], adjusted_p[i + 1])
-    
-    adjusted_p = np.minimum(adjusted_p, 1.0)
-    
-    return adjusted_p
-
-
-def calculate_cohens_d(group1: np.ndarray, group2: np.ndarray) -> float:
-    """Calculate Cohen's d effect size"""
-    n1, n2 = len(group1), len(group2)
-    var1, var2 = np.var(group1, ddof=1), np.var(group2, ddof=1)
-    
-    pooled_std = np.sqrt(((n1 - 1) * var1 + (n2 - 1) * var2) / (n1 + n2 - 2))
-    
-    if pooled_std == 0:
-        return 0
-    
-    cohens_d = (np.mean(group1) - np.mean(group2)) / pooled_std
-    return cohens_d
 
 
 def perform_dea(
@@ -137,12 +115,10 @@ def perform_dea(
     group1_cols: List[str],
     group2_cols: List[str],
     use_limma: bool = True,
-    use_parametric: bool = True,
-    use_nonparametric: bool = True,
     min_valid: int = 2,
 ) -> pd.DataFrame:
     """
-    Perform differential expression analysis.
+    Perform differential expression analysis with optional Limma-style EB.
     Log2FC = mean(group1) - mean(group2) (Limma convention)
     """
     results = []
@@ -175,11 +151,8 @@ def perform_dea(
             results.append({
                 "protein_id": protein_id,
                 "log2fc": np.nan,
-                "p_ttest": np.nan,
-                "p_mannwhitney": np.nan,
+                "pvalue": np.nan,
                 "t_stat": np.nan,
-                "u_stat": np.nan,
-                "cohens_d": np.nan,
                 "mean_g1": np.nan,
                 "mean_g2": np.nan,
                 "n_g1": len(g1_vals),
@@ -192,39 +165,26 @@ def perform_dea(
         mean_g1 = np.mean(g1_vals)
         mean_g2 = np.mean(g2_vals)
         log2fc = mean_g1 - mean_g2
-        cohens_d = calculate_cohens_d(g1_vals, g2_vals)
+        
+        # Standard t-test
+        t_stat_std, p_std = ttest_ind(g1_vals, g2_vals, equal_var=False)
+        
+        # Limma moderated t-test
+        if use_limma:
+            t_stat, p_val = limma_moderated_ttest(
+                g1_vals, g2_vals, np.array(variances_all), d0, s02
+            )
+        else:
+            t_stat, p_val = t_stat_std, p_std
         
         var_g1 = np.var(g1_vals, ddof=1)
         var_g2 = np.var(g2_vals, ddof=1)
         
-        # Parametric test
-        if use_parametric:
-            if use_limma:
-                t_stat, p_ttest = limma_moderated_ttest(
-                    g1_vals, g2_vals, np.array(variances_all), d0, s02
-                )
-            else:
-                t_stat, p_ttest = ttest_ind(g1_vals, g2_vals, equal_var=False)
-        else:
-            t_stat, p_ttest = np.nan, np.nan
-        
-        # Non-parametric test
-        if use_nonparametric:
-            try:
-                u_stat, p_mw = mannwhitneyu(g1_vals, g2_vals)
-            except Exception:
-                u_stat, p_mw = np.nan, np.nan
-        else:
-            u_stat, p_mw = np.nan, np.nan
-        
         results.append({
             "protein_id": protein_id,
             "log2fc": log2fc,
-            "p_ttest": p_ttest,
-            "p_mannwhitney": p_mw,
+            "pvalue": p_val,
             "t_stat": t_stat,
-            "u_stat": u_stat,
-            "cohens_d": cohens_d,
             "mean_g1": mean_g1,
             "mean_g2": mean_g2,
             "n_g1": len(g1_vals),
@@ -235,26 +195,43 @@ def perform_dea(
     
     results_df = pd.DataFrame(results).set_index("protein_id")
     
-    # FDR Correction
-    if use_parametric:
-        pvals = results_df["p_ttest"].dropna().values
-        if len(pvals) > 0:
-            fdr_vals = benjamini_hochberg(pvals)
-            fdr_dict = dict(zip(results_df["p_ttest"].dropna().index, fdr_vals))
-            results_df["q_ttest"] = results_df["p_ttest"].map(fdr_dict)
-        else:
-            results_df["q_ttest"] = np.nan
+    # FDR Correction (Benjamini-Hochberg)
+    pvals = results_df["pvalue"].dropna().values
+    n_tests = len(pvals)
     
-    if use_nonparametric:
-        pvals = results_df["p_mannwhitney"].dropna().values
-        if len(pvals) > 0:
-            fdr_vals = benjamini_hochberg(pvals)
-            fdr_dict = dict(zip(results_df["p_mannwhitney"].dropna().index, fdr_vals))
-            results_df["q_mannwhitney"] = results_df["p_mannwhitney"].map(fdr_dict)
-        else:
-            results_df["q_mannwhitney"] = np.nan
+    if n_tests > 0:
+        sorted_idx = np.argsort(pvals)
+        sorted_p = pvals[sorted_idx]
+        ranks = np.arange(1, n_tests + 1)
+        fdr_vals = sorted_p * n_tests / ranks
+        fdr_vals = np.minimum.accumulate(fdr_vals[::-1])[::-1]
+        fdr_vals = np.minimum(fdr_vals, 1.0)
+        
+        fdr_dict = dict(zip(results_df["pvalue"].dropna().index, fdr_vals))
+        results_df["fdr"] = results_df["pvalue"].map(fdr_dict)
+    else:
+        results_df["fdr"] = np.nan
     
     return results_df
+
+
+def classify_regulation(
+    log2fc: float,
+    pvalue: float,
+    fc_threshold: float = 0.0,
+    pval_threshold: float = 0.05,
+) -> str:
+    """Classify protein regulation status."""
+    if pd.isna(log2fc) or pd.isna(pvalue):
+        return "not_tested"
+    if pvalue > pval_threshold:
+        return "not_significant"
+    if log2fc > fc_threshold:
+        return "up"
+    elif log2fc < -fc_threshold:
+        return "down"
+    else:
+        return "not_significant"
 
 
 def calculate_asymmetry(values: np.ndarray, expected: float) -> float:
@@ -274,7 +251,7 @@ def compute_species_metrics(
     p_threshold: float = 0.01,
 ) -> Tuple[Dict, pd.DataFrame, Dict, pd.DataFrame, Dict, Dict, pd.DataFrame]:
     """
-    Calculate validation metrics for variable and stable proteomes.
+    Calculate metrics for variable and stable proteomes + asymmetry.
     
     Unified FP definition (ALL SPECIES): p<p_threshold AND |log2fc - expected| > fc_tolerance
     """
@@ -288,7 +265,7 @@ def compute_species_metrics(
     if res.empty:
         return {}, pd.DataFrame(), {}, pd.DataFrame(), {}, {}, pd.DataFrame()
     
-    # === ASYMMETRY ===
+    # === ASYMMETRY CALCULATION ===
     asymmetry_dict = {}
     for sp in res["species"].unique():
         sp_df = res[res["species"] == sp].copy()
@@ -299,16 +276,19 @@ def compute_species_metrics(
     
     error_dict = {}
     
-    # === VARIABLE PROTEOME ===
+    # === VARIABLE PROTEOME (|expected FC| >= stable_thr) ===
     var_df = res[np.abs(res["true_log2fc"]) >= stable_thr].copy()
+    
     var_overall = {}
     var_species_rows = []
     
     if not var_df.empty:
         var_df["observed_regulated"] = var_df["regulation"].isin(["up", "down"])
         var_df["true_regulated"] = np.abs(var_df["true_log2fc"]) >= stable_thr
+        var_df["significant"] = var_df["pvalue"] < p_threshold
         var_df["within_tolerance"] = np.abs(var_df["log2fc"] - var_df["true_log2fc"]) <= fc_tolerance
         
+        # Confusion matrix
         tp = int((var_df["true_regulated"] & var_df["observed_regulated"]).sum())
         fn = int((var_df["true_regulated"] & ~var_df["observed_regulated"]).sum())
         tn = int((~var_df["true_regulated"] & ~var_df["observed_regulated"]).sum())
@@ -349,8 +329,9 @@ def compute_species_metrics(
                 "Detection_%": f"{sp_df['observed_regulated'].mean()*100:.1f}",
             })
     
-    # === STABLE PROTEOME ===
+    # === STABLE PROTEOME (|expected FC| < stable_thr) ===
     stab_df = res[np.abs(res["true_log2fc"]) < stable_thr].copy()
+    
     stab_overall = {}
     stab_species_rows = []
     
@@ -358,6 +339,7 @@ def compute_species_metrics(
         stab_df["significant"] = stab_df["pvalue"] < p_threshold
         stab_df["outside_tolerance"] = np.abs(stab_df["log2fc"] - stab_df["true_log2fc"]) > fc_tolerance
         
+        # True FP: p<threshold AND |error| > ±0.58
         true_fp = int((stab_df["significant"] & stab_df["outside_tolerance"]).sum())
         tn = int((~stab_df["significant"] | ~stab_df["outside_tolerance"]).sum())
         
@@ -392,9 +374,10 @@ def compute_species_metrics(
     if not var_df.empty:
         for sp in var_df["species"].unique():
             sp_df = var_df[var_df["species"] == sp].copy()
-            sp_df["significant"] = sp_df[test_col] < p_threshold
+            sp_df["significant"] = sp_df["pvalue"] < p_threshold
             sp_df["outside_tolerance"] = np.abs(sp_df["log2fc"] - sp_df["true_log2fc"]) > fc_tolerance
             
+            # FP: p<threshold AND outside ±0.58
             fp_s = int((sp_df["significant"] & sp_df["outside_tolerance"]).sum())
             accurate_s = int((sp_df["significant"] & ~sp_df["outside_tolerance"]).sum())
             total_var_s = len(sp_df)
@@ -426,11 +409,11 @@ def compute_species_metrics(
 
 st.set_page_config(page_title="Differential Abundance", page_icon="🔬", layout="wide")
 st.title("🔬 Differential Abundance Analysis (DEA)")
-st.markdown("Welch's t-test + Limma-style EB + Non-parametric tests + Spike-in validation")
+st.markdown("Welch's t-test + Limma-style EB with spike-in validation")
 st.markdown("---")
 
 # ============================================================================
-# DATA VALIDATION
+# DATA
 # ============================================================================
 
 if "df_imputed" not in st.session_state or st.session_state.df_imputed is None:
@@ -451,18 +434,16 @@ for s, c in sample_to_condition.items():
 st.info(f"📊 **Data**: {df.shape[0]:,} proteins × {len(numeric_cols)} samples · **Conditions**: {', '.join(conditions)}")
 
 # ============================================================================
-# SIDEBAR CONFIG
+# 1. COMPARISON SETUP
 # ============================================================================
 
-st.sidebar.subheader("⚙️ Configuration")
+st.subheader("1️⃣ Comparison Setup (A vs B)")
 
-# Comparison setup
-ref_cond = st.sidebar.selectbox("Condition A (reference)", options=conditions, index=0)
-treat_cond = st.sidebar.selectbox(
-    "Condition B (treatment)",
-    options=[c for c in conditions if c != ref_cond],
-    index=0 if len(conditions) > 1 else 0
-)
+col1, col2 = st.columns(2)
+with col1:
+    ref_cond = st.selectbox("Condition A (reference)", options=conditions, index=0)
+with col2:
+    treat_cond = st.selectbox("Condition B (treatment)", options=[c for c in conditions if c != ref_cond], index=0 if len(conditions) > 1 else 0)
 
 if ref_cond == treat_cond:
     st.error("❌ Choose two different conditions.")
@@ -471,141 +452,152 @@ if ref_cond == treat_cond:
 ref_samples = cond_samples[ref_cond]
 treat_samples = cond_samples[treat_cond]
 
-st.sidebar.markdown("---")
+st.markdown(f"- **Log2FC** = {ref_cond} - {treat_cond} (positive = higher in {ref_cond})")
+st.markdown("---")
 
-# Statistical tests
-col1, col2 = st.sidebar.columns(2)
-with col1:
-    use_limma = st.checkbox("✓ Limma EB", value=True, help="Empirical Bayes variance shrinkage")
-with col2:
-    use_fdr = st.checkbox("✓ FDR (BH)", value=True)
+# ============================================================================
+# 2. SPIKE-IN COMPOSITION
+# ============================================================================
 
-col1, col2 = st.sidebar.columns(2)
-with col1:
-    use_parametric = st.checkbox("✓ Parametric", value=True, help="Welch's t-test")
-with col2:
-    use_nonparametric = st.checkbox("✓ Non-param", value=True, help="Mann-Whitney U")
+st.subheader("2️⃣ Spike-in Composition (Optional)")
 
-p_thr = st.sidebar.slider("P-value threshold", 0.001, 0.1, 0.05, 0.001)
-fc_thr = st.sidebar.slider("Log2 FC threshold (|x|)", 0.0, 3.0, 0.5, 0.1)
+use_comp = st.checkbox("✓ Provide % composition per species", value=False)
 
-st.sidebar.markdown("---")
+theoretical_fc_temp: Dict[str, float] = {}
+species_values = sorted([s for s in df[species_col].unique() if isinstance(s, str) and s.strip()])
 
-# Filtering
-min_intensity = st.sidebar.slider("Min mean intensity", 0, 20, 0, 1)
-min_var_pct = st.sidebar.slider("Min variance percentile", 0, 50, 25, 5)
+if use_comp:
+    st.markdown("Enter **% composition** (auto-normalized to 100% per condition)")
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(f"**{ref_cond} (A)**")
+        comp_a = {}
+        for sp in species_values:
+            val = st.number_input(
+                f"{sp} (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=100.0 / max(len(species_values), 1),
+                step=5.0,
+                key=f"a_{sp}"
+            )
+            comp_a[sp] = val
+        ta = sum(comp_a.values()) or 1.0
+        comp_a = {k: v * 100 / ta for k, v in comp_a.items()}
+    
+    with c2:
+        st.markdown(f"**{treat_cond} (B)**")
+        comp_b = {}
+        for sp in species_values:
+            val = st.number_input(
+                f"{sp} (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=100.0 / max(len(species_values), 1),
+                step=5.0,
+                key=f"b_{sp}"
+            )
+            comp_b[sp] = val
+        tb = sum(comp_b.values()) or 1.0
+        comp_b = {k: v * 100 / tb for k, v in comp_b.items()}
+    
+    rows = []
+    for sp in species_values:
+        pa, pb = comp_a.get(sp, 0.0), comp_b.get(sp, 0.0)
+        if pa == 0 and pb == 0:
+            log2fc = 0.0
+        elif pb == 0:
+            log2fc = 10.0
+        elif pa == 0:
+            log2fc = -10.0
+        else:
+            log2fc = float(np.log2(pa / pb))
+        theoretical_fc_temp[sp] = log2fc
+        rows.append({
+            "Species": sp,
+            f"{ref_cond} (%)": f"{pa:.1f}",
+            f"{treat_cond} (%)": f"{pb:.1f}",
+            "Log2FC": f"{log2fc:.3f}",
+            "Linear_FC": f"{2**log2fc:.2f}x"
+        })
+    
+    st.dataframe(pd.DataFrame(rows), use_container_width=True)
+    
+    if st.button("💾 Save Expected FC", type="primary"):
+        st.session_state.dea_theoretical_fc = theoretical_fc_temp.copy()
+        st.success(f"✅ Saved for {len(theoretical_fc_temp)} species!")
+    
+    saved_fc = st.session_state.get('dea_theoretical_fc', {})
+    if saved_fc:
+        st.info(f"✓ **Saved**: {', '.join(f'{k}={v:.2f}' for k, v in saved_fc.items())}")
+    else:
+        st.warning("⚠️ Not saved yet")
 
-st.sidebar.markdown("---")
+st.markdown("---")
 
-# Visualizations
-viz_options = st.sidebar.multiselect(
-    "Visualizations:",
-    [
-        "Volcano Plot",
-        "MA Plot (Faceted)",
-        "MA Plot (Combined)",
-        "Density Plot",
-        "Box Plots (Top Proteins)",
-        "Heatmap",
-        "Cohen's d Distribution",
-        "P-value Distribution",
-        "Parametric vs Non-parametric"
-    ],
-    default=["Volcano Plot", "MA Plot (Combined)"]
+# ============================================================================
+# 3. STATISTICAL SETTINGS
+# ============================================================================
+
+st.subheader("3️⃣ Statistical Settings")
+
+c1, c2, c3 = st.columns(3)
+with c1:
+    use_limma = st.checkbox("✓ Use Limma-style EB", value=True, help="Empirical Bayes shrinkage of variances")
+with c2:
+    use_fdr = st.checkbox("✓ Use FDR correction (BH)", value=True)
+with c3:
+    p_thr = st.selectbox("P-value threshold", options=[0.01, 0.05, 0.1], index=0)
+
+stable_thr = 0.5
+fc_tolerance = 0.58
+
+st.caption(
+    f"**Stable proteome**: |expected log2FC| < {stable_thr}  \n"
+    f"**FP definition (unified)**: p < {p_thr} AND |log2fc - expected| > ±{fc_tolerance}"
 )
 
-# Spike-in
-use_spike_in = st.sidebar.checkbox("✓ Spike-in Validation", value=False)
-
-if use_spike_in:
-    st.sidebar.markdown("**Spike-in Composition**")
-    species_values = sorted([s for s in df[species_col].unique() if isinstance(s, str) and s.strip()])
-    
-    theoretical_fc_sidebar: Dict[str, float] = {}
-    for sp in species_values:
-        comp_a = st.sidebar.slider(f"{sp} in {ref_cond} (%)", 0.0, 100.0, 100.0/max(len(species_values),1), 5.0, key=f"sidebar_a_{sp}")
-        comp_b = st.sidebar.slider(f"{sp} in {treat_cond} (%)", 0.0, 100.0, 100.0/max(len(species_values),1), 5.0, key=f"sidebar_b_{sp}")
-        
-        if comp_a > 0 and comp_b > 0:
-            theoretical_fc_sidebar[sp] = np.log2(comp_a / comp_b)
-    
-    if st.sidebar.button("💾 Save Spike-in FC"):
-        st.session_state.dea_theoretical_fc = theoretical_fc_sidebar.copy()
-        st.sidebar.success("✅ Saved!")
-
-st.sidebar.markdown("---")
+st.markdown("---")
 
 # ============================================================================
-# RUN ANALYSIS
+# 4. RUN ANALYSIS
 # ============================================================================
 
-st.subheader("1️⃣ Running Analysis")
+st.subheader("4️⃣ Run Analysis")
 
-if st.button("🚀 Run DEA", type="primary", use_container_width=True):
-    with st.spinner("⏳ Processing..."):
-        # Log2 transform
+if st.button("🚀 Run DEA (Welch's t-test + Limma EB)", type="primary"):
+    with st.spinner("⏳ Running analysis..."):
+        # Log2 transform if needed
         df_num = df[numeric_cols]
         if (df_num > 50).any().any():
             df_test = np.log2(df_num + 1.0)
         else:
             df_test = df_num.copy()
         
-        # Filter
-        mask_intensity = (df_test[ref_samples + treat_samples].mean(axis=1) >= min_intensity)
-        
-        var_pct_threshold = np.percentile(
-            df_test[ref_samples + treat_samples].var(axis=1, ddof=1),
-            min_var_pct
-        )
-        mask_variance = (df_test[ref_samples + treat_samples].var(axis=1, ddof=1) >= var_pct_threshold)
-        
-        df_filtered = df_test[mask_intensity & mask_variance]
-        
         # Run DEA
-        results = perform_dea(
-            df_filtered,
-            ref_samples,
-            treat_samples,
-            use_limma=use_limma,
-            use_parametric=use_parametric,
-            use_nonparametric=use_nonparametric
-        )
-        
-        # Determine test column
-        if use_parametric:
-            test_col = "q_ttest" if use_fdr else "p_ttest"
-        else:
-            test_col = "q_mannwhitney" if use_fdr else "p_mannwhitney"
+        results = perform_dea(df_test, ref_samples, treat_samples, use_limma=use_limma)
         
         # Classify regulation
+        test_col = "fdr" if use_fdr else "pvalue"
         results["regulation"] = results.apply(
-            lambda row: "up" if (row[test_col] < p_thr and row["log2fc"] > fc_thr)
-            else ("down" if (row[test_col] < p_thr and row["log2fc"] < -fc_thr)
-            else "not_significant"),
-            axis=1
-        )
-        results["regulation"] = results.apply(
-            lambda row: "not_tested" if pd.isna(row["log2fc"]) else row["regulation"],
+            lambda row: classify_regulation(row["log2fc"], row[test_col], 0.0, p_thr),
             axis=1
         )
         results["neg_log10_p"] = -np.log10(results[test_col].replace(0, 1e-300))
         results["species"] = results.index.map(df[species_col])
-        results["mean_intensity"] = (results["mean_g1"] + results["mean_g2"]) / 2
         
         st.session_state.dea_results = results
         st.session_state.dea_ref = ref_cond
         st.session_state.dea_treat = treat_cond
         st.session_state.dea_p_thr = p_thr
-        st.session_state.dea_fc_thr = fc_thr
-        st.session_state.dea_test_col = test_col
         st.session_state.dea_use_fdr = use_fdr
         st.session_state.dea_use_limma = use_limma
-        st.session_state.dea_use_parametric = use_parametric
     
     st.success("✅ Analysis complete!")
 
 # ============================================================================
-# RESULTS
+# 5. RESULTS DISPLAY
 # ============================================================================
 
 if "dea_results" in st.session_state:
@@ -613,50 +605,27 @@ if "dea_results" in st.session_state:
     ref_cond = st.session_state.dea_ref
     treat_cond = st.session_state.dea_treat
     p_thr = st.session_state.dea_p_thr
-    fc_thr = st.session_state.dea_fc_thr
-    test_col = st.session_state.dea_test_col
-    use_fdr = st.session_state.dea_use_fdr
+    use_fdr = st.session_state.get('dea_use_fdr', True)
     use_limma_flag = st.session_state.get('dea_use_limma', True)
-    use_param = st.session_state.get('dea_use_parametric', True)
     theoretical_fc = st.session_state.get('dea_theoretical_fc', {})
     
-    test_label = "Welch's t-test" if use_param else "Mann-Whitney U"
-    pval_threshold_label = f"{p_thr:.3f}"
-    
     st.markdown("---")
-    st.subheader("2️⃣ Results Summary")
+    st.subheader("5️⃣ Results Overview")
     
     n_total = len(res)
-    n_tested = int((res["regulation"] != "not_tested").sum())
-    n_sig_up = int((res["regulation"] == "up").sum())
-    n_sig_down = int((res["regulation"] == "down").sum())
-    n_sig = n_sig_up + n_sig_down
+    n_quant = int((res["regulation"] != "not_tested").sum())
+    quant_rate = n_quant / n_total * 100 if n_total > 0 else 0
     
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
-    with col1:
-        st.metric("Total Proteins", f"{n_total:,}")
-    with col2:
-        st.metric("Tested", f"{n_tested:,}")
-    with col3:
-        st.metric("Significant", f"{n_sig:,}")
-    with col4:
-        st.metric("↑ Up", f"{n_sig_up:,}")
-    with col5:
-        st.metric("↓ Down", f"{n_sig_down:,}")
-    with col6:
-        st.metric("Method", f"{'Limma' if use_limma_flag else 'Welch'}")
+    test_col = "fdr" if use_fdr else "pvalue"
+    test_label = "FDR" if use_fdr else "p-value"
     
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Test", test_label)
-    with col2:
-        st.metric("Correction", "FDR" if use_fdr else "Raw p")
-    with col3:
-        st.metric("p-threshold", pval_threshold_label)
-    with col4:
-        st.metric("|logFC|", f">{fc_thr:.1f}")
+    # Validation metrics
+    sens_pct = 0.0
+    spec_pct = 0.0
+    true_positives = 0
+    de_fdr = 0.0
+    total_fp = 0
     
-    # Validation metrics if spike-in provided
     if theoretical_fc:
         species_series = df[species_col]
         res_all = res[res["regulation"] != "not_tested"].copy()
@@ -665,7 +634,6 @@ if "dea_results" in st.session_state:
         res_all = res_all.dropna(subset=["true_log2fc"])
         
         if not res_all.empty:
-            stable_thr = 0.5
             res_all["true_regulated"] = np.abs(res_all["true_log2fc"]) >= stable_thr
             res_all["observed_regulated"] = res_all["regulation"].isin(["up", "down"])
             
@@ -674,439 +642,387 @@ if "dea_results" in st.session_state:
             tn = int((~res_all["true_regulated"] & ~res_all["observed_regulated"]).sum())
             fp = int((~res_all["true_regulated"] & res_all["observed_regulated"]).sum())
             
-            sens = tp / (tp + fn) * 100 if (tp + fn) > 0 else 0.0
-            spec = tn / (tn + fp) * 100 if (tn + fp) > 0 else 0.0
-            prec = tp / (tp + fp) * 100 if (tp + fp) > 0 else 0.0
-            
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Sensitivity", f"{sens:.1f}%")
-            with col2:
-                st.metric("Specificity", f"{spec:.1f}%")
-            with col3:
-                st.metric("Precision", f"{prec:.1f}%")
-            with col4:
-                st.metric("True Positives", tp)
+            sens_pct = tp / (tp + fn) * 100 if (tp + fn) > 0 else 0.0
+            spec_pct = tn / (tn + fp) * 100 if (tn + fp) > 0 else 0.0
+            true_positives = tp
+            de_fdr = fp / (tp + fp) * 100 if (tp + fp) > 0 else 0.0
+    
+    # Summary metrics
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        st.metric("Quantified", f"{n_quant:,}")
+    with col2:
+        st.metric("Quant. Rate", f"{quant_rate:.0f}%")
+    with col3:
+        st.metric("Method", "Limma+EB" if use_limma_flag else "Welch")
+    with col4:
+        st.metric("Threshold", f"p={p_thr}")
+    with col5:
+        st.metric("Test", test_label)
+    
+    if theoretical_fc:
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Sensitivity", f"{sens_pct:.1f}%")
+        with col2:
+            st.metric("Specificity", f"{spec_pct:.1f}%")
+        with col3:
+            st.metric("True Positives", true_positives)
+        with col4:
+            st.metric("deFDR", f"{de_fdr:.2f}%")
     
     st.markdown("---")
     
     # ============================================================================
-    # VISUALIZATIONS
+    # PLOTS
     # ============================================================================
     
-    st.subheader("3️⃣ Visualizations")
+    st.subheader("📊 Visualizations")
     
-    # === VOLCANO PLOT ===
-    if "Volcano Plot" in viz_options:
-        st.markdown("### 🌋 Volcano Plot")
+    # === PLOT 1: FACETED MA PLOT ===
+    st.markdown("### 1️⃣ MA Plot (Faceted by Species)")
+    
+    ma = res[res["regulation"] != "not_tested"].copy()
+    ma["A"] = (ma["mean_g1"] + ma["mean_g2"]) / 2
+    ma = ma.dropna(subset=['A', 'log2fc', 'species'])
+    
+    species_list = sorted(ma["species"].unique())
+    fig_facet = make_subplots(
+        rows=1, cols=len(species_list),
+        subplot_titles=species_list,
+        shared_yaxes=True,
+        horizontal_spacing=0.05
+    )
+    
+    for i, sp in enumerate(species_list, 1):
+        sp_data = ma[ma["species"] == sp]
+        color = SPECIES_COLORS.get(sp, "#95a5a6")
         
-        volc = res[res["regulation"] != "not_tested"].dropna(subset=['neg_log10_p', 'log2fc'])
+        sp_sig = sp_data[sp_data["regulation"] != "not_significant"]
+        sp_nonsig = sp_data[sp_data["regulation"] == "not_significant"]
         
-        if len(volc) > 0:
-            fig_v = px.scatter(
-                volc,
-                x="log2fc",
-                y="neg_log10_p",
-                color="regulation",
-                color_discrete_map={"up": "#e74c3c", "down": "#3498db", "not_significant": "#bdc3c7"},
-                hover_data=["species", "mean_intensity", "cohens_d"],
-                labels={"log2fc": f"log2({ref_cond}/{treat_cond})", "neg_log10_p": "-log10(p)"},
-                height=600,
+        # Non-sig (grayed)
+        fig_facet.add_trace(
+            go.Scatter(
+                x=sp_nonsig["A"],
+                y=sp_nonsig["log2fc"],
+                mode='markers',
+                marker=dict(size=3, color="lightgray", opacity=0.3),
+                showlegend=False,
+                hovertemplate=f"{sp} (ns)<br>A=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
+            ),
+            row=1, col=i
+        )
+        
+        # Up-regulated
+        sp_up = sp_sig[sp_sig["regulation"] == "up"]
+        fig_facet.add_trace(
+            go.Scatter(
+                x=sp_up["A"],
+                y=sp_up["log2fc"],
+                mode='markers',
+                marker=dict(size=4, color=color, opacity=0.8, symbol='circle'),
+                showlegend=(i==1),
+                name=f"{sp} (↑)",
+                hovertemplate=f"{sp} ↑<br>A=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
+            ),
+            row=1, col=i
+        )
+        
+        # Down-regulated
+        sp_down = sp_sig[sp_sig["regulation"] == "down"]
+        fig_facet.add_trace(
+            go.Scatter(
+                x=sp_down["A"],
+                y=sp_down["log2fc"],
+                mode='markers',
+                marker=dict(size=4, color=color, opacity=0.8, symbol='diamond'),
+                showlegend=(i==1),
+                name=f"{sp} (↓)",
+                hovertemplate=f"{sp} ↓<br>A=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
+            ),
+            row=1, col=i
+        )
+        
+        # Expected FC line + tolerance band
+        if theoretical_fc and sp in theoretical_fc:
+            expected_fc = theoretical_fc[sp]
+            
+            fig_facet.add_hline(
+                y=expected_fc,
+                line_dash="dash",
+                line_color=color,
+                line_width=2,
+                row=1, col=i
             )
             
-            fig_v.add_hline(y=-np.log10(p_thr), line_dash="dash", line_color="gray", line_width=2)
-            fig_v.add_vline(x=fc_thr, line_dash="dash", line_color="gray", line_width=1, opacity=0.5)
-            fig_v.add_vline(x=-fc_thr, line_dash="dash", line_color="gray", line_width=1, opacity=0.5)
-            
-            st.plotly_chart(fig_v, use_container_width=True)
-        else:
-            st.warning("⚠️ No data for volcano plot after filtering")
+            fig_facet.add_hline(
+                y=expected_fc + fc_tolerance,
+                line_dash="dot",
+                line_color=color,
+                line_width=1,
+                opacity=0.3,
+                row=1, col=i
+            )
+            fig_facet.add_hline(
+                y=expected_fc - fc_tolerance,
+                line_dash="dot",
+                line_color=color,
+                line_width=1,
+                opacity=0.3,
+                row=1, col=i
+            )
+        
+        # Zero line
+        fig_facet.add_hline(y=0, line_color="red", line_width=1, opacity=0.5, row=1, col=i)
     
-    # === MA PLOT (FACETED) ===
-    if "MA Plot (Faceted)" in viz_options:
-        st.markdown("### 📊 MA Plot (Faceted by Species)")
-        
-        ma = res[res["regulation"] != "not_tested"].copy()
-        ma = ma.dropna(subset=['log2fc', 'species'])
-        
-        species_list = sorted(ma["species"].unique())
-        
-        # BUGFIX: Check if species_list is empty
-        if len(species_list) > 0:
-            fig_facet = make_subplots(
-                rows=1, cols=len(species_list),
-                subplot_titles=species_list,
-                shared_yaxes=True,
-                horizontal_spacing=0.05
+    fig_facet.update_xaxes(title_text="log2(Mean Intensity)", row=1, col=1)
+    fig_facet.update_yaxes(title_text=f"log2FC ({ref_cond}/{treat_cond})", row=1, col=1)
+    fig_facet.update_layout(height=500, showlegend=True)
+    st.plotly_chart(fig_facet, use_container_width=True)
+    
+    # === PLOT 2: REGULAR MA PLOT ===
+    st.markdown("### 2️⃣ MA Plot (Combined)")
+    
+    ma_plot_data = ma.copy()
+    ma_plot_data["Status"] = ma_plot_data.apply(
+        lambda x: "Not Sig." if x["regulation"] == "not_significant" else ("↑ Up" if x["regulation"] == "up" else "↓ Down"),
+        axis=1
+    )
+    
+    fig_ma = px.scatter(
+        ma_plot_data,
+        x="A",
+        y="log2fc",
+        color="species",
+        symbol="Status",
+        color_discrete_map=SPECIES_COLORS,
+        category_orders={"Status": ["Not Sig.", "↓ Down", "↑ Up"]},
+        opacity=0.7,
+        labels={"A": "log2(Mean Intensity)", "log2fc": f"log2FC ({ref_cond}/{treat_cond})"},
+        height=600,
+    )
+    
+    for trace in fig_ma.data:
+        if trace.name == "Not Sig.":
+            trace.marker.opacity = 0.2
+            trace.marker.color = "lightgray"
+    
+    fig_ma.add_hline(y=0.0, line_color="red", line_width=1, opacity=0.5)
+    
+    if theoretical_fc:
+        for species, expected_fc in theoretical_fc.items():
+            color = SPECIES_COLORS.get(species, "#95a5a6")
+            
+            fig_ma.add_hline(
+                y=expected_fc,
+                line_dash="dash",
+                line_width=2,
+                line_color=color,
+                opacity=0.7,
+                annotation_text=f"{species}",
+                annotation_position="right",
             )
             
-            for i, sp in enumerate(species_list, 1):
-                sp_data = ma[ma["species"] == sp]
-                color = SPECIES_COLORS.get(sp, "#95a5a6")
-                
-                sp_sig = sp_data[sp_data["regulation"] != "not_significant"]
-                sp_nonsig = sp_data[sp_data["regulation"] == "not_significant"]
-                
-                # Non-sig
-                if len(sp_nonsig) > 0:
-                    fig_facet.add_trace(
-                        go.Scatter(
-                            x=sp_nonsig["mean_intensity"],
-                            y=sp_nonsig["log2fc"],
-                            mode='markers',
-                            marker=dict(size=3, color="lightgray", opacity=0.2),
-                            name="ns",
-                            showlegend=False,
-                            hovertemplate=f"{sp}<br>Intensity=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
-                        ),
-                        row=1, col=i
-                    )
-                
-                # Up
-                sp_up = sp_sig[sp_sig["regulation"] == "up"]
-                if len(sp_up) > 0:
-                    fig_facet.add_trace(
-                        go.Scatter(
-                            x=sp_up["mean_intensity"],
-                            y=sp_up["log2fc"],
-                            mode='markers',
-                            marker=dict(size=4, color=color, opacity=0.8, symbol='circle'),
-                            name="↑",
-                            showlegend=(i==1),
-                            hovertemplate=f"{sp} ↑<br>Intensity=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
-                        ),
-                        row=1, col=i
-                    )
-                
-                # Down
-                sp_down = sp_sig[sp_sig["regulation"] == "down"]
-                if len(sp_down) > 0:
-                    fig_facet.add_trace(
-                        go.Scatter(
-                            x=sp_down["mean_intensity"],
-                            y=sp_down["log2fc"],
-                            mode='markers',
-                            marker=dict(size=4, color=color, opacity=0.8, symbol='diamond'),
-                            name="↓",
-                            showlegend=(i==1),
-                            hovertemplate=f"{sp} ↓<br>Intensity=%{{x:.2f}}<br>log2FC=%{{y:.3f}}<extra></extra>"
-                        ),
-                        row=1, col=i
-                    )
-                
-                # Expected FC lines if spike-in
-                if theoretical_fc and sp in theoretical_fc:
-                    expected_fc = theoretical_fc[sp]
-                    fc_tolerance = 0.58
-                    
-                    fig_facet.add_hline(
-                        y=expected_fc,
-                        line_dash="dash",
-                        line_color=color,
-                        line_width=2,
-                        row=1, col=i
-                    )
-                    
-                    fig_facet.add_hline(
-                        y=expected_fc + fc_tolerance,
-                        line_dash="dot",
-                        line_color=color,
-                        line_width=1,
-                        opacity=0.3,
-                        row=1, col=i
-                    )
-                    fig_facet.add_hline(
-                        y=expected_fc - fc_tolerance,
-                        line_dash="dot",
-                        line_color=color,
-                        line_width=1,
-                        opacity=0.3,
-                        row=1, col=i
-                    )
-                
-                fig_facet.add_hline(y=0, line_color="red", line_width=1, opacity=0.5, row=1, col=i)
-            
-            fig_facet.update_xaxes(title_text="log10(Intensity)", row=1, col=1)
-            fig_facet.update_yaxes(title_text=f"log2({ref_cond}/{treat_cond})", row=1, col=1)
-            fig_facet.update_layout(height=500, showlegend=True)
-            
-            st.plotly_chart(fig_facet, use_container_width=True)
-        else:
-            st.warning("⚠️ No species data for faceted MA plot")
-    
-    # === MA PLOT (COMBINED) ===
-    if "MA Plot (Combined)" in viz_options:
-        st.markdown("### 📈 MA Plot (Combined)")
-        
-        ma_plot = res[res["regulation"] != "not_tested"].dropna(subset=['log2fc'])
-        
-        if len(ma_plot) > 0:
-            fig_ma = px.scatter(
-                ma_plot,
-                x="mean_intensity",
-                y="log2fc",
-                color="regulation",
-                color_discrete_map={"up": "#e74c3c", "down": "#3498db", "not_significant": "#bdc3c7"},
-                hover_data=["species", "cohens_d"],
-                labels={"mean_intensity": "Mean Intensity", "log2fc": f"log2({ref_cond}/{treat_cond})"},
-                height=600,
+            fig_ma.add_hline(
+                y=expected_fc + fc_tolerance,
+                line_dash="dot",
+                line_width=1,
+                line_color=color,
+                opacity=0.2,
             )
-            
-            fig_ma.add_hline(y=0.0, line_color="red", line_width=1, opacity=0.5)
-            fig_ma.add_hline(y=fc_thr, line_dash="dash", line_color="green", opacity=0.3)
-            fig_ma.add_hline(y=-fc_thr, line_dash="dash", line_color="green", opacity=0.3)
-            
-            st.plotly_chart(fig_ma, use_container_width=True)
-        else:
-            st.warning("⚠️ No data for MA plot")
-    
-    # === DENSITY PLOT ===
-    if "Density Plot" in viz_options:
-        st.markdown("### 📊 Density Plot (log2FC Distribution)")
-        
-        density_data = res[res["regulation"] != "not_tested"].dropna(subset=["log2fc", "species"])
-        
-        if len(density_data) > 0:
-            fig_density = go.Figure()
-            
-            for sp in sorted(density_data["species"].unique()):
-                sp_data = density_data[density_data["species"] == sp]["log2fc"]
-                if len(sp_data) > 1:
-                    color = SPECIES_COLORS.get(sp, "#95a5a6")
-                    
-                    kde = gaussian_kde(sp_data)
-                    x_range = np.linspace(sp_data.min(), sp_data.max(), 200)
-                    density_vals = kde(x_range)
-                    
-                    fig_density.add_trace(go.Scatter(
-                        x=x_range,
-                        y=density_vals,
-                        mode='lines',
-                        name=sp,
-                        fill='tozeroy',
-                        opacity=0.6,
-                        line=dict(width=2, color=color),
-                        fillcolor=color
-                    ))
-                    
-                    if theoretical_fc and sp in theoretical_fc:
-                        expected_fc = theoretical_fc[sp]
-                        fig_density.add_vline(
-                            x=expected_fc,
-                            line_dash="dash",
-                            line_width=2,
-                            line_color=color,
-                            annotation_text=sp,
-                            annotation_position="top"
-                        )
-            
-            fig_density.update_layout(
-                xaxis_title=f"log2({ref_cond}/{treat_cond})",
-                yaxis_title="Density",
-                height=500
+            fig_ma.add_hline(
+                y=expected_fc - fc_tolerance,
+                line_dash="dot",
+                line_width=1,
+                line_color=color,
+                opacity=0.2,
             )
-            
-            st.plotly_chart(fig_density, use_container_width=True)
-        else:
-            st.warning("⚠️ No data for density plot")
     
-    # === BOX PLOTS ===
-    if "Box Plots (Top Proteins)" in viz_options:
-        st.markdown("### 📦 Box Plots - Top Differentially Abundant Proteins")
-        
-        res_sorted = res.sort_values(test_col)
-        n_top = min(9, len(res_sorted))
-        
-        if n_top > 0:
-            top_proteins = res_sorted.head(n_top).index.values
-            
-            n_cols = min(3, n_top)
-            n_rows = (n_top + n_cols - 1) // n_cols
-            
-            fig_box = make_subplots(
-                rows=n_rows, cols=n_cols,
-                subplot_titles=top_proteins,
-                specs=[[{'type': 'box'} for _ in range(n_cols)] for _ in range(n_rows)]
-            )
-            
-            for idx, protein in enumerate(top_proteins):
-                row = idx // n_cols + 1
-                col = idx % n_cols + 1
-                
-                data_ref = df.loc[protein, ref_samples].values
-                data_treat = df.loc[protein, treat_samples].values
-                
-                fig_box.add_trace(
-                    go.Box(y=data_ref, name=ref_cond, marker_color='#3498db', showlegend=(idx==0)),
-                    row=row, col=col
-                )
-                fig_box.add_trace(
-                    go.Box(y=data_treat, name=treat_cond, marker_color='#e74c3c', showlegend=(idx==0)),
-                    row=row, col=col
-                )
-            
-            fig_box.update_yaxes(title_text="Intensity")
-            fig_box.update_layout(height=300*n_rows, showlegend=True)
-            
-            st.plotly_chart(fig_box, use_container_width=True)
-        else:
-            st.warning("⚠️ No top proteins for box plots")
+    st.plotly_chart(fig_ma, use_container_width=True)
     
-    # === HEATMAP ===
-    if "Heatmap" in viz_options:
-        st.markdown("### 🔥 Heatmap - Top Differentially Abundant Proteins")
+    # === PLOT 3: DENSITY PLOT ===
+    st.markdown("### 3️⃣ Density Plot (Log2FC Distribution)")
+    
+    density_data = res[res["regulation"] != "not_tested"].dropna(subset=["log2fc", "species"])
+    
+    fig_density = go.Figure()
+    
+    for sp in sorted(density_data["species"].unique()):
+        sp_data = density_data[density_data["species"] == sp]["log2fc"].values
+        color = SPECIES_COLORS.get(sp, "#95a5a6")
         
-        res_sorted = res.sort_values(test_col)
-        n_top = min(20, len(res_sorted))
-        
-        if n_top > 0:
-            top_proteins = res_sorted.head(n_top).index.values
+        if len(sp_data) > 2:
+            kde = gaussian_kde(sp_data)
+            x_range = np.linspace(sp_data.min(), sp_data.max(), 200)
+            density = kde(x_range)
             
-            heatmap_data = df.loc[top_proteins, ref_samples + treat_samples].copy()
-            
-            # Z-score normalize
-            heatmap_z = heatmap_data.T.apply(lambda x: (x - x.mean()) / (x.std() + 1e-6) if x.std() > 0 else x).T
-            
-            fig_heat = go.Figure(data=go.Heatmap(
-                z=heatmap_z.values,
-                x=heatmap_z.columns,
-                y=heatmap_z.index,
-                colorscale='RdBu_r',
-                zmid=0,
-                colorbar=dict(title="Z-score")
+            fig_density.add_trace(go.Scatter(
+                x=x_range,
+                y=density,
+                mode='lines',
+                name=sp,
+                fill='tozeroy',
+                opacity=0.6,
+                line=dict(width=2, color=color),
+                fillcolor=color
             ))
             
-            fig_heat.update_layout(
-                title=f'Top {n_top} Proteins (Z-score normalized)',
-                xaxis_title='Sample',
-                yaxis_title='Protein',
-                height=600
-            )
-            
-            st.plotly_chart(fig_heat, use_container_width=True)
-        else:
-            st.warning("⚠️ No proteins for heatmap")
+            if theoretical_fc and sp in theoretical_fc:
+                expected_fc = theoretical_fc[sp]
+                fig_density.add_vline(
+                    x=expected_fc,
+                    line_dash="dash",
+                    line_width=2,
+                    line_color=color,
+                    annotation_text=f"{sp}: {expected_fc:.2f}"
+                )
     
-    # === COHEN'S D DISTRIBUTION ===
-    if "Cohen's d Distribution" in viz_options:
-        st.markdown("### 📊 Effect Size Distribution (Cohen's d)")
-        
-        cohens_data = res[res["cohens_d"].notna()]
-        
-        if len(cohens_data) > 0:
-            fig_cohens = px.histogram(
-                cohens_data,
-                x='cohens_d',
-                nbinsx=50,
-                title="Cohen's d Distribution",
-                labels={'cohens_d': "Cohen's d"},
-                height=500
-            )
-            fig_cohens.add_vline(x=0.2, line_dash="dash", annotation_text="Small (0.2)", line_color="gray")
-            fig_cohens.add_vline(x=0.5, line_dash="dash", annotation_text="Medium (0.5)", line_color="orange")
-            fig_cohens.add_vline(x=0.8, line_dash="dash", annotation_text="Large (0.8)", line_color="red")
-            
-            st.plotly_chart(fig_cohens, use_container_width=True)
-        else:
-            st.warning("⚠️ No Cohen's d data")
+    fig_density.update_layout(
+        xaxis_title=f"log2FC ({ref_cond}/{treat_cond})",
+        yaxis_title="Density",
+        height=500,
+        showlegend=True
+    )
     
-    # === P-VALUE DISTRIBUTION ===
-    if "P-value Distribution" in viz_options:
-        st.markdown("### 📊 P-value Distribution")
-        
-        pval_data = res[res[test_col].notna()]
-        
-        if len(pval_data) > 0:
-            fig_pval = px.histogram(
-                pval_data,
-                x=test_col,
-                nbinsx=50,
-                title=f"{test_label} P-value Distribution",
-                labels={test_col: "P-value" if not use_fdr else "FDR (q-value)"},
-                height=500
-            )
-            fig_pval.add_vline(x=p_thr, line_dash="dash", annotation_text=f"Threshold={p_thr}", line_color="red")
-            
-            st.plotly_chart(fig_pval, use_container_width=True)
-        else:
-            st.warning("⚠️ No p-value data")
+    st.plotly_chart(fig_density, use_container_width=True)
     
-    # === PARAMETRIC VS NON-PARAMETRIC COMPARISON ===
-    if "Parametric vs Non-parametric" in viz_options and use_parametric and use_nonparametric:
-        st.markdown("### 🔍 Parametric vs Non-parametric Comparison")
-        
-        comp_data = res[res['p_ttest'].notna() & res['p_mannwhitney'].notna()]
-        
-        if len(comp_data) > 0:
-            corr = comp_data[['p_ttest', 'p_mannwhitney']].corr().iloc[0, 1]
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                sig_ttest = ((comp_data['q_ttest'] < p_thr) & (comp_data['log2fc'].abs() > fc_thr)).sum()
-                st.metric("Significant (t-test)", sig_ttest)
-            with col2:
-                sig_mw = ((comp_data['q_mannwhitney'] < p_thr) & (comp_data['log2fc'].abs() > fc_thr)).sum()
-                st.metric("Significant (MW)", sig_mw)
-            with col3:
-                st.metric("P-value Correlation", f"{corr:.3f}")
-            
-            fig_comp = px.scatter(
-                comp_data,
-                x='p_ttest',
-                y='p_mannwhitney',
-                hover_data=['species', 'log2fc'],
-                title="P-value Comparison",
-                labels={'p_ttest': "Welch's p", 'p_mannwhitney': 'Mann-Whitney p'},
-                height=600
-            )
-            fig_comp.update_xaxes(type='log')
-            fig_comp.update_yaxes(type='log')
-            
-            st.plotly_chart(fig_comp, use_container_width=True)
-        else:
-            st.warning("⚠️ Insufficient data for comparison")
+    # === PLOT 4: VOLCANO PLOT ===
+    st.markdown("### 4️⃣ Volcano Plot")
+    
+    volc = res[res["regulation"] != "not_tested"].dropna(subset=['neg_log10_p', 'log2fc'])
+    volc["Status"] = volc.apply(
+        lambda x: "Significant" if x["regulation"] != "not_significant" else "Not Significant",
+        axis=1
+    )
+    
+    fig_v = px.scatter(
+        volc,
+        x="log2fc",
+        y="neg_log10_p",
+        color="species",
+        opacity=0.7,
+        color_discrete_map=SPECIES_COLORS,
+        labels={"log2fc": f"log2FC ({ref_cond}/{treat_cond})", "neg_log10_p": f"-log10({test_label})"},
+        height=600,
+    )
+    
+    for trace in fig_v.data:
+        mask = volc[volc["species"] == trace.name]["Status"] == "Not Significant"
+        if mask.any():
+            trace.marker.opacity = np.where(mask, 0.15, 0.7)
+    
+    fig_v.add_hline(y=-np.log10(p_thr), line_dash="dash", line_color="gray", line_width=2, annotation_text=f"p={p_thr}")
+    
+    if theoretical_fc:
+        fig_v.add_vline(x=fc_tolerance, line_dash="dot", line_color="gray", line_width=1, opacity=0.5, annotation_text=f"±{fc_tolerance}")
+        fig_v.add_vline(x=-fc_tolerance, line_dash="dot", line_color="gray", line_width=1, opacity=0.5)
+    
+    st.plotly_chart(fig_v, use_container_width=True)
+    
+    # === PLOT 5: EFFECT SIZE DISTRIBUTION ===
+    st.markdown("### 5️⃣ Effect Size (Log2FC) Distribution")
+    
+    fig_effect = px.histogram(
+        res[res["regulation"] != "not_tested"].dropna(subset=['log2fc']),
+        x='log2fc',
+        color='species',
+        color_discrete_map=SPECIES_COLORS,
+        nbinsx=50,
+        title='Log2FC Distribution',
+        labels={'log2fc': f'log2FC ({ref_cond}/{treat_cond})'},
+        height=500,
+    )
+    
+    fig_effect.add_vline(x=0, line_color="red", line_width=2)
+    
+    st.plotly_chart(fig_effect, use_container_width=True)
+    
+    # === PLOT 6: P-VALUE DISTRIBUTION ===
+    st.markdown("### 6️⃣ P-Value Distribution")
+    
+    fig_pval = px.histogram(
+        res[res["regulation"] != "not_tested"].dropna(subset=[test_col]),
+        x=test_col,
+        nbinsx=50,
+        title=f'{test_label} Distribution',
+        labels={test_col: test_label},
+        height=500,
+    )
+    
+    fig_pval.add_vline(x=p_thr, line_dash="dash", line_color="red", line_width=2, annotation_text=f"{test_label}={p_thr}")
+    
+    st.plotly_chart(fig_pval, use_container_width=True)
     
     # ============================================================================
-    # SPIKE-IN VALIDATION
+    # VALIDATION METRICS (IF SPIKE-IN PROVIDED)
     # ============================================================================
     
     if theoretical_fc:
         st.markdown("---")
-        st.subheader("4️⃣ Spike-in Validation")
+        st.subheader("6️⃣ Spike-in Validation Metrics")
         
-        st.info(f"✓ Using: {', '.join(f'{k}={v:.2f}' for k, v in theoretical_fc.items())}")
+        st.info(f"**Theoretical FC**: {', '.join(f'{k}={v:.2f}' for k, v in theoretical_fc.items())}")
+        st.caption(f"**Unified FP definition**: p<{p_thr} AND |log2fc - expected| > ±{fc_tolerance}")
         
         species_series = df[species_col]
-        stable_thr = 0.5
-        fc_tolerance = 0.58
-        
         var_ov, var_sp, stab_ov, stab_sp, asym_dict, error_dict, fp_var_sp = compute_species_metrics(
-            res, theoretical_fc, species_series, stable_thr, fc_tolerance, p_thr, test_col
+            res, theoretical_fc, species_series, stable_thr, fc_tolerance, p_thr
         )
         
-        # Validation metrics table
+        # Build validation table
         validation_rows = []
+        initial_total = len(df)
         
-        for sp in theoretical_fc.keys():
+        # Asymmetry
+        for sp in ["HUMAN", "YEAST", "ECOLI"]:
             asym_val = asym_dict.get(sp, np.nan)
-            if not np.isnan(asym_val):
-                validation_rows.append({
-                    "Metric": "Asymmetry",
-                    "Species": sp,
-                    "Value": f"{asym_val:.2f}",
-                    "Category": "Quality"
-                })
+            validation_rows.append({
+                "Metric": "Asymmetry",
+                "Species": sp,
+                "Value": f"{asym_val:.2f}" if not np.isnan(asym_val) else "N/A",
+                "Category": "Quality"
+            })
         
-        for sp in theoretical_fc.keys():
+        # FP metrics
+        for sp in ["HUMAN", "YEAST", "ECOLI"]:
             fp_count = error_dict.get(f"FP_{sp}", 0)
-            if fp_count > 0:
+            total = 0
+            
+            if sp in stab_sp["Species"].values:
+                total = int(stab_sp[stab_sp["Species"] == sp]["N"].values[0])
+            elif sp in fp_var_sp["Species"].values:
+                total = int(fp_var_sp[fp_var_sp["Species"] == sp]["Total_Detected"].values[0])
+            
+            if total > 0:
+                fpr = fp_count / total * 100
                 validation_rows.append({
                     "Metric": "False Positives",
                     "Species": sp,
-                    "Value": f"{fp_count}",
+                    "Value": f"{fp_count:,} / {total:,} ({fpr:.1f}%)",
                     "Category": "Error"
                 })
         
+        # Detection (variable species)
+        for sp in ["YEAST", "ECOLI"]:
+            if sp in var_sp["Species"].values:
+                det_pct = float(var_sp[var_sp["Species"] == sp]["Detection_%"].values[0].rstrip("%"))
+                validation_rows.append({
+                    "Metric": "Detection",
+                    "Species": sp,
+                    "Value": f"{det_pct:.1f}%",
+                    "Category": "Sensitivity"
+                })
+                
+                mae = float(var_sp[var_sp["Species"] == sp]["MAE"].values[0])
+                validation_rows.append({
+                    "Metric": "MAE (log2)",
+                    "Species": sp,
+                    "Value": f"{mae:.3f}",
+                    "Category": "Accuracy"
+                })
+        
+        # Overall metrics
         if var_ov:
             validation_rows.append({
                 "Metric": "Sensitivity",
@@ -1114,88 +1030,80 @@ if "dea_results" in st.session_state:
                 "Value": f"{var_ov['Sensitivity']:.1%}",
                 "Category": "Sensitivity"
             })
+            
             validation_rows.append({
                 "Metric": "Specificity",
                 "Species": "Overall",
                 "Value": f"{var_ov['Specificity']:.1%}",
                 "Category": "Specificity"
             })
+            
+            validation_rows.append({
+                "Metric": "Precision",
+                "Species": "Overall",
+                "Value": f"{var_ov['Precision']:.1%}",
+                "Category": "Precision"
+            })
         
-        if validation_rows:
-            val_df = pd.DataFrame(validation_rows)
-            st.dataframe(val_df, use_container_width=True, hide_index=True)
-    
-    # ============================================================================
-    # RESULTS TABLE
-    # ============================================================================
-    
-    st.markdown("---")
-    st.subheader("5️⃣ Detailed Results")
-    
-    with st.expander("📋 View All Results", expanded=False):
-        display_cols = [
-            "log2fc", "cohens_d", "mean_g1", "mean_g2",
-            "p_ttest", "q_ttest", "p_mannwhitney", "q_mannwhitney",
-            "species", "regulation"
-        ]
-        display_cols = [c for c in display_cols if c in res.columns]
+        if stab_ov:
+            validation_rows.append({
+                "Metric": "FPR (Stable)",
+                "Species": "Overall",
+                "Value": f"{stab_ov['FPR']:.1%}",
+                "Category": "Specificity"
+            })
         
-        display_df = res[display_cols].copy()
-        display_df = display_df.round(4)
-        display_df = display_df.sort_values(test_col)
+        validation_df = pd.DataFrame(validation_rows)
         
-        st.dataframe(display_df, use_container_width=True, height=600)
+        st.markdown("### Validation Metrics Table")
+        st.dataframe(validation_df, use_container_width=True, hide_index=True)
         
-        csv_data = display_df.to_csv(index=True).encode('utf-8')
         st.download_button(
-            "📥 Download Results (CSV)",
-            data=csv_data,
-            file_name=f"dea_{ref_cond}_vs_{treat_cond}.csv",
-            mime="text/csv"
+            "📥 Download Validation Metrics",
+            data=validation_df.to_csv(index=False).encode("utf-8"),
+            file_name=f"validation_{ref_cond}_vs_{treat_cond}.csv",
+            mime="text/csv",
         )
     
     # ============================================================================
-    # INTERPRETATION GUIDE
+    # INDIVIDUAL PROTEIN RESULTS
     # ============================================================================
     
     st.markdown("---")
-    st.subheader("📖 Interpretation Guide")
     
-    with st.expander("**Cohen's d Effect Size**"):
-        st.markdown("""
-        - |d| < 0.2: **Small** effect
-        - 0.2 ≤ |d| < 0.5: **Small-Medium**
-        - 0.5 ≤ |d| < 0.8: **Medium-Large**
-        - |d| ≥ 0.8: **Large** effect
-        """)
-    
-    with st.expander("**Log Fold-Change**"):
-        st.markdown(f"""
-        - logFC = 1 → 2-fold change
-        - logFC = 2 → 4-fold change
-        - logFC = -1 → 0.5-fold (50% decrease)
+    with st.expander("🔬 View Individual Protein Results", expanded=False):
+        st.markdown("### Detailed Results Table")
         
-        **Current threshold**: |logFC| > {fc_thr}
-        """)
-    
-    with st.expander("**Statistical Thresholds**"):
-        st.markdown(f"""
-        - **P-value**: < {p_thr}
-        - **Correction**: {'FDR (Benjamini-Hochberg)' if use_fdr else 'Raw p-value'}
-        - **Test**: {test_label} {'+ Limma EB' if use_limma_flag else ''}
-        """)
-    
-    with st.expander("**Unified False Positive Definition** (Spike-in)"):
-        st.markdown("""
-        For **ALL species**:
-        - p < 0.01 **AND** |log2fc - expected| > ±0.58
+        results_table = res.copy().reset_index()
+        results_table = results_table.rename(columns={"protein_id": "Protein"})
         
-        This identifies proteins that are:
-        - Statistically significant **BUT**
-        - Have magnitude errors > ±0.58 (∼1.5 fold away from true value)
-        """)
+        results_table = results_table.round({
+            "log2fc": 3,
+            "pvalue": 6,
+            "fdr": 6,
+            "mean_g1": 2,
+            "mean_g2": 2,
+            "neg_log10_p": 2
+        })
+        
+        display_cols = [
+            "Protein", "species", "log2fc", "pvalue", "fdr",
+            "mean_g1", "mean_g2", "regulation", "neg_log10_p", "n_g1", "n_g2"
+        ]
+        
+        results_table = results_table[[c for c in display_cols if c in results_table.columns]]
+        
+        st.dataframe(results_table, use_container_width=True, height=600)
+        
+        st.download_button(
+            "📥 Download Individual Results (CSV)",
+            data=results_table.to_csv(index=False).encode("utf-8"),
+            file_name=f"dea_proteins_{ref_cond}_vs_{treat_cond}.csv",
+            mime="text/csv",
+        )
     
-    st.success("✅ Analysis complete! Export results for downstream analysis.")
+    st.markdown("---")
+    st.success("✅ Differential Abundance Analysis Complete!")
 
 else:
-    st.info("👆 Configure comparison and run analysis above")
+    st.info("👆 Configure comparison and run analysis")
