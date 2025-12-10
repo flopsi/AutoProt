@@ -375,7 +375,7 @@ def render():
             rename_df,
             key="rename_editor",
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
             column_config={
                 "Original Name": st.column_config.TextColumn("Original Name", disabled=True),
                 "New Name": st.column_config.TextColumn("New Name", help="Click to edit name")
@@ -392,7 +392,7 @@ def render():
     
     with tab3:
         st.subheader("Data Preview")
-        st.dataframe(df_raw.head(10), use_container_width=True, height=400)
+        st.dataframe(df_raw.head(10), width="stretch", height=400)
     
     # ========================================================================
     # STEP 4: ID COLUMN SELECTION
@@ -434,7 +434,7 @@ def render():
         )
     
     with col2:
-        if st.button("Update Tags", use_container_width=True):
+        if st.button("Update Tags", width="stretch"):
             new_tags = [tag.strip().upper() for tag in species_tags_input.split(',') if tag.strip()]
             st.session_state.species_tags = new_tags
             st.success(f"✅ Updated to {len(new_tags)} species tags")
@@ -490,7 +490,7 @@ def render():
             list(sample_to_condition.items()),
             columns=["Sample", "Condition"]
         )
-        st.dataframe(cond_df, use_container_width=True, hide_index=True)
+        st.dataframe(cond_df, width="stretch", hide_index=True)
     
     with col2:
         condition_counts = cond_df['Condition'].value_counts()
@@ -544,7 +544,7 @@ def render():
         value=False
     )
     
-    if confirm and st.button("Process & Save Data", type="primary", use_container_width=True):
+    if confirm and st.button("Process & Save Data", type="primary", width="stretch"):
         with st.spinner("Processing data..."):
             df_renamed = df_with_counts.rename(
                 columns=st.session_state.column_rename_mapping
