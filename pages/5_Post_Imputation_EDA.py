@@ -2,6 +2,7 @@
 pages/5_Post_Imputation_EDA.py - COMPREHENSIVE EDA AFTER IMPUTATION
 Statistical visualizations and quality assessment for proteomics data
 Production-ready with all optimizations and corrections
+INCLUDES: 3 additional transformations (Robust Scaling, Box-Cox, Quantile Normalization)
 """
 
 import streamlit as st
@@ -17,11 +18,14 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, RobustScaler
+from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.cluster import KMeans
 from scipy.cluster.hierarchy import linkage, dendrogram
 from scipy.spatial.distance import pdist, squareform
+from scipy.stats import gaussian_kde, boxcox, shapiro
 import scipy.stats as stats
-from scipy.stats import gaussian_kde
 
 sys.path.append(str(Path(__file__).parent.parent))
 
@@ -74,22 +78,11 @@ st.info(f"📊 **Data**: {len(df):,} proteins × {len(numeric_cols)} samples | *
 def permanova_test(distance_matrix: np.ndarray, grouping: list, permutations: int = 999) -> Dict:
     """
     Manual PERMANOVA implementation (Permutational Multivariate Analysis of Variance)
-    
-    Tests whether groups have significantly different centroids in multivariate space.
-    
-    Args:
-        distance_matrix: Square distance matrix (n x n)
-        grouping: Group labels for each sample (length n)
-        permutations: Number of permutations for significance testing
-    
-    Returns:
-        Dictionary with F-statistic, p-value, and permutation count
     """
     distance_matrix = np.array(distance_matrix)
     grouping = np.array(grouping)
     n = len(grouping)
     
-    # Validate inputs
     if n != distance_matrix.shape[0] or n != distance_matrix.shape[1]:
         raise ValueError(f"Distance matrix shape {distance_matrix.shape} does not match grouping length {n}")
     
@@ -102,9 +95,7 @@ def permanova_test(distance_matrix: np.ndarray, grouping: list, permutations: in
     if n_groups < 2:
         raise ValueError("Need at least 2 groups for PERMANOVA")
     
-    # Calculate sum of squared distances
     def calc_ss(dist_mat: np.ndarray, group_labels: np.ndarray) -> Tuple[float, float, float]:
-        """Calculate total, within-group, and between-group sum of squares"""
         total_ss = np.sum(dist_mat ** 2) / (2 * n)
         within_ss = 0
         
@@ -120,7 +111,6 @@ def permanova_test(distance_matrix: np.ndarray, grouping: list, permutations: in
         between_ss = total_ss - within_ss
         return total_ss, within_ss, between_ss
     
-    # Calculate observed F-statistic
     total_ss, within_ss, between_ss = calc_ss(distance_matrix, grouping)
     df_between = n_groups - 1
     df_within = n - n_groups
@@ -134,9 +124,8 @@ def permanova_test(distance_matrix: np.ndarray, grouping: list, permutations: in
     
     f_stat = (between_ss / df_between) / (within_ss / df_within)
     
-    # Permutation test
     perm_f_stats = []
-    np.random.seed(42)  # For reproducibility
+    np.random.seed(42)
     
     for _ in range(permutations):
         perm_grouping = np.random.permutation(grouping)
@@ -146,7 +135,6 @@ def permanova_test(distance_matrix: np.ndarray, grouping: list, permutations: in
             perm_f_stat = (perm_between_ss / df_between) / (perm_within_ss / df_within)
             perm_f_stats.append(perm_f_stat)
     
-    # Calculate p-value
     if len(perm_f_stats) > 0:
         p_value = (np.sum(np.array(perm_f_stats) >= f_stat) + 1) / (len(perm_f_stats) + 1)
     else:
@@ -213,19 +201,14 @@ def perform_pca(data_subset: pd.DataFrame, numeric_cols: List[str], title_suffix
         st.warning(f"⚠️ Insufficient proteins for PCA on {title_suffix}: {len(data_subset)} proteins")
         return None
     
-    # Transpose for PCA (samples as rows)
     df_pca = data_subset[numeric_cols].T
-    
-    # Standardize
     scaler = StandardScaler()
     df_scaled = scaler.fit_transform(df_pca)
     
-    # Perform PCA
     n_components = min(10, len(numeric_cols), len(data_subset))
     pca = PCA(n_components=n_components)
     pca_result = pca.fit_transform(df_scaled)
     
-    # Create results dataframe
     n_pcs = min(3, n_components)
     pca_df = pd.DataFrame(
         pca_result[:, :n_pcs],
@@ -239,13 +222,34 @@ def perform_pca(data_subset: pd.DataFrame, numeric_cols: List[str], title_suffix
     
     return pca_df, variance_explained, df_scaled
 
+def quantile_normalize(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Perform quantile normalization across samples
+    Forces all samples to have identical rank-ordered distribution
+    """
+    # Sort values in each column
+    sorted_data = np.sort(data.values, axis=0)
+    
+    # Calculate mean of each rank across samples
+    mean_sorted = sorted_data.mean(axis=1)
+    
+    # Create mapping from old values to new (normalized) values
+    normalized = np.zeros_like(data.values)
+    
+    for col in range(data.shape[1]):
+        # Get ranks of original values
+        ranks = np.argsort(np.argsort(data.iloc[:, col].values))
+        # Replace with quantile-normalized values
+        normalized[:, col] = mean_sorted[ranks]
+    
+    return pd.DataFrame(normalized, index=data.index, columns=data.columns)
+
 # ============================================================================
 # 1. SPECIES COMPOSITION
 # ============================================================================
 
 st.subheader("1️⃣ Protein Species Composition")
 
-# Count proteins per species per sample
 species_counts = []
 for sample in numeric_cols:
     for species in df[species_col].unique():
@@ -260,7 +264,6 @@ for sample in numeric_cols:
 
 species_df_plot = pd.DataFrame(species_counts)
 
-# Stacked bar plot
 fig = px.bar(
     species_df_plot,
     x='Sample',
@@ -274,13 +277,13 @@ fig = px.bar(
 fig.update_layout(xaxis_tickangle=-45)
 st.plotly_chart(fig, use_container_width=True)
 
-# Summary table
 st.markdown("**Species Summary**")
 species_summary = species_df_plot.groupby('Species')['Count'].agg(['sum', 'mean', 'std']).reset_index()
 species_summary.columns = ['Species', 'Total', 'Mean per Sample', 'Std Dev']
 st.dataframe(species_summary.round(0), use_container_width=True)
 
 st.markdown("---")
+
 # ============================================================================
 # 2. INTENSITY DISTRIBUTION & NORMALITY ASSESSMENT
 # ============================================================================
@@ -303,7 +306,6 @@ for condition in conditions:
     condition_data = condition_data[~np.isnan(condition_data) & (condition_data > 0)]
     all_intensities_by_condition[condition] = np.log2(condition_data + 1)
 
-# Combine all data
 all_data_combined = np.concatenate(list(all_intensities_by_condition.values()))
 
 # ============================================================================
@@ -314,7 +316,6 @@ st.markdown("### 📊 Intensity Distribution (Per Condition)")
 
 st.markdown("**Kernel Density Estimation (KDE) by condition with individual histograms**")
 
-# Create subplots for each condition
 n_conditions = len(conditions)
 n_cols = min(3, n_conditions)
 n_rows = (n_conditions + n_cols - 1) // n_cols
@@ -336,7 +337,6 @@ for idx, condition in enumerate(conditions):
     condition_data = all_intensities_by_condition[condition]
     
     if len(condition_data) > 5:
-        # Add histogram
         fig_dists.add_trace(
             go.Histogram(
                 x=condition_data,
@@ -351,7 +351,6 @@ for idx, condition in enumerate(conditions):
             row=row, col=col
         )
         
-        # Add KDE overlay
         try:
             kde = gaussian_kde(condition_data)
             x_range = np.linspace(condition_data.min(), condition_data.max(), 200)
@@ -373,7 +372,6 @@ for idx, condition in enumerate(conditions):
     else:
         st.warning(f"⚠️ Insufficient data for {condition}: {len(condition_data)} points")
 
-# Update layout
 fig_dists.update_xaxes(title_text="Log2(Intensity + 1)")
 fig_dists.update_yaxes(title_text="Density")
 fig_dists.update_layout(
@@ -385,7 +383,6 @@ fig_dists.update_layout(
 
 st.plotly_chart(fig_dists, use_container_width=True)
 
-# Summary statistics per condition
 st.markdown("**Summary Statistics by Condition**")
 
 summary_stats = []
@@ -430,20 +427,16 @@ for idx, condition in enumerate(conditions):
     condition_data = all_intensities_by_condition[condition]
     
     if len(condition_data) >= 3:
-        # ✅ CORRECT: Manual scaling approach
         sorted_data = np.sort(condition_data)
         n = len(sorted_data)
         
-        # Van der Waerden percentiles
         percentiles = (np.arange(1, n + 1) - 0.5) / n
         theoretical_quantiles = stats.norm.ppf(percentiles)
         
-        # Scale to match data distribution
         mu = sorted_data.mean()
         sigma = sorted_data.std()
         theoretical_quantiles_scaled = mu + sigma * theoretical_quantiles
         
-        # Add scatter
         fig_qq_multi.add_trace(
             go.Scatter(
                 x=theoretical_quantiles_scaled,
@@ -456,7 +449,6 @@ for idx, condition in enumerate(conditions):
             row=row, col=col
         )
         
-        # Add reference line (diagonal)
         min_val = min(theoretical_quantiles_scaled.min(), sorted_data.min())
         max_val = max(theoretical_quantiles_scaled.max(), sorted_data.max())
         
@@ -493,17 +485,12 @@ for condition in conditions:
     condition_data = all_intensities_by_condition[condition]
     
     if len(condition_data) >= 3:
-        # Limit to 5000 samples for performance
         test_data = condition_data[:5000] if len(condition_data) > 5000 else condition_data
         
-        # Shapiro-Wilk test
         shapiro_stat, shapiro_p = stats.shapiro(test_data)
-        
-        # Kolmogorov-Smirnov test
         ks_stat, ks_p = stats.kstest(test_data, 'norm', 
                                       args=(test_data.mean(), test_data.std()))
         
-        # D'Agostino-Pearson test
         if len(test_data) >= 8:
             dagostino_stat, dagostino_p = stats.normaltest(test_data)
         else:
@@ -534,7 +521,6 @@ st.markdown("""
 - **Poor transformation**: High correlation (r > 0.6)
 """)
 
-# Create subplots for mean-variance plots per condition
 n_conditions = len(conditions)
 n_cols = min(3, n_conditions)
 n_rows = (n_conditions + n_cols - 1) // n_cols
@@ -552,27 +538,22 @@ for idx, condition in enumerate(conditions):
     row = idx // n_cols + 1
     col = idx % n_cols + 1
     
-    # Get samples for this condition
     condition_samples = [s for s in numeric_cols if sample_to_condition.get(s) == condition]
     
     if len(condition_samples) >= 2:
-        # Calculate per-protein mean and variance for this condition
         condition_df = df[condition_samples].copy()
         protein_means_cond = condition_df.mean(axis=1)
         protein_vars_cond = condition_df.var(axis=1)
         
-        # Remove invalid values
         valid_mask = ~(np.isnan(protein_means_cond) | np.isnan(protein_vars_cond) | 
                        (protein_means_cond == 0) | (protein_vars_cond == 0))
         means_clean = protein_means_cond[valid_mask].values
         vars_clean = protein_vars_cond[valid_mask].values
         
         if len(means_clean) > 2:
-            # Calculate correlation
             mean_var_corr = np.corrcoef(means_clean, vars_clean)[0, 1]
             mean_var_corr_dict[condition] = mean_var_corr
             
-            # Add scatter plot
             fig_mv_multi.add_trace(
                 go.Scatter(
                     x=means_clean,
@@ -586,7 +567,6 @@ for idx, condition in enumerate(conditions):
                 row=row, col=col
             )
             
-            # Add trend line (log-log)
             try:
                 z = np.polyfit(np.log10(means_clean), np.log10(vars_clean), 1)
                 p = np.poly1d(z)
@@ -607,7 +587,6 @@ for idx, condition in enumerate(conditions):
             except:
                 pass
 
-# Update axes
 fig_mv_multi.update_xaxes(title_text="Mean Intensity", type='log')
 fig_mv_multi.update_yaxes(title_text="Variance", type='log')
 fig_mv_multi.update_layout(
@@ -619,7 +598,6 @@ fig_mv_multi.update_layout(
 
 st.plotly_chart(fig_mv_multi, use_container_width=True)
 
-# Summary interpretation
 st.markdown("**Mean-Variance Correlation Summary**")
 
 mv_summary = []
@@ -646,13 +624,610 @@ for condition in conditions:
 mv_summary_df = pd.DataFrame(mv_summary)
 st.dataframe(mv_summary_df, hide_index=True, use_container_width=True)
 
+# ============================================================================
+# 3. OPTIONAL TRANSFORMATIONS (NEW SECTION)
+# ============================================================================
+
+st.subheader("3️⃣ Additional Data Transformations (Optional)")
+
+st.markdown("""
+**Apply transformations to improve data quality**:
+Choose transformations based on your data characteristics and analysis needs.
+""")
+
+transformation_choice = st.selectbox(
+    "Select transformation to apply:",
+    [
+        "None (Skip)",
+        "1. Robust Scaling (handles outliers)",
+        "2. Box-Cox Power Transformation (statistical normalization)",
+        "3. Quantile Normalization (align distributions)"
+    ]
+)
+
+if transformation_choice != "None (Skip)":
+    with st.spinner("⏳ Applying transformation..."):
+        
+        if transformation_choice == "1. Robust Scaling (handles outliers)":
+            st.markdown("### Robust Scaling")
+            st.markdown("""
+            **Description**: Scales data using median and interquartile range (IQR)
+            - Less affected by outliers than standard scaling
+            - Formula: X_scaled = (X - median) / IQR
+            - Good for: Data with extreme values
+            """)
+            
+            # Apply robust scaling
+            df_robust = df[numeric_cols].copy()
+            scaler_robust = RobustScaler()
+            df_robust_scaled = scaler_robust.fit_transform(df_robust)
+            df_robust = pd.DataFrame(df_robust_scaled, columns=numeric_cols, index=df.index)
+            
+            # Prepare transformed data
+            robust_intensities_by_condition = {}
+            for condition in conditions:
+                condition_samples = [s for s in numeric_cols if sample_to_condition.get(s) == condition]
+                condition_data = df_robust[condition_samples].values.flatten()
+                condition_data = condition_data[~np.isnan(condition_data)]
+                robust_intensities_by_condition[condition] = condition_data
+            
+            robust_data_combined = np.concatenate(list(robust_intensities_by_condition.values()))
+            
+            # Create comparison plots
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**Before Robust Scaling**")
+                fig_before = go.Figure()
+                for condition in conditions:
+                    fig_before.add_trace(go.Histogram(
+                        x=all_intensities_by_condition[condition],
+                        name=condition,
+                        opacity=0.5,
+                        nbinsx=40,
+                        histnorm='probability density'
+                    ))
+                fig_before.update_layout(title='Before (Log2)', height=400, barmode='overlay')
+                st.plotly_chart(fig_before, use_container_width=True)
+            
+            with col2:
+                st.markdown("**After Robust Scaling**")
+                fig_after = go.Figure()
+                for condition in conditions:
+                    fig_after.add_trace(go.Histogram(
+                        x=robust_intensities_by_condition[condition],
+                        name=condition,
+                        opacity=0.5,
+                        nbinsx=40,
+                        histnorm='probability density'
+                    ))
+                fig_after.update_layout(title='After Robust Scaling', height=400, barmode='overlay')
+                st.plotly_chart(fig_after, use_container_width=True)
+            
+            # Q-Q plots
+            st.markdown("**Q-Q Plots After Robust Scaling**")
+            
+            n_conditions = len(conditions)
+            n_cols_qq = min(3, n_conditions)
+            n_rows_qq = (n_conditions + n_cols_qq - 1) // n_cols_qq
+            
+            fig_qq_robust = make_subplots(
+                rows=n_rows_qq,
+                cols=n_cols_qq,
+                subplot_titles=conditions
+            )
+            
+            for idx, condition in enumerate(conditions):
+                row = idx // n_cols_qq + 1
+                col = idx % n_cols_qq + 1
+                
+                condition_data = robust_intensities_by_condition[condition]
+                
+                if len(condition_data) >= 3:
+                    sorted_data = np.sort(condition_data)
+                    n = len(sorted_data)
+                    
+                    percentiles = (np.arange(1, n + 1) - 0.5) / n
+                    theoretical_quantiles = stats.norm.ppf(percentiles)
+                    
+                    mu = sorted_data.mean()
+                    sigma = sorted_data.std()
+                    theoretical_quantiles_scaled = mu + sigma * theoretical_quantiles
+                    
+                    fig_qq_robust.add_trace(
+                        go.Scatter(
+                            x=theoretical_quantiles_scaled,
+                            y=sorted_data,
+                            mode='markers',
+                            marker=dict(size=4, opacity=0.6, color='steelblue'),
+                            showlegend=False
+                        ),
+                        row=row, col=col
+                    )
+                    
+                    min_val = min(theoretical_quantiles_scaled.min(), sorted_data.min())
+                    max_val = max(theoretical_quantiles_scaled.max(), sorted_data.max())
+                    
+                    fig_qq_robust.add_trace(
+                        go.Scatter(
+                            x=[min_val, max_val],
+                            y=[min_val, max_val],
+                            mode='lines',
+                            line=dict(color='red', dash='dash', width=2),
+                            showlegend=False
+                        ),
+                        row=row, col=col
+                    )
+            
+            fig_qq_robust.update_layout(height=400 * n_rows_qq, showlegend=False)
+            st.plotly_chart(fig_qq_robust, use_container_width=True)
+            
+            # Statistics
+            st.markdown("**Normality Tests After Robust Scaling**")
+            robust_normality = []
+            
+            for condition in conditions:
+                condition_data = robust_intensities_by_condition[condition]
+                test_data = condition_data[:5000] if len(condition_data) > 5000 else condition_data
+                
+                shapiro_stat, shapiro_p = stats.shapiro(test_data)
+                
+                robust_normality.append({
+                    'Condition': condition,
+                    'Shapiro-Wilk p': f"{shapiro_p:.4f}",
+                    'Normal?': '✅ Yes' if shapiro_p > 0.05 else '❌ No'
+                })
+            
+            robust_norm_df = pd.DataFrame(robust_normality)
+            st.dataframe(robust_norm_df, hide_index=True, use_container_width=True)
+            
+            # Mean-variance
+            st.markdown("**Mean-Variance Correlation After Robust Scaling**")
+            
+            robust_mv_summary = []
+            for condition in conditions:
+                condition_samples = [s for s in numeric_cols if sample_to_condition.get(s) == condition]
+                condition_df_robust = df_robust[condition_samples].copy()
+                
+                means = condition_df_robust.mean(axis=1)
+                vars = condition_df_robust.var(axis=1)
+                
+                valid_mask = ~(np.isnan(means) | np.isnan(vars) | (vars == 0))
+                
+                if valid_mask.sum() > 2:
+                    corr = np.corrcoef(means[valid_mask], vars[valid_mask])[0, 1]
+                    
+                    robust_mv_summary.append({
+                        'Condition': condition,
+                        'Correlation': f"{corr:.3f}",
+                        'Status': '✅ Excellent' if abs(corr) < 0.3 else '⚠️ Moderate' if abs(corr) < 0.6 else '❌ Poor'
+                    })
+            
+            robust_mv_df = pd.DataFrame(robust_mv_summary)
+            st.dataframe(robust_mv_df, hide_index=True, use_container_width=True)
+            
+            # Download button
+            csv_robust = df_robust.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Robust Scaled Data",
+                data=csv_robust,
+                file_name="robust_scaled_data.csv",
+                mime="text/csv"
+            )
+        
+        # ============================================================================
+        # BOX-COX TRANSFORMATION
+        # ============================================================================
+        
+        elif transformation_choice == "2. Box-Cox Power Transformation (statistical normalization)":
+            st.markdown("### Box-Cox Power Transformation")
+            st.markdown("""
+            **Description**: Automatically finds optimal power transformation to normalize data
+            - Requires positive values only
+            - Formula: X_lambda = (X^lambda - 1) / lambda (or log(X) when lambda=0)
+            - Optimizes for maximum likelihood normality
+            - Good for: Right-skewed data (typical for proteomics!)
+            """)
+            
+            # Apply Box-Cox transformation (only to positive values)
+            df_boxcox = df[numeric_cols].copy()
+            df_boxcox = df_boxcox.clip(lower=1e-6)  # Ensure positive
+            
+            lambda_values = {}
+            df_boxcox_transformed = df_boxcox.copy()
+            
+            # Apply Box-Cox per column
+            for col in numeric_cols:
+                try:
+                    transformed_col, lambda_param = boxcox(df_boxcox[col])
+                    df_boxcox_transformed[col] = transformed_col
+                    lambda_values[col] = lambda_param
+                except:
+                    df_boxcox_transformed[col] = np.log(df_boxcox[col])
+                    lambda_values[col] = 0.0  # log transform
+            
+            # Prepare transformed data
+            boxcox_intensities_by_condition = {}
+            for condition in conditions:
+                condition_samples = [s for s in numeric_cols if sample_to_condition.get(s) == condition]
+                condition_data = df_boxcox_transformed[condition_samples].values.flatten()
+                condition_data = condition_data[~np.isnan(condition_data)]
+                boxcox_intensities_by_condition[condition] = condition_data
+            
+            # Show lambda values
+            st.markdown("**Optimal Lambda Values per Sample**")
+            lambda_df = pd.DataFrame({
+                'Sample': list(lambda_values.keys()),
+                'Lambda': [f"{v:.4f}" for v in lambda_values.values()],
+                'Interpretation': ['Log transform' if abs(v) < 0.01 else 'Power transform' for v in lambda_values.values()]
+            })
+            st.dataframe(lambda_df, hide_index=True, use_container_width=True)
+            
+            # Create comparison plots
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**Before Box-Cox**")
+                fig_before_bc = go.Figure()
+                for condition in conditions:
+                    fig_before_bc.add_trace(go.Histogram(
+                        x=all_intensities_by_condition[condition],
+                        name=condition,
+                        opacity=0.5,
+                        nbinsx=40,
+                        histnorm='probability density'
+                    ))
+                fig_before_bc.update_layout(title='Before (Log2)', height=400, barmode='overlay')
+                st.plotly_chart(fig_before_bc, use_container_width=True)
+            
+            with col2:
+                st.markdown("**After Box-Cox**")
+                fig_after_bc = go.Figure()
+                for condition in conditions:
+                    fig_after_bc.add_trace(go.Histogram(
+                        x=boxcox_intensities_by_condition[condition],
+                        name=condition,
+                        opacity=0.5,
+                        nbinsx=40,
+                        histnorm='probability density'
+                    ))
+                fig_after_bc.update_layout(title='After Box-Cox', height=400, barmode='overlay')
+                st.plotly_chart(fig_after_bc, use_container_width=True)
+            
+            # Q-Q plots
+            st.markdown("**Q-Q Plots After Box-Cox**")
+            
+            n_conditions = len(conditions)
+            n_cols_qq = min(3, n_conditions)
+            n_rows_qq = (n_conditions + n_cols_qq - 1) // n_cols_qq
+            
+            fig_qq_bc = make_subplots(
+                rows=n_rows_qq,
+                cols=n_cols_qq,
+                subplot_titles=conditions
+            )
+            
+            for idx, condition in enumerate(conditions):
+                row = idx // n_cols_qq + 1
+                col = idx % n_cols_qq + 1
+                
+                condition_data = boxcox_intensities_by_condition[condition]
+                
+                if len(condition_data) >= 3:
+                    sorted_data = np.sort(condition_data)
+                    n = len(sorted_data)
+                    
+                    percentiles = (np.arange(1, n + 1) - 0.5) / n
+                    theoretical_quantiles = stats.norm.ppf(percentiles)
+                    
+                    mu = sorted_data.mean()
+                    sigma = sorted_data.std()
+                    theoretical_quantiles_scaled = mu + sigma * theoretical_quantiles
+                    
+                    fig_qq_bc.add_trace(
+                        go.Scatter(
+                            x=theoretical_quantiles_scaled,
+                            y=sorted_data,
+                            mode='markers',
+                            marker=dict(size=4, opacity=0.6, color='green'),
+                            showlegend=False
+                        ),
+                        row=row, col=col
+                    )
+                    
+                    min_val = min(theoretical_quantiles_scaled.min(), sorted_data.min())
+                    max_val = max(theoretical_quantiles_scaled.max(), sorted_data.max())
+                    
+                    fig_qq_bc.add_trace(
+                        go.Scatter(
+                            x=[min_val, max_val],
+                            y=[min_val, max_val],
+                            mode='lines',
+                            line=dict(color='red', dash='dash', width=2),
+                            showlegend=False
+                        ),
+                        row=row, col=col
+                    )
+            
+            fig_qq_bc.update_layout(height=400 * n_rows_qq, showlegend=False)
+            st.plotly_chart(fig_qq_bc, use_container_width=True)
+            
+            # Statistics
+            st.markdown("**Normality Tests After Box-Cox**")
+            bc_normality = []
+            
+            for condition in conditions:
+                condition_data = boxcox_intensities_by_condition[condition]
+                test_data = condition_data[:5000] if len(condition_data) > 5000 else condition_data
+                
+                shapiro_stat, shapiro_p = stats.shapiro(test_data)
+                
+                bc_normality.append({
+                    'Condition': condition,
+                    'Shapiro-Wilk p': f"{shapiro_p:.4f}",
+                    'Normal?': '✅ Yes' if shapiro_p > 0.05 else '❌ No'
+                })
+            
+            bc_norm_df = pd.DataFrame(bc_normality)
+            st.dataframe(bc_norm_df, hide_index=True, use_container_width=True)
+            
+            # Download button
+            csv_boxcox = df_boxcox_transformed.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Box-Cox Transformed Data",
+                data=csv_boxcox,
+                file_name="boxcox_transformed_data.csv",
+                mime="text/csv"
+            )
+        
+        # ============================================================================
+        # QUANTILE NORMALIZATION
+        # ============================================================================
+        
+        elif transformation_choice == "3. Quantile Normalization (align distributions)":
+            st.markdown("### Quantile Normalization")
+            st.markdown("""
+            **Description**: Forces all samples to have identical rank-ordered distribution
+            - Removes sample-specific technical bias
+            - Assumes same underlying biological distribution
+            - Good for: Removing systematic batch effects
+            - Warning: Should only be used if samples have identical biological properties
+            """)
+            
+            # Apply quantile normalization
+            df_qnorm = df[numeric_cols].copy()
+            df_qnorm_transformed = quantile_normalize(df_qnorm)
+            
+            # Prepare transformed data
+            qnorm_intensities_by_condition = {}
+            for condition in conditions:
+                condition_samples = [s for s in numeric_cols if sample_to_condition.get(s) == condition]
+                condition_data = df_qnorm_transformed[condition_samples].values.flatten()
+                condition_data = condition_data[~np.isnan(condition_data)]
+                qnorm_intensities_by_condition[condition] = condition_data
+            
+            # Create comparison plots
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**Before Quantile Normalization**")
+                fig_before_qn = go.Figure()
+                for condition in conditions:
+                    fig_before_qn.add_trace(go.Histogram(
+                        x=all_intensities_by_condition[condition],
+                        name=condition,
+                        opacity=0.5,
+                        nbinsx=40,
+                        histnorm='probability density'
+                    ))
+                fig_before_qn.update_layout(title='Before (Log2)', height=400, barmode='overlay')
+                st.plotly_chart(fig_before_qn, use_container_width=True)
+            
+            with col2:
+                st.markdown("**After Quantile Normalization**")
+                st.markdown("*(Note: All samples now have identical distribution)*")
+                fig_after_qn = go.Figure()
+                for condition in conditions:
+                    fig_after_qn.add_trace(go.Histogram(
+                        x=qnorm_intensities_by_condition[condition],
+                        name=condition,
+                        opacity=0.5,
+                        nbinsx=40,
+                        histnorm='probability density'
+                    ))
+                fig_after_qn.update_layout(title='After Quantile Normalization', height=400, barmode='overlay')
+                st.plotly_chart(fig_after_qn, use_container_width=True)
+            
+            # Q-Q plots
+            st.markdown("**Q-Q Plots After Quantile Normalization**")
+            
+            n_conditions = len(conditions)
+            n_cols_qq = min(3, n_conditions)
+            n_rows_qq = (n_conditions + n_cols_qq - 1) // n_cols_qq
+            
+            fig_qq_qn = make_subplots(
+                rows=n_rows_qq,
+                cols=n_cols_qq,
+                subplot_titles=conditions
+            )
+            
+            for idx, condition in enumerate(conditions):
+                row = idx // n_cols_qq + 1
+                col = idx % n_cols_qq + 1
+                
+                condition_data = qnorm_intensities_by_condition[condition]
+                
+                if len(condition_data) >= 3:
+                    sorted_data = np.sort(condition_data)
+                    n = len(sorted_data)
+                    
+                    percentiles = (np.arange(1, n + 1) - 0.5) / n
+                    theoretical_quantiles = stats.norm.ppf(percentiles)
+                    
+                    mu = sorted_data.mean()
+                    sigma = sorted_data.std()
+                    theoretical_quantiles_scaled = mu + sigma * theoretical_quantiles
+                    
+                    fig_qq_qn.add_trace(
+                        go.Scatter(
+                            x=theoretical_quantiles_scaled,
+                            y=sorted_data,
+                            mode='markers',
+                            marker=dict(size=4, opacity=0.6, color='purple'),
+                            showlegend=False
+                        ),
+                        row=row, col=col
+                    )
+                    
+                    min_val = min(theoretical_quantiles_scaled.min(), sorted_data.min())
+                    max_val = max(theoretical_quantiles_scaled.max(), sorted_data.max())
+                    
+                    fig_qq_qn.add_trace(
+                        go.Scatter(
+                            x=[min_val, max_val],
+                            y=[min_val, max_val],
+                            mode='lines',
+                            line=dict(color='red', dash='dash', width=2),
+                            showlegend=False
+                        ),
+                        row=row, col=col
+                    )
+            
+            fig_qq_qn.update_layout(height=400 * n_rows_qq, showlegend=False)
+            st.plotly_chart(fig_qq_qn, use_container_width=True)
+            
+            # Statistics
+            st.markdown("**Normality Tests After Quantile Normalization**")
+            qn_normality = []
+            
+            for condition in conditions:
+                condition_data = qnorm_intensities_by_condition[condition]
+                test_data = condition_data[:5000] if len(condition_data) > 5000 else condition_data
+                
+                shapiro_stat, shapiro_p = stats.shapiro(test_data)
+                
+                qn_normality.append({
+                    'Condition': condition,
+                    'Shapiro-Wilk p': f"{shapiro_p:.4f}",
+                    'Normal?': '✅ Yes' if shapiro_p > 0.05 else '❌ No'
+                })
+            
+            qn_norm_df = pd.DataFrame(qn_normality)
+            st.dataframe(qn_norm_df, hide_index=True, use_container_width=True)
+            
+            # Download button
+            csv_qnorm = df_qnorm_transformed.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Quantile Normalized Data",
+                data=csv_qnorm,
+                file_name="quantile_normalized_data.csv",
+                mime="text/csv"
+            )
+
 st.markdown("---")
 
 # ============================================================================
-# 4. PERMANOVA ANALYSIS + EFFECT SIZE METRICS
+# 4. PCA ANALYSIS (ORIGINAL)
 # ============================================================================
 
-st.subheader("4️⃣ Multivariate Group Separation Testing")
+st.subheader("4️⃣ Principal Component Analysis (PCA)")
+
+if species_col in df.columns:
+    species_counts_total = df[species_col].value_counts()
+    most_common_species = species_counts_total.index[0]
+    st.info(f"🔬 **Most Common Proteome**: {most_common_species} ({species_counts_total[most_common_species]:,} proteins)")
+else:
+    most_common_species = None
+    st.warning("⚠️ Species column not found")
+
+st.markdown("### PCA on Three Protein Subsets")
+
+pca_result_all = perform_pca(df, numeric_cols, "All Proteins")
+
+if most_common_species:
+    df_common = df[df[species_col] == most_common_species].copy()
+    pca_result_common = perform_pca(df_common, numeric_cols, most_common_species)
+else:
+    pca_result_common = None
+
+if most_common_species:
+    df_rest = df[df[species_col] != most_common_species].copy()
+    pca_result_rest = perform_pca(df_rest, numeric_cols, "Other Species")
+else:
+    pca_result_rest = None
+
+col1, col2, col3 = st.columns(3)
+
+if pca_result_all:
+    pca_all, var_all, scaled_all = pca_result_all
+    
+    with col1:
+        st.markdown(f"**All Proteins** (n={len(df):,})")
+        fig1 = px.scatter(
+            pca_all,
+            x='PC1',
+            y='PC2',
+            color='Condition',
+            text='Sample',
+            title=f'PC1 ({var_all[0]:.1f}%) vs PC2 ({var_all[1]:.1f}%)',
+            labels={
+                'PC1': f'PC1 ({var_all[0]:.1f}%)',
+                'PC2': f'PC2 ({var_all[1]:.1f}%)'
+            },
+            height=500
+        )
+        fig1.update_traces(textposition='top center', marker=dict(size=10))
+        st.plotly_chart(fig1, use_container_width=True)
+
+if pca_result_common:
+    pca_common, var_common, scaled_common = pca_result_common
+    
+    with col2:
+        st.markdown(f"**{most_common_species} Only** (n={len(df_common):,})")
+        fig2 = px.scatter(
+            pca_common,
+            x='PC1',
+            y='PC2',
+            color='Condition',
+            text='Sample',
+            title=f'PC1 ({var_common[0]:.1f}%) vs PC2 ({var_common[1]:.1f}%)',
+            labels={
+                'PC1': f'PC1 ({var_common[0]:.1f}%)',
+                'PC2': f'PC2 ({var_common[1]:.1f}%)'
+            },
+            height=500
+        )
+        fig2.update_traces(textposition='top center', marker=dict(size=10))
+        st.plotly_chart(fig2, use_container_width=True)
+
+if pca_result_rest:
+    pca_rest, var_rest, scaled_rest = pca_result_rest
+    
+    with col3:
+        st.markdown(f"**Other Species** (n={len(df_rest):,})")
+        fig3 = px.scatter(
+            pca_rest,
+            x='PC1',
+            y='PC2',
+            color='Condition',
+            text='Sample',
+            title=f'PC1 ({var_rest[0]:.1f}%) vs PC2 ({var_rest[1]:.1f}%)',
+            labels={
+                'PC1': f'PC1 ({var_rest[0]:.1f}%)',
+                'PC2': f'PC2 ({var_rest[1]:.1f}%)'
+            },
+            height=500
+        )
+        fig3.update_traces(textposition='top center', marker=dict(size=10))
+        st.plotly_chart(fig3, use_container_width=True)
+
+st.markdown("---")
+
+# ============================================================================
+# 5. PERMANOVA ANALYSIS + EFFECT SIZE METRICS
+# ============================================================================
+
+st.subheader("5️⃣ Multivariate Group Separation Testing")
 
 st.markdown("""
 **Comprehensive analysis of condition separation**:
@@ -665,30 +1240,16 @@ st.markdown("""
 Effect sizes and visual inspection provide stronger evidence of separation.
 """)
 
-# ============================================================================
-# IMPORT CLUSTERING METRICS
-# ============================================================================
-
-from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
-from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
-
-# ============================================================================
-# RUN PERMANOVA + EFFECT SIZES ON ALL THREE DATASETS
-# ============================================================================
-
 permanova_results = []
 effect_size_results = []
 
 if pca_result_all:
-    # ===== ALL PROTEINS =====
     dist_all = squareform(pdist(scaled_all, metric='euclidean'))
     grouping = [sample_to_condition.get(s, 'Unknown') for s in numeric_cols]
     
-    # PERMANOVA
     permanova_all = run_permanova(dist_all, grouping, f"All Proteins (n={len(df):,})")
     permanova_results.append(permanova_all)
     
-    # Effect sizes
     silhouette_all = silhouette_score(scaled_all, grouping)
     davies_all = davies_bouldin_score(scaled_all, grouping)
     calinski_all = calinski_harabasz_score(scaled_all, grouping)
@@ -702,7 +1263,6 @@ if pca_result_all:
     })
 
 if pca_result_common:
-    # ===== HUMAN PROTEINS =====
     dist_common = squareform(pdist(scaled_common, metric='euclidean'))
     
     permanova_common = run_permanova(dist_common, grouping, f"{most_common_species} (n={len(df_common):,})")
@@ -721,7 +1281,6 @@ if pca_result_common:
     })
 
 if pca_result_rest:
-    # ===== OTHER SPECIES =====
     dist_rest = squareform(pdist(scaled_rest, metric='euclidean'))
     
     permanova_rest = run_permanova(dist_rest, grouping, f"Other Species (n={len(df_rest):,})")
@@ -739,192 +1298,63 @@ if pca_result_rest:
         'Cluster Quality': 'Excellent' if silhouette_rest > 0.5 else 'Good' if silhouette_rest > 0.25 else 'Moderate'
     })
 
-# ============================================================================
-# DISPLAY RESULTS
-# ============================================================================
-
 col1, col2 = st.columns(2)
 
 with col1:
     st.markdown("**PERMANOVA Results**")
     permanova_df = pd.DataFrame(permanova_results)
     st.dataframe(permanova_df, hide_index=True, use_container_width=True)
-    
-    st.markdown("""
-    **Interpretation**:
-    - p < 0.05 = Statistically significant separation
-    - ⚠️ Note: With n=6, p-values are less reliable. See Effect Sizes.
-    """)
 
 with col2:
     st.markdown("**Effect Size Metrics**")
     effect_size_df = pd.DataFrame(effect_size_results)
     st.dataframe(effect_size_df, hide_index=True, use_container_width=True)
-    
-    st.markdown("""
-    **Interpretation**:
-    - Silhouette > 0.5 = Excellent separation
-    - Silhouette > 0.25 = Good separation
-    - Lower Davies-Bouldin = Better
-    - Higher Calinski-Harabasz = Better
-    """)
-
-# ============================================================================
-# INTER-GROUP DISTANCE ANALYSIS
-# ============================================================================
-
-st.markdown("### Distance-Based Cluster Quality Analysis")
-
-# Calculate mean distances between groups
-distance_analysis = []
-
-for dataset_name, scaled_data in [
-    ("All Proteins", scaled_all if pca_result_all else None),
-    (most_common_species, scaled_common if pca_result_common else None),
-    ("Other Species", scaled_rest if pca_result_rest else None)
-]:
-    if scaled_data is not None:
-        grouping = [sample_to_condition.get(s, 'Unknown') for s in numeric_cols]
-        
-        # Get group indices
-        group_a_idx = [i for i, g in enumerate(grouping) if g == conditions[0]]
-        group_b_idx = [i for i, g in enumerate(grouping) if g == conditions[1]]
-        
-        if len(group_a_idx) > 0 and len(group_b_idx) > 0:
-            # Within-group distances
-            within_dist_a = pdist(scaled_data[group_a_idx], metric='euclidean')
-            within_dist_b = pdist(scaled_data[group_b_idx], metric='euclidean')
-            
-            # Between-group distances
-            between_dists = []
-            for i in group_a_idx:
-                for j in group_b_idx:
-                    dist = np.linalg.norm(scaled_data[i] - scaled_data[j])
-                    between_dists.append(dist)
-            between_dists = np.array(between_dists)
-            
-            # Calculate metrics
-            mean_within_a = within_dist_a.mean() if len(within_dist_a) > 0 else 0
-            mean_within_b = within_dist_b.mean() if len(within_dist_b) > 0 else 0
-            mean_between = between_dists.mean()
-            mean_within = (mean_within_a + mean_within_b) / 2
-            
-            # Separation ratio
-            separation_ratio = mean_between / mean_within if mean_within > 0 else np.inf
-            
-            distance_analysis.append({
-                'Dataset': dataset_name,
-                'Mean Within-Group': f"{mean_within:.2f}",
-                'Mean Between-Group': f"{mean_between:.2f}",
-                'Separation Ratio': f"{separation_ratio:.2f}",
-                'Interpretation': f"Groups are {separation_ratio:.1f}x farther apart than within"
-            })
-
-distance_df = pd.DataFrame(distance_analysis)
-st.dataframe(distance_df, hide_index=True, use_container_width=True)
-
-st.markdown("""
-**Separation Ratio Interpretation**:
-- Ratio > 2.0 = Strong separation (between-group distance 2x within-group)
-- Ratio > 1.5 = Good separation
-- Ratio > 1.0 = Some separation (but groups may overlap)
-""")
-
-# ============================================================================
-# LINEAR DISCRIMINANT ANALYSIS (LDA)
-# ============================================================================
-
-st.markdown("### Linear Discriminant Analysis (Classification Accuracy)")
-
-st.markdown("""
-**LDA shows how well conditions can be distinguished** using the multivariate protein profile.
-With perfect separation, LDA classification accuracy should be 100%.
-""")
-
-lda_results = []
-
-for dataset_name, scaled_data, n_proteins in [
-    ("All Proteins", scaled_all if pca_result_all else None, len(df)),
-    (most_common_species, scaled_common if pca_result_common else None, len(df_common)),
-    ("Other Species", scaled_rest if pca_result_rest else None, len(df_rest))
-]:
-    if scaled_data is not None and len(scaled_data) >= 3:
-        grouping_binary = np.array([0 if sample_to_condition.get(s, 'Unknown') == conditions[0] 
-                                   else 1 for s in numeric_cols])
-        
-        try:
-            # Fit LDA
-            lda = LinearDiscriminantAnalysis(n_components=min(1, len(numeric_cols)-1))
-            lda_data = lda.fit_transform(scaled_data, grouping_binary)
-            
-            # Calculate classification accuracy
-            lda_pred = lda.predict(scaled_data)
-            accuracy = (lda_pred == grouping_binary).sum() / len(grouping_binary) * 100
-            
-            lda_results.append({
-                'Dataset': dataset_name,
-                'n Proteins': n_proteins,
-                'LDA Accuracy': f"{accuracy:.1f}%",
-                'Interpretation': 'Perfect separation' if accuracy == 100 else 
-                                'Excellent' if accuracy >= 85 else 
-                                'Good' if accuracy >= 70 else 'Moderate'
-            })
-        except Exception as e:
-            st.warning(f"⚠️ Could not compute LDA for {dataset_name}: {str(e)}")
-
-lda_df = pd.DataFrame(lda_results)
-st.dataframe(lda_df, hide_index=True, use_container_width=True)
-
-# ============================================================================
-# SUMMARY INTERPRETATION
-# ============================================================================
-
-st.markdown("### 📊 Overall Interpretation")
-
-significant_permanova = sum(1 for r in permanova_results if '✅' in r['Significant'])
-excellent_effects = sum(1 for r in effect_size_results if 'Excellent' in r['Cluster Quality'])
-
-if excellent_effects >= len(effect_size_results) * 0.66 and lda_df['LDA Accuracy'].str.rstrip('%').astype(float).mean() > 85:
-    st.success(f"""
-    ✅ **STRONG EVIDENCE OF CONDITION SEPARATION**
-    
-    - Effect sizes show excellent cluster quality
-    - LDA classification accuracy is high
-    - Visual PCA separation is dramatic (99% variance in PC1)
-    - Multivariate protein signatures clearly distinguish conditions
-    
-    **Recommendation**: Data is excellent for downstream differential expression analysis.
-    The lack of PERMANOVA significance is likely due to small sample size (n=6),
-    not lack of biological signal.
-    """)
-elif significant_permanova > 0:
-    st.info(f"""
-    ⚠️ **MODERATE EVIDENCE OF SEPARATION**
-    
-    - Some statistical tests show significance
-    - Effect sizes are reasonable
-    - Consider increasing sample size for robust conclusions
-    """)
-else:
-    st.warning(f"""
-    ⚠️ **WEAK EVIDENCE OF SEPARATION**
-    
-    - Effect sizes are moderate
-    - Visual inspection suggests mild separation
-    - Consider:
-      • Batch effects
-      • Quality issues with some samples
-      • Need for larger sample sizes
-    """)
 
 st.markdown("---")
 
+# ============================================================================
+# 6. HIERARCHICAL CLUSTERING HEATMAP
+# ============================================================================
+
+st.subheader("6️⃣ Hierarchical Clustering Heatmap")
+
+st.markdown("**Sample-to-sample correlation with hierarchical clustering**")
+
+corr_matrix = df[numeric_cols].corr()
+linkage_samples = linkage(corr_matrix, method='ward')
+dend = dendrogram(linkage_samples, labels=numeric_cols, no_plot=True)
+reordered_idx = dend['leaves']
+corr_reordered = corr_matrix.iloc[reordered_idx, reordered_idx]
+
+fig_heatmap = go.Figure(data=go.Heatmap(
+    z=corr_reordered.values,
+    x=corr_reordered.columns,
+    y=corr_reordered.columns,
+    colorscale='RdBu_r',
+    zmid=0,
+    zmin=-1,
+    zmax=1,
+    colorbar=dict(title="Correlation"),
+    hovertemplate='%{x} vs %{y}<br>Correlation: %{z:.3f}<extra></extra>'
+))
+
+fig_heatmap.update_layout(
+    title='Hierarchical Clustering Heatmap (Ward Linkage)',
+    xaxis_title='Sample',
+    yaxis_title='Sample',
+    height=800,
+    xaxis={'side': 'bottom', 'tickangle': -45}
+)
+
+st.plotly_chart(fig_heatmap, use_container_width=True)
+
+st.markdown("---")
 
 # ============================================================================
-# 6. DATA QUALITY SUMMARY
+# 7. DATA QUALITY SUMMARY
 # ============================================================================
 
-st.subheader("6️⃣ Data Quality Summary")
+st.subheader("7️⃣ Data Quality Summary")
 
 normal_count = sum(1 for r in normality_results if '✅' in r['Normal?'])
 total_count = len(normality_results)
@@ -944,8 +1374,8 @@ quality_metrics = pd.DataFrame({
         f"{len(numeric_cols)}",
         f"{len(conditions)}",
         f"{normal_count}/{total_count} ({normal_count/total_count*100:.0f}%)",
-        f"{mean_var_corr:.3f}" if 'mean_var_corr' in locals() else 'N/A',
-        '✅ Good' if 'mean_var_corr' in locals() and abs(mean_var_corr) < 0.3 else 'N/A',
+        f"{mean_var_corr_dict.get(conditions[0], np.nan):.3f}" if mean_var_corr_dict else 'N/A',
+        '✅ Good' if 'mean_var_corr_dict' in locals() and any(abs(c) < 0.3 for c in mean_var_corr_dict.values()) else '⚠️ Moderate',
         imputation_method
     ]
 })
