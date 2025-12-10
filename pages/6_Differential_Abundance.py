@@ -22,21 +22,22 @@ sys.path.append(str(Path(__file__).parent.parent))
 # LIMMA-STYLE HELPERS
 # ---------------------------------------------------------------------
 
-
 def fit_linear_model(
     df: pd.DataFrame, group1_cols: List[str], group2_cols: List[str]
 ) -> pd.DataFrame:
-    """OLS per feature: group1 - group2 on log2 scale."""
+    """OLS per feature: group1 - group2 on log2 scale. Preserves DataFrame index."""
     results: List[dict] = []
-
-    for prot_id, row in df.iterrows():
+    
+    # USE df.index explicitly to preserve protein IDs
+    for idx in df.index:
+        row = df.loc[idx]
         g1 = row[group1_cols].dropna()
         g2 = row[group2_cols].dropna()
 
         if len(g1) < 2 or len(g2) < 2:
             results.append(
                 dict(
-                    protein_id=prot_id,  # THIS PRESERVES THE ORIGINAL INDEX
+                    protein_id=idx,  # Use actual index value
                     log2fc=np.nan,
                     mean_g1=np.nan,
                     mean_g2=np.nan,
@@ -63,7 +64,7 @@ def fit_linear_model(
 
         results.append(
             dict(
-                protein_id=prot_id,  # THIS PRESERVES THE ORIGINAL INDEX
+                protein_id=idx,  # Use actual index value
                 log2fc=log2fc,
                 mean_g1=mean_g1,
                 mean_g2=mean_g2,
@@ -500,6 +501,13 @@ st.subheader("4️⃣ Run limma (A vs B)")
 
 if st.button("🚀 Run Analysis", type="primary"):
     with st.spinner("Fitting linear models and empirical Bayes..."):
+        
+        # DEBUG: Check what the index looks like
+        st.write(f"**df.index type**: {type(df.index)}")
+        st.write(f"**df.index[:5]**: {df.index[:5].tolist()}")
+        st.write(f"**species_col**: {species_col}")
+        st.write(f"**Sample df[species_col][:5]**: {df[species_col].head().tolist()}")
+        
         # log2 transform if not already on log scale
         df_num = df[numeric_cols]
         if (df_num > 50).any().any():
@@ -507,10 +515,14 @@ if st.button("🚀 Run Analysis", type="primary"):
         else:
             df_log2 = df_num.copy()
 
-        # IMPORTANT: Preserve index before passing to fit_linear_model
-        df_log2.index = df.index  # Ensure df_log2 has same index as df
+        # Ensure df_log2 keeps the same index as df
+        df_log2.index = df.index
         
         fit = fit_linear_model(df_log2, ref_samples, treat_samples)
+        
+        # DEBUG: Check fit results index
+        st.write(f"**fit.index[:5]**: {fit.index[:5].tolist()}")
+        
         limma_res = empirical_bayes_moderation(fit)
 
         if use_fdr:
@@ -530,8 +542,14 @@ if st.button("🚀 Run Analysis", type="primary"):
         limma_res["regulation"] = limma_res.apply(classify, axis=1)
         limma_res["neg_log10_p"] = -np.log10(limma_res[test_col].replace(0, 1e-300))
         
-        # MAP SPECIES CORRECTLY - use limma_res index to map back to original df
-        limma_res["species"] = limma_res.index.map(df[species_col])
+        # Create species series with matching index
+        species_series = df[species_col]
+        species_series.index = df.index
+        limma_res["species"] = limma_res.index.map(species_series)
+        
+        # DEBUG: Check species mapping
+        st.write(f"**limma_res.index[:5]**: {limma_res.index[:5].tolist()}")
+        st.write(f"**limma_res['species'][:5]**: {limma_res['species'].head().tolist()}")
 
         st.session_state.dea_results = limma_res
         st.session_state.dea_ref = ref_cond
