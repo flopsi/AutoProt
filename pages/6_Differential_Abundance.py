@@ -36,7 +36,7 @@ def fit_linear_model(
         if len(g1) < 2 or len(g2) < 2:
             results.append(
                 dict(
-                    protein_id=prot_id,
+                    protein_id=prot_id,  # THIS PRESERVES THE ORIGINAL INDEX
                     log2fc=np.nan,
                     mean_g1=np.nan,
                     mean_g2=np.nan,
@@ -51,7 +51,7 @@ def fit_linear_model(
 
         mean_g1 = g1.mean()
         mean_g2 = g2.mean()
-        log2fc = mean_g1 - mean_g2  # A vs B
+        log2fc = mean_g1 - mean_g2
 
         n1, n2 = len(g1), len(g2)
         var1 = g1.var(ddof=1)
@@ -63,7 +63,7 @@ def fit_linear_model(
 
         results.append(
             dict(
-                protein_id=prot_id,
+                protein_id=prot_id,  # THIS PRESERVES THE ORIGINAL INDEX
                 log2fc=log2fc,
                 mean_g1=mean_g1,
                 mean_g2=mean_g2,
@@ -507,6 +507,9 @@ if st.button("🚀 Run Analysis", type="primary"):
         else:
             df_log2 = df_num.copy()
 
+        # IMPORTANT: Preserve index before passing to fit_linear_model
+        df_log2.index = df.index  # Ensure df_log2 has same index as df
+        
         fit = fit_linear_model(df_log2, ref_samples, treat_samples)
         limma_res = empirical_bayes_moderation(fit)
 
@@ -517,7 +520,6 @@ if st.button("🚀 Run Analysis", type="primary"):
             limma_res["fdr"] = limma_res["pvalue"]
             test_col = "pvalue"
 
-        # significance purely by p/FDR (no FC cutoff)
         def classify(row):
             if pd.isna(row[test_col]) or pd.isna(row["log2fc"]):
                 return "not_tested"
@@ -527,7 +529,9 @@ if st.button("🚀 Run Analysis", type="primary"):
         
         limma_res["regulation"] = limma_res.apply(classify, axis=1)
         limma_res["neg_log10_p"] = -np.log10(limma_res[test_col].replace(0, 1e-300))
-        limma_res["species"] = limma_res.index.to_series().map(df.set_index(df.index)[species_col])
+        
+        # MAP SPECIES CORRECTLY - use limma_res index to map back to original df
+        limma_res["species"] = limma_res.index.map(df[species_col])
 
         st.session_state.dea_results = limma_res
         st.session_state.dea_ref = ref_cond
@@ -535,6 +539,7 @@ if st.button("🚀 Run Analysis", type="primary"):
         st.session_state.dea_p_thr = p_thr
 
     st.success("✅ Analysis finished.")
+
 
 # ---------------------------------------------------------------------
 # 5. RESULTS: MA/VOLCANO COLORED BY SPECIES (FIXED VOLCANO)
