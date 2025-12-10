@@ -295,6 +295,12 @@ st.subheader("4️⃣ Peptides/Precursors per Protein Column")
 all_cols = list(metadata_cols) + list(numerical_cols)
 auto_peptide_cols = find_peptide_columns(all_cols, st.session_state.data_type)
 
+# Determine default selection (cached or auto-detected)
+if 'peptide_cols' in st.session_state:
+    default_peptide_cols = st.session_state.peptide_cols
+else:
+    default_peptide_cols = auto_peptide_cols
+
 if auto_peptide_cols:
     st.info(f"🔍 Found potential peptide/precursor columns: {', '.join(auto_peptide_cols[:3])}")
     if len(auto_peptide_cols) > 3:
@@ -306,13 +312,13 @@ else:
 peptide_cols_selection = st.multiselect(
     f"Select column(s) with peptide/precursor info per protein per run:",
     options=all_cols,
-    default=auto_peptide_cols,
+    default=default_peptide_cols,  # Use cached or auto-detected
     key="peptide_cols_select",
     help="For peptide data: NrOfStrippedSequencesIdentified columns | For protein data: single column with integer count"
 )
 
 if peptide_cols_selection:
-    st.session_state.peptide_cols = peptide_cols_selection
+    st.session_state.peptide_cols = peptide_cols_selection  # Cache immediately
     st.success(f"✅ Selected {len(peptide_cols_selection)} column(s) for filtering")
     
     # Show sample values
@@ -327,6 +333,7 @@ else:
     st.stop()
 
 st.markdown("---")
+
 
 # ============================================================================
 # EXPERIMENTAL DESIGN
