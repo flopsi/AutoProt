@@ -790,7 +790,7 @@ if "dea_results" in st.session_state:
     
     st.plotly_chart(fig_v, use_container_width=True)
     
-    # === TABLE: ALL RESULTS IN ONE TABLE ===
+       # === TABLE: ALL RESULTS IN ONE TABLE ===
     st.markdown("### 📋 All Results Summary")
     st.caption("Complete results table with all proteins tested")
     
@@ -840,3 +840,134 @@ if "dea_results" in st.session_state:
         file_name=f"dea_all_results_{ref_cond}_vs_{treat_cond}.csv",
         mime="text/csv",
     )
+    
+    # ===== VALIDATION SECTION =====
+    if theoretical_fc:
+        st.markdown("---")
+        st.subheader("6️⃣ Spike-in Validation Metrics")
+        
+        st.info(f"✓ Using: {', '.join(f'{k}={v:.2f}' for k,v in theoretical_fc.items())}")
+        st.caption(f"FP definition: p<{p_thr} AND |log2fc - expected| > ±{fc_tolerance}")
+        
+        species_series = df[species_col]
+        var_ov, var_sp, stab_ov, stab_sp, asym_dict, error_dict, fp_var_sp = compute_species_metrics(
+            res, theoretical_fc, species_series, stable_thr, fc_tolerance, p_thr
+        )
+        
+        # === UNIFIED VALIDATION TABLE ===
+        validation_rows = []
+        
+        # Asymmetry row
+        for sp in ["HUMAN", "ECOLI", "YEAST"]:
+            asym_val = asym_dict.get(sp, np.nan)
+            validation_rows.append({
+                "Metric": f"Asymmetry",
+                "Species": sp,
+                "Value": f"{asym_val:.2f}" if not np.isnan(asym_val) else "N/A",
+                "Category": "Quality"
+            })
+        
+        # FP metrics
+        for sp in ["HUMAN", "ECOLI", "YEAST"]:
+            fp_count = error_dict.get(f"FP_{sp}", 0)
+            if sp in stab_sp["Species"].values:
+                total = int(stab_sp[stab_sp["Species"] == sp]["N"].values[0])
+                fpr = float(stab_sp[stab_sp["Species"] == sp]["FPR_%"].values[0].rstrip("%"))
+            elif sp in fp_var_sp["Species"].values:
+                total = int(fp_var_sp[fp_var_sp["Species"] == sp]["Total_Detected"].values[0])
+                fpr = fp_count / total * 100 if total > 0 else 0
+            else:
+                total = 0
+                fpr = 0
+            
+            validation_rows.append({
+                "Metric": "False Positives",
+                "Species": sp,
+                "Value": f"{fp_count:,} / {total:,} ({fpr:.1f}%)",
+                "Category": "Error"
+            })
+        
+        # Detection/Accuracy
+        for sp in ["ECOLI", "YEAST"]:
+            if sp in var_sp["Species"].values:
+                det_pct = float(var_sp[var_sp["Species"] == sp]["Detection_%"].values[0].rstrip("%"))
+                validation_rows.append({
+                    "Metric": "Detection",
+                    "Species": sp,
+                    "Value": f"{det_pct:.1f}%",
+                    "Category": "Sensitivity"
+                })
+                
+                mae = float(var_sp[var_sp["Species"] == sp]["MAE"].values[0])
+                validation_rows.append({
+                    "Metric": "MAE (log2)",
+                    "Species": sp,
+                    "Value": f"{mae:.3f}",
+                    "Category": "Accuracy"
+                })
+        
+        # Stable metrics
+        if stab_ov:
+            validation_rows.append({
+                "Metric": "FPR (Stable)",
+                "Species": "HUMAN",
+                "Value": f"{stab_ov['FPR']:.1%}",
+                "Category": "Specificity"
+            })
+        
+        # Overall metrics
+        if var_ov:
+            validation_rows.append({
+                "Metric": "Sensitivity (Variable)",
+                "Species": "Overall",
+                "Value": f"{var_ov['Sensitivity']:.1%}",
+                "Category": "Sensitivity"
+            })
+            validation_rows.append({
+                "Metric": "Specificity (Variable)",
+                "Species": "Overall",
+                "Value": f"{var_ov['Specificity']:.1%}",
+                "Category": "Specificity"
+            })
+            validation_rows.append({
+                "Metric": "Precision",
+                "Species": "Overall",
+                "Value": f"{var_ov['Precision']:.1%}",
+                "Category": "Precision"
+            })
+        
+        # deFDR
+        if true_positives > 0 and total_fp > 0:
+            defdr = total_fp / (true_positives + total_fp) * 100
+            validation_rows.append({
+                "Metric": "deFDR",
+                "Species": "Overall",
+                "Value": f"{defdr:.2f}%",
+                "Category": "Error"
+            })
+        
+        validation_df = pd.DataFrame(validation_rows)
+        
+        st.markdown("### 📊 Validation Metrics Table")
+        st.dataframe(
+            validation_df,
+            use_container_width=True,
+            column_config={
+                "Metric": st.column_config.TextColumn(width=150),
+                "Species": st.column_config.TextColumn(width=100),
+                "Value": st.column_config.TextColumn(width=150),
+                "Category": st.column_config.TextColumn(width=100),
+            }
+        )
+        
+        # Download validation metrics
+        st.download_button(
+            "📥 Download Validation Metrics",
+            data=validation_df.to_csv(index=False).encode("utf-8"),
+            file_name=f"validation_metrics_{ref_cond}_vs_{treat_cond}.csv",
+            mime="text/csv",
+        )
+    else:
+        st.info("💡 Enable spike-in composition for validation")
+else:
+    st.info("👆 Configure and run analysis")
