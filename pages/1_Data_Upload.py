@@ -1,4 +1,3 @@
-"""
 pages/1_Data_Upload.py - DATA UPLOAD WITH SPECIES FILTER AND RENAMING
 Fixed manual renaming with proper condition extraction
 """
@@ -94,6 +93,29 @@ def extract_condition_from_sample(sample_name: str) -> str:
         return sample_name.split('_')[0]
     
     return sample_name[0] if len(sample_name) > 0 else "Unknown"
+
+def find_peptide_columns(columns: list, data_type: str) -> list:
+    """
+    Find columns containing peptide or precursor information.
+    For peptide data: columns with 'NrOfStrippedSequencesIdentified'
+    For protein data: any numeric column that could represent peptide count
+    """
+    peptide_cols = []
+    
+    if data_type == 'peptide':
+        # Look for stripped sequences identified columns
+        peptide_cols = [col for col in columns 
+                       if 'NrOfStrippedSequencesIdentified' in col 
+                       or 'peptide' in col.lower() 
+                       or 'precursor' in col.lower()]
+    else:
+        # For protein data, look for single columns with peptide count
+        peptide_cols = [col for col in columns 
+                       if 'peptide' in col.lower() 
+                       or 'precursor' in col.lower()
+                       or 'nr_pep' in col.lower()]
+    
+    return peptide_cols
 
 # ============================================================================
 # SESSION STATE INITIALIZATION
@@ -285,10 +307,53 @@ st.session_state.numerical_cols_renamed = numerical_cols_renamed
 st.markdown("---")
 
 # ============================================================================
+# PEPTIDES PER PROTEIN COLUMNS
+# ============================================================================
+
+st.subheader("4️⃣ Peptides/Precursors per Protein Column")
+
+# Auto-detect peptide columns
+all_cols = list(metadata_cols) + list(numerical_cols)
+auto_peptide_cols = find_peptide_columns(all_cols, st.session_state.data_type)
+
+if auto_peptide_cols:
+    st.info(f"🔍 Found potential peptide/precursor columns: {', '.join(auto_peptide_cols[:3])}")
+    if len(auto_peptide_cols) > 3:
+        st.caption(f"... and {len(auto_peptide_cols) - 3} more")
+else:
+    st.info("📝 No peptide/precursor columns auto-detected. Select manually below.")
+
+# Allow user to select peptide columns
+peptide_cols_selection = st.multiselect(
+    f"Select column(s) with peptide/precursor info per protein per run:",
+    options=all_cols,
+    default=auto_peptide_cols,
+    key="peptide_cols_select",
+    help="For peptide data: NrOfStrippedSequencesIdentified columns | For protein data: single column with integer count"
+)
+
+if peptide_cols_selection:
+    st.session_state.peptide_cols = peptide_cols_selection
+    st.success(f"✅ Selected {len(peptide_cols_selection)} column(s) for filtering")
+    
+    # Show sample values
+    st.markdown("**Sample values:**")
+    sample_cols_to_show = peptide_cols_selection[:3]
+    sample_data = df_raw.select(sample_cols_to_show).head(5).to_pandas()
+    st.dataframe(sample_data, hide_index=True)
+else:
+    st.info("👆 Select at least one column for peptide information")
+    if 'peptide_cols' in st.session_state:
+        del st.session_state.peptide_cols
+    st.stop()
+
+st.markdown("---")
+
+# ============================================================================
 # EXPERIMENTAL DESIGN
 # ============================================================================
 
-st.subheader("4️⃣ Experimental Design")
+st.subheader("5️⃣ Experimental Design")
 
 default_reps = st.session_state.get('replicates_per_condition', 3)
 
@@ -321,7 +386,7 @@ st.markdown("---")
 # CONFIGURE COLUMNS
 # ============================================================================
 
-st.subheader("5️⃣ Configure Columns")
+st.subheader("6️⃣ Configure Columns")
 
 default_id_idx = 0
 if 'id_col' in st.session_state and st.session_state.id_col in metadata_cols:
@@ -353,7 +418,7 @@ st.markdown("---")
 # SPECIES DETECTION & FILTER
 # ============================================================================
 
-st.subheader("6️⃣ Species Filter")
+st.subheader("7️⃣ Species Filter")
 
 df_pandas = df_raw.to_pandas()
 
@@ -419,7 +484,7 @@ st.markdown("---")
 # CONFIRMATION
 # ============================================================================
 
-st.subheader("7️⃣ Confirm & Upload")
+st.subheader("8️⃣ Confirm & Upload")
 
 confirm = st.checkbox("✅ I confirm all settings are correct", 
                      value=st.session_state.get('data_ready', False))
@@ -436,6 +501,7 @@ if confirm:
         st.session_state.numeric_cols = numerical_cols_renamed
         st.session_state.species_col = '__SPECIES__'
         st.session_state.sample_to_condition = sample_to_condition
+        st.session_state.peptide_cols = peptide_cols_selection
         st.session_state.data_ready = True
         
         st.success("✅ Data uploaded successfully! Proceed to **📊 Visual EDA**")
@@ -462,7 +528,8 @@ def reset_current_page():
         'file_hash', 'metadata_cols', 'numerical_cols', 'selected_species',
         'df_raw', 'numeric_cols', 'id_col', 'species_col', 'data_type',
         'replicates_per_condition', 'data_ready', 'rename_style', 
-        'manual_name_mapping', 'rename_style_index', 'sample_to_condition'
+        'manual_name_mapping', 'rename_style_index', 'sample_to_condition',
+        'peptide_cols', 'sequence_col'
     ]
     for key in keys_to_delete:
         if key in st.session_state:
