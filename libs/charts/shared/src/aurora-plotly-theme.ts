@@ -1,5 +1,5 @@
 export const auroraLayout = {
-  font: { family: 'Switzer, sans-serif', color: '#8894b0' },
+  font: { family: 'Inter, system-ui, sans-serif', color: '#8894b0' },
   xaxis: { gridcolor: 'rgba(42,55,96,0.5)', linecolor: '#2a3760' },
   yaxis: { gridcolor: 'rgba(42,55,96,0.5)', linecolor: '#2a3760' },
   margin: { t: 20, r: 20, b: 40, l: 50 },

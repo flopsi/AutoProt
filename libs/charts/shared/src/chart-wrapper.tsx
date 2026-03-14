@@ -1,25 +1,22 @@
 'use client';
-import { Suspense, lazy, ReactNode } from 'react';
-import { ErrorBoundary } from 'react-error-boundary';
+import dynamic from 'next/dynamic';
 
-// Safe dynamic import for Plotly to avoid SSR issues in Next.js
-const Plot = lazy(() => import('react-plotly.js'));
+const Plot = dynamic(() => import('react-plotly.js'), { ssr: false }) as any;
 
 export function ChartWrapper({ title, badge, data, layout, height = 400 }: any) {
   return (
     <div className="glass-panel">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', marginBottom: 'var(--space-4)' }}>
-        {badge && <span className="badge badge--primary">{badge}</span>}
-        {title && <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--color-text)', margin: 0 }}>{title}</h3>}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+        {badge && <span className="badge">{badge}</span>}
+        {title && <h3 style={{ color: '#e2e8f0', margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>{title}</h3>}
       </div>
-      <Suspense fallback={<div style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading...</div>}>
-        <Plot
-          data={data}
-          layout={{ ...layout, paper_bgcolor: 'transparent', plot_bgcolor: 'transparent', autosize: true }}
-          useResizeHandler
-          style={{ width: '100%', height }}
-        />
-      </Suspense>
+      <Plot
+        data={data}
+        layout={{ ...layout, paper_bgcolor: 'transparent', plot_bgcolor: 'transparent', autosize: true }}
+        useResizeHandler
+        config={{ responsive: true, displaylogo: false }}
+        style={{ width: '100%', height }}
+      />
     </div>
   );
 }
